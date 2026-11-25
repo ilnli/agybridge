@@ -92,7 +92,7 @@ export class BrokerLifecycleCoordinator {
   clearBackoff(id:string):void{this.clearRetryDelay(id);this.recoveryFailures.delete(id);}
   launchInputsChanged(id?:string):void{if(id===undefined)this.parkChecks.clear();else this.parkChecks.delete(id);}
 
-  async prepare(peer:Peer,extraReason?:string,provisional?:{peerId:string;sessionId:string;authorize?:()=>void;beforeCreate?:()=>void}):Promise<void>{
+  async prepare(peer:Peer,extraReason?:string,provisional?:{peerId:string;sessionId:string;authorize?:()=>void;beforeCreate?:()=>void},claimedAttempt?:string):Promise<void>{
     const {store,adapters}=this.environment;
     this.requireEnabled(peer);
     try{this.services.profileCoordination.profiles.initialize(peer);}catch(error){store.updatePeer(peer.id,{state:'offline',launchFailure:{at:Date.now(),...(error instanceof BridgeError?{code:error.code}:{}),message:describeError(error).slice(0,1200)}});throw error;}
@@ -122,7 +122,9 @@ export class BrokerLifecycleCoordinator {
         if(hostingRecord(store,peer)?.phase==='adopting')return;
         const incident=this.recoveryIncident(peer);
                                                      
-        this.services.managedRecovery.absent(incident);this.services.managedRecovery.claim(incident,extraReason);
+        if(claimedAttempt){
+          if(incident.state!=='recovering'||incident.attempts.at(-1)?.id!==claimedAttempt)throw new BridgeError('incident_changed','消息连接恢复的启动额度已改变，未重复启动。');
+        }else{this.services.managedRecovery.absent(incident);this.services.managedRecovery.claim(incident,extraReason);}
       }
     };
     const work=(async()=>{
@@ -252,6 +254,11 @@ export class BrokerLifecycleCoordinator {
     try{
       if(peer.host==='codex'&&hostingRecord(store,peer)?.phase==='adopting'){await this.services.transfers.adopt(peer);return true;}
       if(peer.owner==='nxbridge'){
+        const active=store.endpoint(peer.id);
+        if(peer.host==='claude'&&active&&(await this.services.runtimeHealth.probeRuntime(peer)).deliveryIssue==='claude_inbox_missing'){
+          await this.repairClaudeInbox(peer,active,extraReason);
+          const restored=store.endpoint(peer.id);return !!restored&&restored.epoch!==active.epoch;
+        }
         await this.prepare(peer,extraReason);
         if(store.peer(peer.id).state==='offline'||!store.endpoint(peer.id))throw new BridgeError('recovery_pending','原会话尚未恢复就绪。');
       }else{
@@ -495,11 +502,62 @@ export class BrokerLifecycleCoordinator {
     if(endpoint?.pendingContext)return;
     let restore:(()=>Promise<unknown>)|undefined;
     if(peer.owner==='nxbridge'){
-      this.services.managedRecovery.ready(id,!!endpoint&&peer.state!=='offline');
+      const availability=endpoint&&peer.host==='claude'?await this.services.runtimeHealth.probeRuntime(peer):undefined;
+      if(availability?.deliveryIssue==='claude_inbox_missing'){
+        this.services.managedRecovery.ready(id,false);
+        await this.repairClaudeInbox(peer,endpoint!);return;
+      }
+      this.services.managedRecovery.ready(id,!!endpoint&&peer.state!=='offline'&&(!availability||availability.state==='reachable'));
       if(!peer.sessionId){if(hasPending&&!peer.launchFailure)restore=()=>this.prepare(peer);}
       else if(!endpoint||peer.state==='offline')restore=()=>this.recover(peer);
     }else if(peer.host==='codex'&&peer.sessionId&&!endpoint)restore=()=>this.recover(peer);
     if(restore){this.restoringMembers.add(id);try{await restore();}finally{this.restoringMembers.delete(id);}}
+  }
+
+                                             
+  private async repairClaudeInbox(peer:Peer,endpoint:Endpoint,extraReason?:string):Promise<void>{
+    const {store,home,adapters}=this.environment,pair=store.pairFor(peer.id),current=store.peer(peer.id);
+    if(this.hooks.stopped()||!pair||pair.paused||current.owner!=='nxbridge'||current.sessionId!==peer.sessionId||store.endpoint(peer.id)?.epoch!==endpoint.epoch||this.restarting.has(peer.id)||this.retiring.has(peer.id)||this.services.takeovers.get(peer.id))return;
+    peer=current;
+    const incident=this.recoveryIncident(peer),engine=this.services.managedRecovery;
+    if(!extraReason&&!engine.due(incident))return;
+    const blocked=(code:string,message:string)=>{engine.blocked(incident,new BridgeError(code,message));this.publishRecovery(incident,peer,message);};
+    if(claudeChild(home,peer.id)){
+                                                                 
+      blocked('claude_inbox_idle_unverified','此托管 Claude 缺少完整的空闲及定时任务快照，未停止原会话；下一次正常启动会改用持久目录中的消息连接。');return;
+    }
+    if(peer.state!=='ready')return;
+    const health=endpoint.nativeHealth,background=endpoint.nativeBackground;
+    if(!health){blocked('claude_inbox_idle_unverified','缺少原生轮次的空闲快照，未停止原会话；等待原生窗口发布完整空闲证据。');return;}
+    if(!['ready','failed'].includes(health.state)||health.tools.length)return;
+    if(background?.tasks===undefined||background.crons===undefined){blocked('claude_inbox_idle_unverified','无法核验后台任务和定时任务，未停止原会话；等待原生窗口发布完整空闲快照。');return;}
+    if(background.tasks||background.crons){blocked('claude_inbox_scheduled_work','原会话还有后台任务或定时任务，自动重启会丢失运行中的工作，已保留原会话。');return;}
+    if(store.restartUnsettled(peer.id)){blocked('claude_inbox_delivery_unsettled','原会话还有未结算的投递，未停止或重放；请核对 nxbridge status 中原消息的接收情况。');return;}
+    if(store.questions(true).some(q=>q.from===peer.id||q.to===peer.id))return;
+    const proof=nativeOwnership(home,peer.id);
+    if(!proof||proof.phase!=='bound'||proof.releasedToUser||proof.sessionId!==peer.sessionId||proof.native?.pid!==endpoint.pid||proof.native.startedAt!==endpoint.procStart){blocked('claude_inbox_owner_unverified','无法核验原生后台的启动归属，未停止任何进程。');return;}
+    const pairId=store.pairFor(peer.id)!.id;
+    const guard=()=>{
+      const current=store.peer(peer.id),pair=store.pairFor(peer.id);
+      if(this.hooks.stopped()||current.owner!=='nxbridge'||current.sessionId!==peer.sessionId||pair?.id!==pairId||pair.paused||!this.enabled(peer.id)||!this.enabled(pair.codex)||this.services.takeovers.get(peer.id)||this.retiring.has(peer.id)||claudeAutoHolds(store,current))throw new BridgeError('session_changed','消息连接恢复期间配对、会话或后台归属已改变。');
+    };
+    this.restarting.add(peer.id);this.restoringMembers.add(peer.id);
+    try{
+      guard();this.rememberManagedLaunch(peer.id);
+                                             
+      const attempt=engine.claim(incident,extraReason);
+      await adapters.claude.release(peer,agent=>{
+        guard();const current=store.peer(peer.id),ep=store.endpoint(peer.id),source=nativeOwnership(home,peer.id);
+        if(agent.status!=='idle'||agent.pid!==endpoint.pid||ep?.epoch!==endpoint.epoch||current.state!=='ready'||!ep.nativeHealth||!['ready','failed'].includes(ep.nativeHealth.state)||ep.nativeHealth.tools.length||ep.nativeBackground?.tasks!==0||ep.nativeBackground.crons!==0||store.restartUnsettled(peer.id)||store.questions(true).some(q=>q.from===peer.id||q.to===peer.id))throw new BridgeError('session_busy','后台尚有工作、审批或未结算投递，等待安全空闲点恢复消息连接。');
+        if(source?.id!==proof.id||source.native?.pid!==endpoint.pid||source.native.startedAt!==endpoint.procStart)throw new BridgeError('process_record_changed','消息连接恢复前原生进程代次已改变，未停止后继会话。');
+      });
+      guard();store.deactivate(peer.id,endpoint.epoch);store.updatePeer(peer.id,{state:'offline'});
+      await this.prepare(store.peer(peer.id),undefined,undefined,attempt.id);
+      this.publishRecovery(engine.get(peer.id)!,store.peer(peer.id),'restored same session after missing inbox; only safely unsent messages will flush');
+    }catch(error){
+      if(!['recovery_exhausted','recovery_rate_limited','recovery_uncertain'].includes((error as BridgeError).code))engine.settled(incident,error,['timeout','claude_release_pending','claude_start_pending','claude_child_pending','runtime_launch_unconfirmed'].includes((error as BridgeError).code));
+      this.publishRecovery(engine.get(peer.id)!,store.peer(peer.id),'message connection recovery held: '+describeError(error));
+    }finally{this.restarting.delete(peer.id);this.restoringMembers.delete(peer.id);}
   }
   schedulePairedRecovery(id:string,hasPending:boolean):Promise<boolean>{
     const pending=this.memberRecoveries.get(id);if(pending)return pending;

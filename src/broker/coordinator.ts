@@ -1165,7 +1165,7 @@ export class Broker {
     const background=claudeBackground(this.home,this.config),observer=actor?this.actor(actor):undefined,pairScope=observer?this.store.pairFor(observer.id):undefined;
     const ids=(observer?pairScope?[pairScope.claude,pairScope.codex]:[observer.id]:this.store.peers().map(peer=>peer.id)).filter(id=>this.enabled(id));
     const capability={identityIssues:this.store.faults.map('status_identity',ids,id=>id,peerId=>{const issue=this.store.setting('codexIdentity:'+peerId);return issue?[{peerId,...issue as object}]:[];}).flat(),...(background?{claudeBackground:background}:{}),pluginCaches:installedCacheStatus(this.home),processProbes:processProbeStatus(),processAncestry:processAncestryStatus(),...(this.resources?{resources:this.resources.snapshot()}:{}),integrationIssues:this.store.faults.map('status_integration',ids,id=>id,peerId=>this.runtimeHealth.integrationIssues(peerId,true)).flat()};
-    Object.assign(capability,{retirements:actor?retirements.filter(value=>ids.includes(value.peerId)):retirements,incidents:this.runtimeHealth.incidentViews(ids),notes:this.runtimeHealth.incidentNotes(ids),rpc:this.adapters.codex.rpcMetrics?.(),degraded:this.store.faults.status().filter(value=>value.degraded).map(value=>actor?{stage:value.stage.split(':')[0],count:value.count,retryAt:value.retryAt}:value),outageLedger:brokerOutageDiagnostic(this.home)});
+    Object.assign(capability,{retirements:actor?retirements.filter(value=>ids.includes(value.peerId)):retirements,incidents:this.runtimeHealth.incidentViews(ids),notes:this.runtimeHealth.incidentNotes(ids,observer?.id),rpc:this.adapters.codex.rpcMetrics?.(),degraded:this.store.faults.status().filter(value=>value.degraded).map(value=>actor?{stage:value.stage.split(':')[0],count:value.count,retryAt:value.retryAt}:value),outageLedger:brokerOutageDiagnostic(this.home)});
     Object.assign(capability,{hookTimings:ids.flatMap(id=>{const timing=this.pairAnomalies.hookTimings(this.store.peer(id));return timing?[timing]:[];})});
     const frozen=frozenProfileStatus(this.home,this.config);Object.assign(capability,{configurationReload:this.configurationReload.status,frozen_profiles:frozen.profiles,...(frozen.warnings.length?{profile_warnings:frozen.warnings}:{})});
     const describePeer=(p:Peer)=>{
@@ -1370,7 +1370,9 @@ export class Broker {
           const availability=await this.runtimeHealth.probeRuntime(target);
           if(!this.enabled(id))return SKIPPED;
           if(availability.state==='blocked'){
-            this.memberLifecycle.delayRetry(id,5000);this.store.deactivate(id,endpoint.epoch);this.store.updatePeer(id,{state:'offline'});return SKIPPED;
+            this.memberLifecycle.delayRetry(id,5000);
+            if(availability.deliveryIssue!=='claude_inbox_missing'){this.store.deactivate(id,endpoint.epoch);this.store.updatePeer(id,{state:'offline'});}
+            return SKIPPED;
           }
           if(endpoint.mode==='embedded'){
             if(this.config.compatibilityWake==='notify')await this.signalEmbeddedWake(target,endpoint);

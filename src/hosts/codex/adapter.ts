@@ -631,7 +631,7 @@ export class CodexAdapter extends EventEmitter {
       wrapper=await launchIndependentWindows({home:this.home,executable:launch.executable.command,args:[...launch.executable.prefix,...nativeArgs],cwd:launch.cwd,env:launch.env,logfile,role:'codex-runtime',launchId:runtimeId,configHome:launch.configHome,...(peerId?{peerId}:{})});
     }else{
       const fd=openSync(logfile,'a',0o600);
-      try{child=spawnPosixSupervisor(launch.executable.command,[...launch.executable.prefix,...nativeArgs],{cwd:launch.cwd,env:launch.env,stdio:['ignore',fd,fd],waitForNative:true});spawnAttempted=true;}
+      try{child=spawnPosixSupervisor(launch.executable.command,[...launch.executable.prefix,...nativeArgs],{cwd:launch.cwd,env:launch.env,stdio:['ignore',fd,fd],waitForNative:true,home:this.home});spawnAttempted=true;}
       finally{closeSync(fd);}
       child.on('error',error=>{failure=error;});child.unref();
       wrapper=await rememberOwnedChild(this.home,child,'codex-runtime',{configHome:launch.configHome,posixGroup:true,...(peerId?{peerId}:{})},runtimeId);

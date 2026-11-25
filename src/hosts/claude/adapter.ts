@@ -1,6 +1,3 @@
-import net from 'node:net';
-import {unlinkSync,chmodSync} from 'node:fs';
-import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import {BridgeError} from '../../shared/errors.js';
@@ -14,6 +11,7 @@ import { selectSessionLaunch } from '../session-launch.js';
 import {liveProcess,processIdentity,matchesProcess} from '../../process/process.js';
 import type { DeliveryMessage } from '../../broker/delivery/file-references.js';
 import { deliverClaudeInbox, type SessionRecord } from './claude-inbox.js';
+import { ClaudeReplySockets } from './claude-reply-sockets.js';
 export { canonicalPipe, peerKeyFile, peerAddress, encodePeerMessage, type SessionRecord } from './claude-inbox.js';
 import { claudeBackground, claudeBackgroundMode, requireClaudeBackground } from './claude-capability.js';
 import { claudeChild, childCall, ensureClaudeChild, findClaudeChild, stopClaudeChild } from './claude-child.js';
@@ -24,7 +22,7 @@ import { ownedProcesses, releaseOwnedProcess } from '../../process/owned-process
 import { ownedProcessState } from '../../process/process-stop.js';
 import type { NativeOwnership } from '../../process/owned-native.js';
 import { restoreState } from '../../broker/pairing/pair-restore.js';
-import { ownedClaudeArgs } from '../owned-launch-policy.js';
+import { ownedClaudeArgs, ownedClaudeInboxArgs } from '../owned-launch-policy.js';
 import { requireClaudeBypassConsent } from './claude-autonomy.js';
 import type { HostLaunch } from '../host-launch.js';
 import { claudeProfileArgs } from '../../broker/profiles/profile-arguments.js';
@@ -37,7 +35,7 @@ export class ClaudeAdapter extends EventEmitter {
   private disabledMembers=new Set<string>();
   setEnabled(peer:Peer,_endpoint:Endpoint|undefined,enabled:boolean):void{if(enabled)this.disabledMembers.delete(peer.id);else this.disabledMembers.add(peer.id);}
   private requireMember(peer:Peer):void{if(this.disabledMembers.has(peer.id))throw new BridgeError('member_disabled','此成员的 nxbridge 已关闭，未访问原生宿主。');}
-  private replyListeners=new Map<string,{server:net.Server;address:string}>();
+  private replySockets=new ClaudeReplySockets(receipt=>this.emit('receipt',receipt));
   private registrationProbes=new Map<string,{until:number;work:Promise<NativeOwnership|undefined>}>();
   private nativeRestartWaits=new Map<string,{launchId:string;at:number}>();
   constructor(private config:BridgeConfig,private home=bridgeHome()){super();}
@@ -49,27 +47,14 @@ export class ClaudeAdapter extends EventEmitter {
     try{
       launch.env.NXBRIDGE_OWNED_LAUNCH='claude:'+intent.id;launch.env.NXBRIDGE_MANAGED_PEER=peer.id;
       this.requireMember(peer);
-      const output=await runCli('claude',args,{cwd:peer.cwd,home:this.home,config:this.config,launch,timeout:30000,beforeSpawn:async()=>{await beforeLaunch?.();await beforeCreate?.();},onSpawn:()=>{submitted=true;}});
+      const output=await runCli('claude',[...args,...ownedClaudeInboxArgs(this.home)],{cwd:peer.cwd,home:this.home,config:this.config,launch,timeout:30000,beforeSpawn:async()=>{await beforeLaunch?.();await beforeCreate?.();},onSpawn:()=>{submitted=true;}});
       recordHostLaunch(this.home,'claude-background',launch);
       const result={...intent,handle:nativeLaunchHandle(output)};saveNativeOwnership(result);return result;
     }catch(error){failNativeLaunch(intent,error,!submitted);throw error;}
   }
   async deliver(peer:Peer,endpoint:Endpoint,message:DeliveryMessage,sender:Peer):Promise<DeliveryResult>{
     this.requireMember(peer);
-    return deliverClaudeInbox(peer,endpoint,message,sender,()=>endpoint.configHome??selectHostLaunch('claude',this.config,{cwd:peer.cwd,sessionId:peer.sessionId??undefined}).configHome,()=>this.replySocket(path.dirname(endpoint.address)));
-  }
-  private async replySocket(directory:string):Promise<string>{
-    const existing=this.replyListeners.get(directory);if(existing)return existing.address;
-    const address=path.join(directory,`${process.pid}-${randomBytes(4).toString('hex')}.sock`);
-    const server=net.createServer(socket=>{
-      let buffer='';socket.setEncoding('utf8');socket.on('error',()=>{});socket.on('data',chunk=>{
-        buffer+=chunk;if(buffer.length>65536){socket.destroy();return;}
-        let index:number;while((index=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,index);buffer=buffer.slice(index+1);try{const receipt=JSON.parse(line);if(receipt.type==='control'&&receipt.action==='peer_message_status')this.emit('receipt',receipt);}catch{}}
-      });
-    });
-    await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(address,()=>{server.off('error',reject);resolve();});});
-    chmodSync(address,0o600);
-    this.replyListeners.set(directory,{server,address});return address;
+    return deliverClaudeInbox(peer,endpoint,message,sender,()=>endpoint.configHome??selectHostLaunch('claude',this.config,{cwd:peer.cwd,sessionId:peer.sessionId??undefined}).configHome,()=>this.replySockets.address(path.dirname(endpoint.address)));
   }
   async create(peer:Peer,beforeLaunch?:()=>void|Promise<void>,sourcePermission:PermissionClass='unknown',beforeCreate?:()=>void|Promise<void>):Promise<string>{
     this.requireMember(peer);
@@ -255,5 +240,5 @@ export class ClaudeAdapter extends EventEmitter {
     if(binding?.phase==='intent')throw new BridgeError(binding.handle?'claude_release_pending':'claude_release_unresolved',binding.handle?'原生后台启动结果尚未确认，保留归属记录，稍后重试。':'仅剩未结算启动记录，缺少可解析 handle 和可核验进程；停止自动回收重试，保留证据，请运行 nxbridge doctor 后显式 retire。');
     if(binding)forgetNativeOwnership(nativeOwnership(this.home,peer.id)??binding);
   }
-  close():void{for(const {server,address}of this.replyListeners.values()){server.close();try{unlinkSync(address);}catch{}}this.replyListeners.clear();}
+  close():void{this.replySockets.close();}
 }

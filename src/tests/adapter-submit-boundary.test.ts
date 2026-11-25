@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { CodexAdapter } from '../hosts/codex/adapter.js';
 import { ClaudeAdapter } from '../hosts/claude/adapter.js';
-import { writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Store } from '../storage/store.js';
 import {DEFAULT_CONFIG} from '../config/defaults.js';
@@ -34,4 +34,21 @@ test('已有 Claude 启动记录的异步核验期间关闭成员，不能继续
   await beginNativeLaunch(home,peer,home);
   adapter.list=async()=>{await Promise.resolve();adapter.setEnabled(peer,undefined,false);return[];};
   await assert.rejects(adapter.create(peer),{code:'member_disabled'});
+});
+
+test('POSIX 自有 Claude 恢复将持久收件地址附加到原会话 ID',{skip:process.platform==='win32'},async t=>{
+  const home=temporary(t),configHome=path.join(home,'claude'),projects=path.join(configHome,'projects'),program=path.join(home,'claude.cjs'),argumentsFile=path.join(home,'arguments.json');
+  const sessionId='00000000-0000-4000-8000-000000000001';
+  mkdirSync(projects,{recursive:true});writeFileSync(path.join(projects,sessionId+'.jsonl'),'','utf8');
+  writeFileSync(program,`const args=process.argv.slice(2);if(args[0]==='--version')console.log('2.1.332 (Claude Code)');else{require('node:fs').writeFileSync(${JSON.stringify(argumentsFile)},JSON.stringify(args));process.exitCode=1;}`,'utf8');
+  const store=new Store(':memory:'),peer={...store.placeholder('claude',home),sessionId},adapter=new ClaudeAdapter({...DEFAULT_CONFIG,claudeHome:configHome,claudeBinary:program},home);
+  t.after(()=>{adapter.close();store.close();});
+  await assert.rejects(adapter.wake(peer));
+  const args=JSON.parse(readFileSync(argumentsFile,'utf8')) as string[];
+  assert.deepEqual(args.slice(0,4),['--resume',sessionId,'--bg','--messaging-socket-path']);
+  const address=args[4]!;
+  assert.match(path.basename(address),/^ci-[a-f0-9]{16}\.sock$/);
+  assert.equal(path.dirname(address),path.join(home,'run'));
+  assert.equal(lstatSync(path.dirname(address)).mode&0o777,0o700);
+  assert.ok(Buffer.byteLength(address)<=103);
 });

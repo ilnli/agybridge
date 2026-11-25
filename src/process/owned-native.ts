@@ -60,17 +60,23 @@ export async function beginNativeLaunch(home:string,peer:Peer,configHome:string)
   await prepareProcessRegistry(home);
   const value:NativeOwnership={version:1,id:randomUUID(),home:path.resolve(home),peerId:peer.id,configHome,phase:'intent',createdAt:Date.now(),...(peer.sessionId?{sessionId:peer.sessionId}:{}),...(process.env.NXBRIDGE_TEST_SCOPE?{scope:process.env.NXBRIDGE_TEST_SCOPE}:{})};saveNativeOwnership(value);return value;
 }
-const nativeHandlePattern=/\bbackgrounded\s*·\s*([a-f0-9-]{8,36})(?=\s*(?:·|\(|$))/i;
+const nativeHandlePattern=/^\s*backgrounded\s*·\s*([a-f0-9-]{8,36})(?=\s*(?:·|\(|$))/i;
+function nativeLaunchHandles(output:string):string[]{
+                                         
+  return [...new Set(output.split(/\r?\n/).flatMap(line=>{
+    const match=nativeHandlePattern.exec(line);return match?[match[1]!]:[];
+  }))];
+}
 export function nativeLaunchHandle(output:string):string{
-  const match=nativeHandlePattern.exec(output);
-  if(!match)throw new BridgeError('claude_launch_unverified','Claude 后台启动命令的返回结果中没有可核验的会话 handle；已保留启动记录，请运行 nxbridge doctor。');return match[1]!;
+  const handles=nativeLaunchHandles(output);
+  if(handles.length!==1)throw new BridgeError('claude_launch_unverified','Claude 后台启动命令的返回结果中没有唯一可核验的会话 handle；已保留启动记录，请运行 nxbridge doctor。');return handles[0]!;
 }
                                                        
 export function failNativeLaunch(intent:NativeOwnership,error:unknown,neverSpawned=false):boolean{
   const value=error as {exitCode?:number;signal?:string;cause?:{stdout?:string;killed?:boolean}};
   if(nativeOwnership(intent.home,intent.peerId)?.id!==intent.id)return false;
-  const handle=nativeHandlePattern.exec(String(value.cause?.stdout??''))?.[1];
-  if(handle){saveNativeOwnership({...intent,handle});return false;}
+  const handles=nativeLaunchHandles(String(value.cause?.stdout??''));
+  if(handles.length){if(handles.length===1)saveNativeOwnership({...intent,handle:handles[0]});return false;}
   if(!neverSpawned&&(!value.exitCode||value.signal||value.cause?.killed))return false;
   saveNativeOwnership({...intent,phase:'failed',failure:String(error).slice(0,1200)});return true;
 }

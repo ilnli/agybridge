@@ -22,7 +22,7 @@ import {DeliveryHealth} from './delivery.js';
 import {noticeScope,unsettledCount,type RuntimeAvailability,type RuntimeNotice} from './contracts.js';
 import {readCodexThread} from '../../hosts/codex/codex-evidence.js';
 import {readCodexPendingTools} from '../../hosts/codex/codex-pending-tools.js';
-import {RuntimeIncidents} from './runtime-incidents.js';
+import {RuntimeIncidents,missingClaudeInboxModelText} from './runtime-incidents.js';
 import {SKIPPED} from '../fault-boundary.js';
 import {CommunicationTips} from '../delivery/communication-tips.js';
 import {IdleNotices} from './idle-notices.js';
@@ -73,9 +73,13 @@ export class BrokerHealthCoordinator {
   abortNotices():void{this.noticeAbort.abort();}
   resetTurnCheck():void{this.healthCheckedAt=0;}
   async waitForIdle():Promise<void>{while(this.healthRequests.size)await Promise.all(this.healthRequests);}
-  incidentViews(ids:string[]){return this.services.incidents.list(ids.map(id=>({peer:this.environment.store.peer(id),endpoint:this.runtimeEndpoint(id)})));}
+  incidentViews(ids:string[]){return this.services.incidents.list(ids.map(id=>({peer:this.environment.store.peer(id),endpoint:this.runtimeEndpoint(id)}))).map(value=>{
+    const recovery=this.services.managedRecovery.get(value.peerId);
+    if(value.code==='claude_inbox_missing'&&this.environment.store.peer(value.peerId).owner==='nxbridge'&&recovery&&['blocked','exhausted','unknown'].includes(recovery.state))return{...value,userText:'后台 Claude 接收消息的连接文件不见了，自动恢复没有成功（运行 nxbridge status 查看）',action:{owner:'user' as const,text:recovery.notice?.user_step??'运行 nxbridge status 查看原因。'}};
+    return value;
+  });}
 
-  incidentNotes(ids:string[]){return[...this.incidentViews(ids).filter(value=>value.state!=='recovering').map(value=>({incidentId:value.id,text:`Delivery unconfirmed since ${new Date(value.since).toISOString().slice(11,16)} UTC (${value.attempts} attempts, ${value.code}); messages kept, ${value.state==='blocked'?'same request held; inspect status action':'auto-retrying'}; do not resend.`})),...ids.flatMap(id=>{const pair=this.environment.store.pairFor(id);return pair?this.services.deliveryHealth.notes(pair.id,id):[];})].slice(0,3);}
+  incidentNotes(ids:string[],viewerId?:string){return[...this.incidentViews(ids).filter(value=>value.state!=='recovering').map(value=>({incidentId:value.id,text:value.code==='claude_inbox_missing'?missingClaudeInboxModelText(this.environment.store.peer(value.peerId),value.peerId===viewerId):`Delivery unconfirmed since ${new Date(value.since).toISOString().slice(11,16)} UTC (${value.attempts} attempts, ${value.code}); messages kept, ${value.state==='blocked'?'same request held; inspect status action':'auto-retrying'}; do not resend.`})),...ids.flatMap(id=>{const pair=this.environment.store.pairFor(id);return pair?this.services.deliveryHealth.notes(pair.id,id):[];})].slice(0,3);}
 
   deliveryGuidance(peer:Peer,pending?:number){
     const {store}=this.environment;
@@ -92,7 +96,11 @@ export class BrokerHealthCoordinator {
       this.hooks.requireEnabled(peer);
       const endpoint=this.runtimeEndpoint(peer.id),key=JSON.stringify([peer.sessionId,peer.owner,endpoint]),cached=this.runtimeProbes.get(peer.id);
       if(cached&&cached.key===key&&Date.now()-cached.at<2000&&!fresh)return cached.work;
-      const work=this.environment.adapters[peer.host].probe(peer,endpoint).catch(()=>({state:'unknown' as const,reasons:['runtime availability check failed'],checked_at:Date.now()}));this.runtimeProbes.set(peer.id,{key,at:Date.now(),work});return work;
+      const work=this.environment.adapters[peer.host].probe(peer,endpoint).then(value=>{
+                                                 
+        if(value.deliveryIssue==='claude_inbox_missing'&&this.runtimeEndpoint(peer.id)?.epoch===endpoint?.epoch&&this.environment.store.peer(peer.id).sessionId===peer.sessionId)this.services.incidents.failed(peer,endpoint,new BridgeError(value.deliveryIssue,'Claude inbox socket pathname missing'));
+        return value;
+      }).catch(()=>({state:'unknown' as const,reasons:['runtime availability check failed'],checked_at:Date.now()}));this.runtimeProbes.set(peer.id,{key,at:Date.now(),work});return work;
     }
 
   async deliveryAvailability(sender:Peer,partner:Peer):Promise<RuntimeAvailability>{

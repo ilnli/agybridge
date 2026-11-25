@@ -43,7 +43,12 @@ test('原生启动回执先于 PID 时持久绑定；前台、错误 handle 和�
   assert.equal(failNativeLaunch(intent,Object.assign(new Error('明确拒绝'),{exitCode:1,cause:{stdout:''}})),true);assert.equal(nativeOwnership(home,peer.id)?.phase,'failed');saveNativeOwnership(intent);
   assert.throws(()=>nativeLaunchHandle('后台命令已返回，但没有可核验 handle'),{code:'claude_launch_unverified'});
   assert.equal(nativeLaunchHandle('backgrounded · abc00001 (idle — send a prompt to start)'),'abc00001');
+  assert.equal(nativeLaunchHandle('backgrounded · abc00001\r\n  claude agents             list sessions\r\n  claude attach abc00001    open in this terminal\r\n'),'abc00001');
   assert.throws(()=>nativeLaunchHandle('backgrounded · abc00001oops (idle)'),{code:'claude_launch_unverified'});
+  const ambiguous='backgrounded · abc00001\nbackgrounded · abc00002 (idle)';
+  assert.throws(()=>nativeLaunchHandle(ambiguous),{code:'claude_launch_unverified'});
+  assert.equal(failNativeLaunch(intent,Object.assign(new Error('返回多个后台回执'),{exitCode:1,cause:{stdout:ambiguous}})),false);
+  assert.equal(nativeOwnership(home,peer.id)?.phase,'intent');assert.equal(nativeOwnership(home,peer.id)?.handle,undefined);
   const launched={...intent,handle:nativeLaunchHandle('backgrounded · abc00001 · 临时后台 (idle)')};saveNativeOwnership(launched);
   const agent={id:'abc00001',sessionId:'abc00001-0000-4000-8000-000000000001',kind:'background'};
   await assert.rejects(bindNativeLaunch(launched,{...agent,kind:'foreground'}),{code:'claude_launch_unverified'});

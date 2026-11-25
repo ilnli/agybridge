@@ -28,12 +28,17 @@ test('Codex 运行时准备和连接失败仍可安全重试，只有原生新�
 });
 
 test('Claude 原生创建在准备和启动守卫之后登记标记，标记失败结算未提交意图且不留下进程',async t=>{
-  if(process.platform==='linux')t.mock.method(process as typeof process&{getuid:()=>number},'getuid',()=>1000);
+  const actualUid=process.getuid?.();
   const home=temporary(t),store=new Store(':memory:'),peer=store.placeholder('claude',home),adapter=new ClaudeAdapter({...DEFAULT_CONFIG,claudeBinary:process.execPath,claudeHome:home},home);
   t.after(()=>{const binding=nativeOwnership(home,peer.id);if(binding)forgetNativeOwnership(binding);adapter.close();store.close();});
   writeFileSync(path.join(home,'settings.json'),JSON.stringify({skipDangerousModePermissionPrompt:true}),'utf8');
   let ready=false,marked=0;const failure=Error('标记处停止，禁止实际启动'),guardFailure=Error('启动守卫拒绝'),calls:string[]=[];
-  const create=()=>adapter.create(peer,()=>{calls.push('guard');if(!ready)throw guardFailure;},'bypass',()=>{marked++;calls.push('create');throw failure;});
+  const create=async()=>{
+                                        
+    const uid=process.platform==='linux'&&actualUid===0?t.mock.method(process as typeof process&{getuid:()=>number},'getuid',()=>1000):undefined;
+    try{return await adapter.create(peer,()=>{uid?.mock.restore();calls.push('guard');if(!ready)throw guardFailure;},'bypass',()=>{marked++;calls.push('create');throw failure;});}
+    finally{uid?.mock.restore();}
+  };
   writeFileSync(path.join(home,'.claude.json'),'{','utf8');
   await assert.rejects(create(),{code:'invalid_config'});assert.equal(marked,0);assert.equal(nativeOwnership(home,peer.id),undefined);assert.deepEqual(calls,[]);
   writeFileSync(path.join(home,'.claude.json'),'{}','utf8');
@@ -45,11 +50,15 @@ test('Claude 原生创建在准备和启动守卫之后登记标记，标记失�
 });
 
 test('Claude 子进程在提交前持久保存 UUID，标记失败后的重试复用同一会话身份',{skip:process.platform!=='linux'},async t=>{
-  t.mock.method(process as typeof process&{getuid:()=>number},'getuid',()=>1000);
+  const actualUid=process.getuid?.();
   const home=temporary(t),store=new Store(':memory:'),peer=store.placeholder('claude',home),config={...DEFAULT_CONFIG,claudeBinary:process.execPath,claudeHome:home};
   t.after(()=>store.close());writeFileSync(path.join(home,'settings.json'),JSON.stringify({skipDangerousModePermissionPrompt:true}),'utf8');
   const failure=Error('标记处停止，禁止 worker 启动'),ids:string[]=[];
-  const create=()=>ensureClaudeChild(home,config,peer,undefined,'bypass',()=>{const record=claudeChild(home,peer.id)!;assert.equal(record.phase,'starting');assert.equal(record.worker,undefined);ids.push(record.sessionId);throw failure;});
+  const create=async()=>{
+    const uid=actualUid===0?t.mock.method(process as typeof process&{getuid:()=>number},'getuid',()=>1000):undefined;
+    try{return await ensureClaudeChild(home,config,peer,()=>{uid?.mock.restore();},'bypass',()=>{const record=claudeChild(home,peer.id)!;assert.equal(record.phase,'starting');assert.equal(record.worker,undefined);ids.push(record.sessionId);throw failure;});}
+    finally{uid?.mock.restore();}
+  };
   await assert.rejects(create(),error=>error===failure);await assert.rejects(create(),error=>error===failure);
   assert.equal(ids.length,2);assert.match(ids[0]!,/^[a-f0-9-]{36}$/);assert.equal(ids[0],ids[1]);
 });

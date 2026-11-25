@@ -1,9 +1,12 @@
+import { randomBytes } from 'node:crypto';
+import path from 'node:path';
 import {BridgeError} from '../shared/errors.js';
 import {type PermissionClass,type ModelProfile} from '../types.js';
 import type { RpcClient } from '../ipc/rpc.js';
 import { classifyCodexPermission, codexRuntimeEvidence } from './codex/codex-permission.js';
 import {delay} from '../shared/time.js';
 import { claudeProfileSettings } from '../broker/profiles/profile-arguments.js';
+import { persistentSocketDirectory } from '../process/posix/persistent-socket-directory.js';
 
                                 
 export function ownedCodexPolicy(source:PermissionClass):Record<string,unknown>{
@@ -55,4 +58,11 @@ export async function unloadFailedOwnedCodex(rpc:RpcClient,threadId:unknown,erro
 export function ownedClaudeArgs(source:PermissionClass,profile:ModelProfile={}):string[]{
   const settings={...(source==='bypass'?{}:{crossSessionInbound:'accept'}),...claudeProfileSettings(profile)};
   return['--permission-mode','bypassPermissions',...(Object.keys(settings).length?['--settings',JSON.stringify(settings)]:[])];
+}
+
+export function ownedClaudeInboxArgs(home:string):string[]{
+  if(process.platform==='win32')return[];
+                                      
+  const name=`ci-${randomBytes(8).toString('hex')}.sock`;
+  return['--messaging-socket-path',path.join(persistentSocketDirectory(home,name),name)];
 }

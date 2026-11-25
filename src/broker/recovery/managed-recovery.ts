@@ -75,6 +75,12 @@ export function recoveryUserStep(peer:Pick<Peer,'host'|'cwd'>,incident:ManagedIn
       return `在 ${peer.host} 里确认后台运行、审批和收信设置（${home}）`;
     case 'claude_native_recovery_waiting':
       return `后台 Claude 的原会话卡在 Claude 的后台列表里，超过一分钟没有恢复。请用平时启动 Claude 的方式（${home}）在终端运行 claude agents，找到会话 ${sid} 那一行，再运行 claude stop <那一行的 ID>。这只是停掉卡住的后台进程，对话不会删除；nxbridge 随后会自动接着原会话运行，消息都还在`;
+    case 'claude_inbox_idle_unverified':
+      return '无法证明当前后台可以安全重启，已保留原会话；下一次正常恢复会改用持久目录中的消息连接。运行 nxbridge status 查看';
+    case 'claude_inbox_scheduled_work':
+      return '等原会话的后台任务和定时任务结束；核验空闲后会自动接着同一会话，消息已保留';
+    case 'claude_inbox_delivery_unsettled':
+      return '运行 nxbridge status 核对原消息的接收情况；结果不明的发送不会自动重放';
     default:
       return '运行 nxbridge status 查看原因';
   }

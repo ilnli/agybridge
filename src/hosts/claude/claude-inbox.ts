@@ -13,6 +13,16 @@ import { storageError, StorageBusyError, preSubmitError } from '../../storage/st
 
 export interface SessionRecord {sessionId:string;cwd:string;procStart?:string;procStartFt?:string;pidDomain?:string;pid?:number;name?:string;status?:string;messagingSocketPath?:string}
 
+                                       
+export function verifyClaudeInbox(address:string):void{
+  let stat:ReturnType<typeof lstatSync>;
+  try{stat=lstatSync(address);}catch(error){
+    if((error as NodeJS.ErrnoException).code==='ENOENT')throw new DeliveryError('claude_inbox_missing','Claude 原生进程仍在运行，但消息 socket 路径已丢失；待发消息已保留。');
+    throw error;
+  }
+  if(!stat.isSocket()||stat.isSymbolicLink()||stat.uid!==process.getuid?.())throw new DeliveryError('invalid_inbox','Claude inbox 不是当前用户的 Unix socket。');
+}
+
 export function canonicalPipe(address:string):string {
   const match=/^[\\/]{2}[.?][\\/]pipe[\\/](?:(LOCAL)[\\/])?([^\\/]+)$/i.exec(address);
   if(!match||match[2]==='.'||match[2]==='..'||/[. ]$/.test(match[2]!)||(address.startsWith('\\\\?\\')&&address.includes('/')))throw new BridgeError('invalid_inbox','无效的 Claude Windows inbox 管道。');
@@ -49,8 +59,7 @@ export async function deliverClaudeInbox(peer:Peer,endpoint:Endpoint,message:Del
       if(typeof key.peerToken!=='string'||!key.peerToken||(key.procStartFt??key.procStart??null)!==endpoint.procStart)throw new DeliveryError('peer_key_mismatch','Claude peer key 与当前进程不匹配。');
       token=key.peerToken;
     }else{
-      const stat=lstatSync(endpoint.address);
-      if(!stat.isSocket()||stat.isSymbolicLink()||stat.uid!==process.getuid?.())throw new DeliveryError('invalid_inbox','Claude inbox 不是当前用户的 Unix socket。');
+      verifyClaudeInbox(endpoint.address);
       reply=await replyAddress?.();
     }
   }catch(error){throw preSubmitError(error instanceof DeliveryError?error:new DeliveryError('inbox_preflight',describeError(error)),'inbox.preflight','enqueue');}

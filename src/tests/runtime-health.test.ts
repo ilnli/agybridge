@@ -44,9 +44,11 @@ test('真实进程与端点探测分别核验代次、死亡和套接字，不�
   assert.deepEqual(await probeProcesses([{pid:child.pid!,procStart:native.startedAt},{pid:child.pid!,procStart:'wrong-generation'},{pid:child.pid!,procStart:''}]),['alive','dead','unknown']);
   assert.equal((await probePeerRuntime(peer,endpoint)).state,'reachable');
   await new Promise<void>(resolve=>server.close(()=>resolve()));listening=false;
-  const transport=await probePeerRuntime(peer,endpoint);assert.equal(transport.state,'blocked');assert.match(transport.reasons.join(),/inbox endpoint unreachable/);
+  const transport=await probePeerRuntime(peer,endpoint);assert.equal(transport.state,'blocked');assert.equal(transport.nativeState,'alive');
+  if(process.platform==='win32')assert.match(transport.reasons.join(),/inbox endpoint unreachable/);
+  else{assert.equal(transport.deliveryIssue,'claude_inbox_missing');assert.match(transport.reasons.join(),/inbox socket pathname missing/);}
   const exit=once(child,'exit');child.kill();await exit;
-  const dead=await probePeerRuntime(peer,endpoint);assert.match(dead.reasons.join(),/native host exited or PID generation changed/);
+  const dead=await probePeerRuntime(peer,endpoint);assert.match(dead.reasons.join(),/native host exited or PID generation changed/);assert.equal(dead.deliveryIssue,undefined);
   const ws=new WebSocketServer({host:'127.0.0.1',port:0});await once(ws,'listening');
   const wsAddress=`ws://127.0.0.1:${(ws.address() as net.AddressInfo).port}`;assert.equal(await probeAppServer(wsAddress),true);
   for(const socket of ws.clients)socket.terminate();await new Promise<void>(resolve=>ws.close(()=>resolve()));assert.equal(await probeAppServer(wsAddress),false);

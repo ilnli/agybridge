@@ -21,7 +21,7 @@ import { rotateLog } from '../../storage/logs.js';
 import {ownedProcesses,recordOwnedProcess,registerCurrentProcess,releaseOwnedProcess,rememberOwnedChild,type OwnedProcessRecord} from '../../process/owned-processes.js';
 import { ownedProcessState, stopOwnedProcess } from '../../process/process-stop.js';
 import { disabledMember } from '../../broker/member-control.js';
-import { ownedClaudeArgs } from '../owned-launch-policy.js';
+import { ownedClaudeArgs, ownedClaudeInboxArgs } from '../owned-launch-policy.js';
 import { requireClaudeBypassConsent } from './claude-autonomy.js';
 import type { PermissionClass } from '../../types.js';
 import { restoreState } from '../../broker/pairing/pair-restore.js';
@@ -186,7 +186,7 @@ export async function runClaudeWorker(peerId:string):Promise<void>{
     const launch=await prepareOwnedLaunch(await selectSessionLaunch('claude',loadConfig(home),{cwd:state.cwd,home,sessionId:state.hasSession?state.sessionId:undefined,configHome:state.configHome,executable:state.executable,profileId:state.profileId}));
     if(disabledMember(home,{host:'claude',memberId:peerId}))throw new BridgeError('member_disabled','此成员的 nxbridge 已关闭，未启动原生后台。');
     const profile=state.modelProfile??{},settings=claudeProfileSettings(profile),permissionArgs=state.launchSourcePermission!==undefined?ownedClaudeArgs(state.launchSourcePermission,profile):Object.keys(settings).length?['--settings',JSON.stringify(settings)]:[];
-    child=spawnSelectedHost(launch,['-p',state.hasSession?'--resume':'--session-id',state.sessionId,'--input-format','stream-json','--output-format','stream-json','--verbose','--include-partial-messages','--permission-prompt-tool','stdio',...permissionArgs,...claudeProfileArgs(profile)],{stdio:['pipe','pipe','pipe']});
+    child=spawnSelectedHost(launch,['-p',state.hasSession?'--resume':'--session-id',state.sessionId,'--input-format','stream-json','--output-format','stream-json','--verbose','--include-partial-messages','--permission-prompt-tool','stdio',...permissionArgs,...claudeProfileArgs(profile),...ownedClaudeInboxArgs(home)],{stdio:['pipe','pipe','pipe']});
     let buffer='';child.stdout!.setEncoding('utf8');child.stdout!.on('data',(chunk:string)=>{
       buffer+=chunk;if(buffer.length>2*1024*1024){buffer='';state.error='Claude 原生输出行超过控制解析上限。';return;}
       let at:number;while((at=buffer.indexOf('\n'))>=0){const line=buffer.slice(0,at);buffer=buffer.slice(at+1);try{const message=JSON.parse(line);if(message.type==='control_response'){const p=pending.get(message.response?.request_id);if(p){clearTimeout(p.timer);pending.delete(message.response.request_id);message.response.subtype==='success'?p.resolve(message.response.response):p.reject(new BridgeError('claude_control_rejected','Claude 拒绝了控制请求。'));}}health.observe(message);dirty=true;}catch{}}
