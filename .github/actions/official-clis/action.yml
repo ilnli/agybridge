@@ -1,5 +1,5 @@
 name: Official CLIs
-description: Install pinned official Codex CLI (and optional Antigravity CLI) into a cached prefix and put them on PATH.
+description: Install pinned official Codex CLI and official Antigravity CLI into a cached prefix and put them on PATH.
 
 inputs:
   codex:
@@ -10,6 +10,9 @@ outputs:
   codex:
     description: Resolved Codex version
     value: ${{ steps.versions.outputs.codex }}
+  agy:
+    description: Resolved Antigravity CLI version
+    value: ${{ steps.versions.outputs.agy }}
 
 runs:
   using: composite
@@ -24,20 +27,47 @@ runs:
         CODEX=${CODEX:-$CODEX_PIN}
         resolve() { if [ "$2" = latest ]; then npm view "$1" version; else echo "$2"; fi; }
         codex=$(resolve @openai/codex "$CODEX")
+        agy=$(node --input-type=module -e '
+          const os = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "darwin" : "linux";
+          const arch = process.arch === "arm64" ? "arm64" : "amd64";
+          const url = `https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/${os}_${arch}.json`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`Failed to fetch ${url}: ${res.status}`);
+          const data = await res.json();
+          if (!data.version) throw new Error("Missing version in Antigravity CLI manifest");
+          process.stdout.write(String(data.version).trim());
+        ')
         echo "codex=$codex" >> "$GITHUB_OUTPUT"
-        echo "key=official-clis-v1-$RUNNER_OS-$RUNNER_ARCH-$ImageOS-codex$codex" >> "$GITHUB_OUTPUT"
+        echo "agy=$agy" >> "$GITHUB_OUTPUT"
+        echo "key=official-clis-v2-$RUNNER_OS-$RUNNER_ARCH-$ImageOS-codex$codex-agy$agy" >> "$GITHUB_OUTPUT"
     - name: Restore CLIs
       id: restore
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ~/.agybridge-ci/cli
         key: ${{ steps.versions.outputs.key }}
-    - name: Install CLIs
+    - name: Install Codex CLI
       if: steps.restore.outputs.cache-hit != 'true'
       shell: bash
       env:
         CODEX: ${{ steps.versions.outputs.codex }}
       run: npm install --global --no-fund --no-audit --prefix "$HOME/.agybridge-ci/cli" "@openai/codex@$CODEX"
+    - name: Install Antigravity CLI (Unix)
+      if: steps.restore.outputs.cache-hit != 'true' && runner.os != 'Windows'
+      shell: bash
+      run: |
+        mkdir -p "$HOME/.agybridge-ci/cli/bin"
+        curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir "$HOME/.agybridge-ci/cli/bin"
+    - name: Install Antigravity CLI (Windows)
+      if: steps.restore.outputs.cache-hit != 'true' && runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $target = Join-Path $HOME '.agybridge-ci\cli'
+        New-Item -ItemType Directory -Force -Path $target | Out-Null
+        $installer = Join-Path $env:RUNNER_TEMP 'install-agy.ps1'
+        Invoke-RestMethod -Uri 'https://antigravity.google/cli/install.ps1' -OutFile $installer
+        & $installer --dir $target --skip-path --skip-aliases
+        Remove-Item $installer -Force -ErrorAction SilentlyContinue
     - name: Save CLIs
       if: steps.restore.outputs.cache-hit != 'true'
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -66,6 +96,9 @@ runs:
       env:
         DISABLE_AUTOUPDATER: '1'
         CODEX: ${{ steps.versions.outputs.codex }}
+        AGY: ${{ steps.versions.outputs.agy }}
       run: |
         codex_seen=$(codex --version); echo "$codex_seen"
         case "$codex_seen" in *"$CODEX"*) ;; *) echo "::error::codex reports '$codex_seen', expected $CODEX"; exit 1;; esac
+        agy_seen=$(agy --version); echo "$agy_seen"
+        case "$agy_seen" in *"$AGY"*) ;; *) echo "::error::agy reports '$agy_seen', expected $AGY"; exit 1;; esac

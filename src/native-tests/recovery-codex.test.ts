@@ -37,7 +37,7 @@ test('实际 Codex 自动压缩恢复；超时 hook 的取件保留未知且不�
     rpcMethods.push(method);
     if(method==='launch.capture'){
       const captured=(params as {env:Record<string,string>}).env;
-      assert.equal(captured.AGYBRIDGE_HOME,home,'原生 MCP 不能回落到真实 nxbridge 目录');
+      assert.equal(captured.AGYBRIDGE_HOME,home,'原生 MCP 不能回落到真实 agybridge 目录');
       assert.equal(captured.CODEX_HOME,codexhome,'原生 MCP 不能回落到真实 Codex 配置');
     }
     const result:any=await broker.dispatch(method,params);
@@ -62,7 +62,7 @@ test('实际 Codex 自动压缩恢复；超时 hook 的取件保留未知且不�
   await new Promise<void>(resolve=>model.listen(0,'127.0.0.1',resolve));let client:Awaited<ReturnType<typeof connectAppServer>>|undefined;
   const events=()=>existsSync(eventfile)?readFileSync(eventfile,'utf8').trim().split('\n').filter(Boolean).map(line=>JSON.parse(line)):[];
   t.after(async()=>{try{
-    if(!passed)t.diagnostic(JSON.stringify({usedStatus,summarySeen,rpcMethods,events:events(),notifications:notifications.filter(n=>/hook|mcp|error/i.test(n.method)||/mcp|error/i.test(JSON.stringify(n.params?.item))).slice(-12),requests:requests.map(r=>({outputs:r.input?.filter((i:any)=>i.type==='function_call_output'),last:r.input?.at(-1),tools:r.tools?.filter((v:any)=>/claude/.test(v.name)).map((v:any)=>({name:v.name,tools:v.tools?.map((t:any)=>t.name)}))})),errors}));
+    if(!passed)t.diagnostic(JSON.stringify({usedStatus,summarySeen,rpcMethods,events:events(),notifications:notifications.filter(n=>/hook|mcp|error/i.test(n.method)||/mcp|error/i.test(JSON.stringify(n.params?.item))).slice(-12),requests:requests.map(r=>({outputs:r.input?.filter((i:any)=>i.type==='function_call_output'),last:r.input?.at(-1),tools:r.tools?.filter((v:any)=>/agy/.test(v.name)).map((v:any)=>({name:v.name,tools:v.tools?.map((t:any)=>t.name)}))})),errors}));
     client?.close();await server.close();await broker.stop();store.close();model.closeAllConnections();await new Promise<void>(resolve=>model.close(()=>resolve()));await temp.cleanup();
   }finally{restoreEnvironment();}});
   const wrapper=path.join(root,'hook.cjs'),entry=path.join(PACKAGE_ROOT,'publish/agybridge.mjs');
@@ -88,9 +88,9 @@ test('实际 Codex 自动压缩恢复；超时 hook 的取件保留未知且不�
   broker.recovery.checkpoint({host:'codex',memberId:nativePeer.id,sessionId:thread.id,callId:'checkpoint'},{action:'set',path:checkpoint});
   await client!.request('turn/start',{threadId:thread.id,input:[{type:'text',text:'单轮自动压缩恢复验收'}]});await wait(()=>done,'单轮自动压缩未完成',65000);
   assert.ok(usedStatus,'实际模型没有调用 MCP');assert.ok(rpcMethods.includes('mcp.register'),'MCP 必须登记到隔离协调器');assert.ok(summarySeen,'没有发生原生自动压缩');assert.ok(nativePeer&&pair&&noticeId);
-  const compactDuringTurn=events().some(e=>e.event==='SessionStart'&&e.source==='compact'),during=JSON.stringify(requests).includes('nxbridge recovery facts rev ');
+  const compactDuringTurn=events().some(e=>e.event==='SessionStart'&&e.source==='compact'),during=JSON.stringify(requests).includes('agybridge recovery facts rev ');
   if(!during){done=false;await client!.request('turn/start',{threadId:thread.id,input:[{type:'text',text:'压缩后的正常下一轮'}]});await wait(()=>done,'下一轮恢复未完成');}
-  const grounded=requests.flatMap(r=>r.input??[]).flatMap((m:any)=>m.content??[]).map((c:any)=>c.text??'').filter((text:string)=>text.includes('nxbridge recovery facts rev '));assert.ok(grounded.length,'原生模型未收到恢复事实');assert.ok(grounded.some((text:string)=>text.includes('checkpoint '+JSON.stringify(path.resolve(checkpoint)))));
+  const grounded=requests.flatMap(r=>r.input??[]).flatMap((m:any)=>m.content??[]).map((c:any)=>c.text??'').filter((text:string)=>text.includes('agybridge recovery facts rev '));assert.ok(grounded.length,'原生模型未收到恢复事实');assert.ok(grounded.some((text:string)=>text.includes('checkpoint '+JSON.stringify(path.resolve(checkpoint)))));
   assert.ok(requests.some(r=>JSON.stringify(r).includes(CODEX_DEVELOPER_ANCHOR)));assert.ok(requests.every(r=>!JSON.stringify(r).includes('NATIVE_TIMEOUT_NOTICE')),'超时 hook 的取件正文进入了模型');
   const notice=store.setting<any>(deliveryHealthKey(pair.id,nativePeer.id)).notices.find((n:any)=>n.id===noticeId);assert.equal(notice.state,'unknown');assert.equal(broker.deliveryHealth.take(pair.id,nativePeer.id).some(n=>n.id===noticeId),false);
   assert.ok(notifications.some(n=>n.method==='hook/completed'&&n.params?.run?.status==='failed'),'原生宿主没有确认预期的超时');assert.equal(errors.length,0);passed=true;

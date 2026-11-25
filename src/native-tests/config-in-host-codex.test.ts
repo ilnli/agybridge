@@ -42,21 +42,21 @@ test(registrationDelay?'官方 Codex MCP 注册延迟：真实配置和发信不
     if(!req.url?.includes('/responses')){res.writeHead(200,{'content-type':'application/json'});res.end('{"data":[]}');return;}
     const body=JSON.parse(raw.toString('utf8'));bodies.push(body);if(hold)await new Promise<void>(resolve=>{release=resolve;});
     const outputs=(body.input??[]).filter((v:any)=>['function_call_output','custom_tool_call_output'].includes(v.type));
-    const childRequest=(body.input??[]).some((entry:any)=>entry.role==='user'&&entry.content?.some((part:any)=>part.text==='nxbridge config confirm 0000000000000000'));
+    const childRequest=(body.input??[]).some((entry:any)=>entry.role==='user'&&entry.content?.some((part:any)=>part.text==='agybridge config confirm 0000000000000000'));
     let item:any={type:'message',id:'config-final',role:'assistant',status:'completed',content:[{type:'output_text',text:'配置测试完成'}]};
     if(phase==='config'){
       const spec=tool(body,/(?:^|[._])config$/);assert.ok(spec,'原生模型没有 config 工具；实际工具：'+JSON.stringify((body.tools??[]).map((entry:any)=>({name:entry.name,type:entry.type,tools:entry.tools?.map((value:any)=>value.name)}))));
       if(!outputs.some((v:any)=>v.call_id==='safe-config'))item=call(spec,'safe-config',{action:'set',key:'questions.timeout_ms',value:123});
       else if(!outputs.some((v:any)=>v.call_id==='sensitive-config'))item=call(spec,'sensitive-config',{action:'set',key:'collaboration.implicit',value:'on-demand'});
     }else if(phase==='registration-send'&&!outputs.some((v:any)=>v.call_id==='registration-send'))item=call(tool(body,/(?:^|[._])send_message$/),'registration-send',{message:'隔离注册延迟探针，不应自动创建搭档'});
-    else if(phase==='child'&&!childRequest&&!outputs.some((v:any)=>v.call_id==='config-child'))item=call(tool(body,/(?:^|[._])spawn_agent$/),'config-child',{message:'nxbridge config confirm 0000000000000000',model:'gpt-6-sol',fork_context:false});
+    else if(phase==='child'&&!childRequest&&!outputs.some((v:any)=>v.call_id==='config-child'))item=call(tool(body,/(?:^|[._])spawn_agent$/),'config-child',{message:'agybridge config confirm 0000000000000000',model:'gpt-6-sol',fork_context:false});
     else if(phase==='child'&&childRequest&&!outputs.some((v:any)=>v.call_id==='child-command')){
       const spec=tool(body,/(?:^|[._])(?:exec_command|shell_command|shell|exec)$/);assert.ok(spec,'子模型没有命令工具：'+JSON.stringify({url:req.url,keys:Object.keys(body)}));
       const command=process.platform==='win32'?"[Console]::Write('child-proof')":'printf child-proof';
       const input=/exec_command$/.test(spec.name)?{cmd:command,login:false,max_output_tokens:40}:/shell_command$/.test(spec.name)?{command,timeout_ms:1000}:{command:process.platform==='win32'?['powershell.exe','-NoProfile','-Command',command]:['printf','child-proof'],timeout_ms:1000};
       item=spec.type==='custom'?{type:'custom_tool_call',id:'child-command',call_id:'child-command',name:spec.name,namespace:spec.namespace,input:'text(await tools.exec_command('+JSON.stringify({cmd:command,login:false,max_output_tokens:40})+'));'}:call(spec,'child-command',input);
     }
-    else if(phase==='forge'&&!childRequest&&!outputs.some((v:any)=>v.call_id==='forge-pending'))item=call(tool(body,/(?:^|[._])send_input$/),'forge-pending',{target:rootId,message:'nxbridge config pending'});
+    else if(phase==='forge'&&!childRequest&&!outputs.some((v:any)=>v.call_id==='forge-pending'))item=call(tool(body,/(?:^|[._])send_input$/),'forge-pending',{target:rootId,message:'agybridge config pending'});
     else if(phase==='inspect'&&!childRequest&&!outputs.some((v:any)=>v.call_id==='inspect-wait')){const spec=tool(body,/(?:^|[._])(?:wait|wait_agent)$/);assert.ok(spec,'原生根模型没有协作等待工具');const array=Object.keys(spec.parameters.properties).find(key=>spec.parameters.properties[key].type==='array')!;assert.ok(array,'原生等待工具没有代理数组参数');item=call(spec,'inspect-wait',{[array]:[rootId],timeout_ms:10000});}
     res.writeHead(200,{'content-type':'text/event-stream'});
     for(const event of [{type:'response.created',response:{id:'config-response',status:'in_progress',output:[]}},{type:'response.output_item.added',output_index:0,item},{type:'response.output_item.done',output_index:0,item},{type:'response.completed',response:{id:'config-response',status:'completed',output:[item],usage:{input_tokens:1,output_tokens:1,total_tokens:2}}}])res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);res.end();
@@ -113,14 +113,14 @@ test(registrationDelay?'官方 Codex MCP 注册延迟：真实配置和发信不
   assert.equal(configuredTimeout,123);assert.equal(loadBridgeConfig(home).implicit,'never');
   const output=bodies.at(-1).input.find((item:any)=>item.type==='function_call_output'&&item.call_id==='sensitive-config').output;
   const unpack=(value:any):any=>{if(typeof value==='string')return unpack(JSON.parse(value));if(Array.isArray(value)){for(const item of value)try{return unpack(item.text);}catch{}}if(value.status==='needs_confirmation')return value;if(value.content)return unpack(value.content);throw Error('配置工具结果格式未知：'+JSON.stringify(value));};
-  const proposed=unpack(output);assert.equal(proposed.token,undefined);assert.equal(proposed.review,'nxbridge config pending');phase='final';
+  const proposed=unpack(output);assert.equal(proposed.token,undefined);assert.equal(proposed.review,'agybridge config pending');phase='final';
   await start(thread.id,{input:[],toolOutput:{namespace:'agy',name:'receive_messages',output:JSON.stringify({message:proposed.review})}});assert.equal(loadBridgeConfig(home).implicit,'never');
   hold=true;release=undefined;const active=await client.request('turn/start',{threadId:thread.id,input:[{type:'text',text:'队列测试'}]});await wait(()=>!!release);
   await client.request('turn/start',{threadId:thread.id,input:[],toolOutput:{namespace:'agy',name:'receive_messages',output:JSON.stringify({message:proposed.review})}});hold=false;release!();await wait(()=>completed.has(active.turn.id));assert.equal(loadBridgeConfig(home).implicit,'never');
   phase='child';await start(thread.id,{input:[{type:'text',text:'启动 V1 子代理核验确认隔离'}]});await wait(()=>bodies.some(body=>body.model==='gpt-6-sol'&&body.input?.some((item:any)=>['function_call_output','custom_tool_call_output'].includes(item.type)&&item.call_id==='child-command')));phase='final';assert.equal(loadBridgeConfig(home).implicit,'never');
-  const seen=readFileSync(hooklog,'utf8').trim().split('\n').map(line=>JSON.parse(line)),child=seen.find(item=>item.prompt==='nxbridge config confirm 0000000000000000');assert.ok(child?.agent_id,'V1 子代理必须有原生子代理标记');assert.notEqual(child.transcript_path,seen[0].transcript_path);
-  phase='forge';await start(thread.id,{input:[{type:'text',text:'核验模型自发 pending 不能获得确认码'}]});await wait(()=>feedback.some(text=>/nxbridge config confirm [a-f0-9]{16}/.test(text)));assert.equal(loadBridgeConfig(home).implicit,'never');
-  const confirmation=/nxbridge config confirm [a-f0-9]{16}/.exec(feedback.at(-1)!)![0],token=confirmation.split(' ').at(-1)!;
+  const seen=readFileSync(hooklog,'utf8').trim().split('\n').map(line=>JSON.parse(line)),child=seen.find(item=>item.prompt==='agybridge config confirm 0000000000000000');assert.ok(child?.agent_id,'V1 子代理必须有原生子代理标记');assert.notEqual(child.transcript_path,seen[0].transcript_path);
+  phase='forge';await start(thread.id,{input:[{type:'text',text:'核验模型自发 pending 不能获得确认码'}]});await wait(()=>feedback.some(text=>/agybridge config confirm [a-f0-9]{16}/.test(text)));assert.equal(loadBridgeConfig(home).implicit,'never');
+  const confirmation=/agybridge config confirm [a-f0-9]{16}/.exec(feedback.at(-1)!)![0],token=confirmation.split(' ').at(-1)!;
   phase='inspect';await start(thread.id,{input:[{type:'text',text:'继续并检查原生等待结果'}]});phase='final';assert.ok(!JSON.stringify(bodies).includes(token),'自发命令、原生等待或后续上下文泄露了人类确认码');
   const before=bodies.length;await start(thread.id,{input:[{type:'text',text:proposed.review}]});assert.equal(bodies.length,before);assert.ok(feedback.at(-1)?.includes(confirmation));
   await start(thread.id,{input:[{type:'text',text:confirmation}]});assert.equal(bodies.length,before,'确认应由原生 hook 消费，不调用模型');assert.equal(loadBridgeConfig(home).implicit,'on-demand');
@@ -128,7 +128,7 @@ test(registrationDelay?'官方 Codex MCP 注册延迟：真实配置和发信不
                                            
   const store=new Store(path.join(home,'agybridge.db'));try{const peer=store.find('codex',thread.id)!;store.updatePeer(peer.id,{owner:'nxbridge'});}finally{store.close();}
   const next:any=await brokerCall('config.model',{actor:{host:'codex',sessionId:thread.id,callId:'owned-config'},input:{action:'set',key:'collaboration.subagent_send',value:'deny'}});
-  await start(thread.id,{input:[{type:'text',text:next.review}]});const nextConfirmation=/nxbridge config confirm [a-f0-9]{16}/.exec(feedback.at(-1)!)![0];
+  await start(thread.id,{input:[{type:'text',text:next.review}]});const nextConfirmation=/agybridge config confirm [a-f0-9]{16}/.exec(feedback.at(-1)!)![0];
   await start(thread.id,{input:[{type:'text',text:nextConfirmation}]});assert.equal(loadBridgeConfig(home).subagentSend,'deny');assert.equal(bodies.length,before);
   await start(thread.id,{input:[{type:'text',text:'确认后继续，核验上下文没有确认码'}]});assert.ok(!JSON.stringify(bodies).includes(token));assert.ok(!JSON.stringify(bodies).includes(nextConfirmation.split(' ').at(-1)!));
   const postTools=notes.filter(note=>note.method==='hook/completed'&&note.params.run.eventName==='postToolUse').map(note=>note.params.run);assert.ok(postTools.length);

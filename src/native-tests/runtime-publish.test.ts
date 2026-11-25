@@ -38,7 +38,7 @@ test('发布安装器：来源移走后修复、显式来源更新及从已安�
   const source=path.join(directory,'source'),first=await revision(source,'第一版验收');
   const installed=await run(path.join(source,'agybridge.mjs'),['setup','--bin-dir',bin]);
   assert.equal(installed.runtime.buildId,first.buildId);
-  const codexBundle=path.join(env.CODEX_HOME,'plugins','cache','agybridge-local','nxbridge',VERSION),bundleBefore=fileHashes(codexBundle);
+  const codexBundle=path.join(env.CODEX_HOME,'plugins','cache','agybridge-local','agybridge',VERSION),bundleBefore=fileHashes(codexBundle);
   const baseline=await run(launcher,['config','get','questions.timeout_ms']);assert.equal(baseline.source,'managed-toml');
   const userFile=path.join(home,'config.toml'),userText='\ufeff# 用户配置原字节保留\r\nnote="""\r\n多行说明\r\n"""\r\n[questions]\r\ntimeout_ms=321\r\n';writeFileSync(userFile,userText,'utf8');
   const override=await run(launcher,['config','get','questions.timeout_ms']);assert.equal(override.value,321);assert.equal(override.shadowed,DEFAULT_CONFIG.questionTimeoutMs);assert.equal(override.source,'user-toml');assert.equal(override.editable,false);
@@ -49,7 +49,7 @@ test('发布安装器：来源移走后修复、显式来源更新及从已安�
   assert.equal(repaired.runtime.buildId,first.buildId);assert.ok(repaired.notes.some((note:string)=>note.includes('原来的安装来源已经不在了')));
   assert.deepEqual(fileHashes(codexBundle),bundleBefore,'修复运行时不能改变已安装插件的信任指纹');
   const independent=await execute(process.execPath,['--no-warnings',launcher,'--version'],{cwd:directory,env:{...env,PATH:''},windowsHide:true,timeout:15000});
-  assert.equal(independent.stdout.trim(),'nxbridge '+VERSION);
+  assert.equal(independent.stdout.trim(),'agybridge '+VERSION);
   const nextSource=path.join(directory,'新来源'),second=await revision(path.join(nextSource,'publish'),'第二版验收');
   const recoveryFixture=path.join(directory,'recovery-fixture.json');atomicJson(recoveryFixture,{home,from:nextSource,binDirectory:bin,pathValue:env.PATH});
   const recoveryWorker=`import {readFileSync} from 'node:fs';import {setup} from ${JSON.stringify(new URL('../install/setup.js',import.meta.url).href)};const f=JSON.parse(readFileSync(process.argv[1],'utf8'));await setup({home:f.home,from:f.from,binDirectory:f.binDirectory},{pathValue:f.pathValue,binDirectories:[f.binDirectory],checkpoint:step=>{if(step==='activation:write:2')process.exit(79);}});`;
@@ -63,7 +63,7 @@ test('发布安装器：来源移走后修复、显式来源更新及从已安�
   assert.equal(readFileSync(userFile,'utf8'),userText);assert.equal((await run(launcher,['config','get','questions.timeout_ms'])).value,321);
   const removed=await run(launcher,['uninstall','--purge']);
   assert.equal(removed.removed,true,JSON.stringify(removed));assert.equal(removed.purged,true,JSON.stringify(removed));assert.equal(existsSync(home),false);
-  assert.equal(existsSync(path.join(bin,process.platform==='win32'?'nxbridge.cmd':'nxbridge')),false);
+  assert.equal(existsSync(path.join(bin,process.platform==='win32'?'agybridge.cmd':'agybridge')),false);
   assert.match(readFileSync(path.join(env.CODEX_HOME,'config.toml'),'utf8'),/model_verbosity = "low"/);
   assert.equal(existsSync(path.join(nextSource,'publish','agybridge.mjs')),true,'卸载不能删除发布来源');
 });

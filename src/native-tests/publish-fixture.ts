@@ -14,6 +14,14 @@ import { ownsFile } from '../install/installation.js';
 import { liveProcess, processIdentity } from '../process/process.js';
 
 const execute=promisify(execFile);
+export function publishPath(home:string,pathValue=process.env.PATH??''):string[]{
+  const shims=['agybridge','agybridge.cmd','agybridge.ps1','agybridge.cjs','agybridge.exe'];
+  return pathValue.split(path.delimiter).filter(directory=>directory&&!shims.some(name=>{
+    const file=path.join(directory,name);
+    return existsSync(file)&&!ownsFile(file,home);
+  }));
+}
+
 export function publishEnvironment(home:string,bin:string,input:NodeJS.ProcessEnv=process.env):NodeJS.ProcessEnv{
   const config=loadConfig(home);
   if(input.CODEX_HOME)config.codexHome=input.CODEX_HOME;
@@ -33,8 +41,7 @@ export function publishEnvironment(home:string,bin:string,input:NodeJS.ProcessEn
   }
   writeConfiguration(home,CONFIG_FIELDS.filter(field=>!field.immutable&&configValue(config,field.internal)!==undefined).map(field=>({key:field.key,value:configValue(config,field.internal)})),'setup');
                                                
-  const directories=(input.PATH??'').split(path.delimiter).filter(directory=>!['nxbridge','nxbridge.cmd','nxbridge.ps1','agybridge.cjs','nxbridge.exe'].some(name=>{const file=path.join(directory,name);return existsSync(file)&&!ownsFile(file,home);}));
-  return{...input,PATH:[bin,...directories].join(path.delimiter)};
+  return{...input,PATH:[bin,...publishPath(home,input.PATH)].join(path.delimiter)};
 }
                                             
 export async function setupPublish():Promise<any>{

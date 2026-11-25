@@ -74,19 +74,19 @@ test('官方 TUI 与已记录原生启动环境的专用后台 UA 逐字一致�
   const readOnly=await connectAppServer(endpoint,profileConfig,undefined,home,{readOnly:true});
   try{await readOnly.request('thread/loaded/list');}finally{await readOnly.close();}
   const afterReadOnly=await turn('IDENTITY_AFTER_READ_ONLY');await rpc!.close();rpc=undefined;
-  const claudeFirstHome=path.join(root,'claude-first'),agyHome=path.join(root,'agy');mkdirSync(claudeFirstHome);mkdirSync(agyHome);
-  const claudeLaunch=selectHostLaunch('agy',{...DEFAULT_CONFIG,agyHome},{home:claudeFirstHome,cwd:root});
-  claudeLaunch.env.DISABLE_AUTOUPDATER='1';
-  for(const key of codexTerminalVariables){delete claudeLaunch.env[key];if(env[key]!==undefined)claudeLaunch.env[key]=env[key];}
-  const claude=spawnSelectedHost(claudeLaunch,['--print','--input-format','stream-json','--output-format','stream-json','--verbose'],{stdio:['pipe','ignore','pipe']});
-  claude.stderr!.on('data',chunk=>output=(output+chunk.toString()).slice(-3500));await rememberOwnedHost(home,claude,'agy','host-control',launchId,agyHome);
-  const claudeNative=await nativeDescendant(claude.pid!,'agy',0),claudePeer=store.register(registration('agy','identity-claude-first',{cwd:root}));
-  await captureUserLaunch(claudeFirstHome,{host:'agy',sessionId:claudePeer.sessionId!,nativePid:claudeNative.pid,nativeGeneration:claudeNative.startedAt,sourcePid:claudeNative.pid,sourceGeneration:claudeNative.startedAt,env:Object.fromEntries(Object.entries(claudeLaunch.env).filter((v):v is [string,string]=>v[1]!==undefined))},claudePeer,claudeNative.pid);
-  assert.equal(profileState(claudeFirstHome).profiles.some(value=>value.host==='codex'),false);
-  const firstLaunch=selectHostLaunch('codex',config,{home:claudeFirstHome,cwd:root,requesterSession:claudePeer.sessionId!}),firstAddress='unix://'+path.join(run,'claude-first.sock');
+  const agyFirstHome=path.join(root,'agy-first'),agyHome=path.join(root,'agy');mkdirSync(agyFirstHome);mkdirSync(agyHome);
+  const agyLaunch=selectHostLaunch('agy',{...DEFAULT_CONFIG,agyHome},{home:agyFirstHome,cwd:root});
+  agyLaunch.env.DISABLE_AUTOUPDATER='1';
+  for(const key of codexTerminalVariables){delete agyLaunch.env[key];if(env[key]!==undefined)agyLaunch.env[key]=env[key];}
+  const agy=spawnSelectedHost(agyLaunch,['acp','--stdio'],{stdio:['pipe','ignore','pipe']});
+  agy.stderr!.on('data',chunk=>output=(output+chunk.toString()).slice(-3500));await rememberOwnedHost(home,agy,'agy','host-control',launchId,agyHome);
+  const agyNative=await nativeDescendant(agy.pid!,'agy',0),agyPeer=store.register(registration('agy','identity-agy-first',{cwd:root}));
+  await captureUserLaunch(agyFirstHome,{host:'agy',sessionId:agyPeer.sessionId!,nativePid:agyNative.pid,nativeGeneration:agyNative.startedAt,sourcePid:agyNative.pid,sourceGeneration:agyNative.startedAt,env:Object.fromEntries(Object.entries(agyLaunch.env).filter((v):v is [string,string]=>v[1]!==undefined))},agyPeer,agyNative.pid);
+  assert.equal(profileState(agyFirstHome).profiles.some(value=>value.host==='codex'),false);
+  const firstLaunch=selectHostLaunch('codex',config,{home:agyFirstHome,cwd:root,requesterSession:agyPeer.sessionId!}),firstAddress='unix://'+path.join(run,'agy-first.sock');
   const firstChild=spawnSelectedHost(firstLaunch,['app-server','--listen',firstAddress],{stdio:'ignore'});await rememberOwnedHost(home,firstChild,'codex','codex-runtime',launchId,codexHome);
   for(let attempt=0;attempt<50&&!rpc;attempt++){try{rpc=await connectAppServer(firstAddress,config,undefined,home);}catch(error){if(attempt===49)throw error;await delay(100);}}
-  const claudeFirst=await turn('IDENTITY_CLAUDE_FIRST');await rpc!.close();rpc=undefined;
+  const agyFirst=await turn('IDENTITY_AGY_FIRST');await rpc!.close();rpc=undefined;
   const beforeSetup=requests.length;rpc=await configClient(profileConfig,home);await rpc.request('config/read',{includeLayers:false});await rpc.close();rpc=undefined;
   assert.equal(requests.length,beforeSetup,'安装控制只读取配置，不发起模型轮次');
   const split=(ua:string)=>{
@@ -94,10 +94,10 @@ test('官方 TUI 与已记录原生启动环境的专用后台 UA 逐字一致�
     return{stable:match[1]!+match[3]!,terminal:match[2]!,version:match[4]!};
   };
   const baseline=split(official.ua);
-  for(const actual of [official,dedicated,afterReadOnly,claudeFirst]){
+  for(const actual of [official,dedicated,afterReadOnly,agyFirst]){
     assert.equal(actual.originator,official.originator);assert.equal(actual.ua,official.ua,'保留真实用户启动环境后 UA 必须逐字一致');
-    assert.doesNotMatch(actual.ua,/nxbridge/);assert.equal(actual.originator,'codex-tui');
+    assert.doesNotMatch(actual.ua,/agybridge|nxbridge/);assert.equal(actual.originator,'codex-tui');
   }
   assert.deepEqual(errors,[]);
-  t.diagnostic(JSON.stringify({version:baseline.version,official:official.ua,dedicated:dedicated.ua,afterReadOnly:afterReadOnly.ua,claudeFirst:claudeFirst.ua,byteEqual:true,setupModelCalls:requests.length-beforeSetup,profileTerminal:recorded.env.TERM}));
+  t.diagnostic(JSON.stringify({version:baseline.version,official:official.ua,dedicated:dedicated.ua,afterReadOnly:afterReadOnly.ua,agyFirst:agyFirst.ua,byteEqual:true,setupModelCalls:requests.length-beforeSetup,profileTerminal:recorded.env.TERM}));
 });

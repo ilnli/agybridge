@@ -84,7 +84,7 @@ test('安装版 Codex 本地压缩：真实窗口的最后五条通信直接恢�
   assert.ok(serialized.includes('CONTROLLED_COMPACTION_SUMMARY'));assert.ok(serialized.includes('CONTINUITY_DEVELOPER_INSTRUCTION'));
   assert.equal((after.input??[]).some((item:any)=>item.type==='function_call_output'&&JSON.stringify(item).includes('NEW_PARTNER_TASK_MARKER')),false);
   assert.equal(recoveries.length,1,'实际 SessionStart(compact) 未生成恢复上下文');
-  const digest=recoveries[0]!.slice(recoveries[0]!.indexOf('nxbridge partner recovery digest rev '));
+  const digest=recoveries[0]!.slice(recoveries[0]!.indexOf('agybridge partner recovery digest rev '));
   const ids=digest.trimEnd().split('\n').slice(1).filter((_:string,index:number)=>index%2===0).map((line:string)=>JSON.parse(line).message_id);
   assert.deepEqual(ids,messages.slice(-5).map(message=>message.id));assert.ok(digest.length<=RECOVERY_DIGEST_LIMIT);assert.match(digest,/truncated; read_messages/);
   assert.ok(serialized.includes('NEW_PARTNER_TASK_MARKER')&&serialized.includes('最新完整正文'),'恢复正文必须直接进入原生模型上下文，不能被默认限额转存文件');

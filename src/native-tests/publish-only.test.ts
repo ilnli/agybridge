@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import {PACKAGE_ROOT} from '../shared/package-location.js';
 import {resolveCli} from '../process/host-command.js';
 import {windowsPowerShell} from '../shared/windows-tools.js';
-import { ownsFile } from '../install/installation.js';
+import { publishPath } from './publish-fixture.js';
 import { temporaryDirectory } from '../tests/support/temporary.js';
 import { writeFileSync } from 'node:fs';
 import { registerTestDirectory } from '../process/test-processes.js';
@@ -19,7 +19,7 @@ test('仅 publish 的陌生用户安装：非提权、缺失用户 PATH 目录�
   const processRegistry=path.join(directory,'normal-user-processes');registerTestDirectory(directory,processRegistry);
   cpSync(path.join(PACKAGE_ROOT,'publish'),publish,{recursive:true});
   const worker=path.join(directory,'worker.mjs');cpSync(fileURLToPath(new URL('./publish-only-worker.js',import.meta.url)),worker);
-  const fixtureFile=path.join(directory,'fixture.json'),fixture={directory,home,bin,publish,codexHome:path.join(directory,'codex'),agyHome:path.join(directory,'agy'),codex:resolveCli('codex',process.env.NXBRIDGE_TEST_CODEX_BINARY),agy:resolveCli('agy'),path:(process.env.PATH??'').split(path.delimiter).filter(dir=>!['nxbridge','nxbridge.cmd','nxbridge.ps1','agybridge.cjs','nxbridge.exe'].some(name=>existsSync(path.join(dir,name))&&!ownsFile(path.join(dir,name),home)))};
+  const fixtureFile=path.join(directory,'fixture.json'),fixture={directory,home,bin,publish,codexHome:path.join(directory,'codex'),agyHome:path.join(directory,'agy'),codex:resolveCli('codex',process.env.NXBRIDGE_TEST_CODEX_BINARY),agy:resolveCli('agy'),path:publishPath(home)};
   writeFileSync(fixtureFile,JSON.stringify({...fixture,processRegistry,version:VERSION}),'utf8');
   let failure;try{
     if(process.platform==='win32')await execute(windowsPowerShell(),['-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',path.join(PACKAGE_ROOT,'tools/test-normal-user.ps1'),'-Node',process.execPath,'-Worker',worker,'-Fixture',fixtureFile],{cwd:directory,windowsHide:true,timeout:180000,maxBuffer:8*1024*1024});

@@ -49,12 +49,11 @@ class PosixTerminal implements Terminal {
     void this.exited.catch(()=>{});
   }
   static async start(root:string,home:string,exe:string,args:string[],cwd:string,env:NodeJS.ProcessEnv):Promise<PosixTerminal>{
-    const host=[exe,...args.slice(0,1)].some(value=>/claude/i.test(value))?'agy':'codex';
-    const terminalArgs=host==='agy'&&!args.includes('--permission-mode')?[...args,'--permission-mode','default']:args;
+    const host=[exe,...args.slice(0,1)].some(value=>/^agy(?:\.(?:exe|cmd|js|cjs|mjs))?$/i.test(path.basename(value)))?'agy':'codex';
     const directory=path.join(root,'terminal-'+randomUUID()),ready=path.join(directory,'ready');mkdirSync(directory);
     const quote=(value:string)=>"'"+value.replaceAll("'","'\\''")+"'",launchId=randomUUID(),completion=containerCompletionFile(home);
     const worker=fileURLToPath(new URL('./posix-terminal-worker.js',import.meta.url));
-    const command='stty cols 150 rows 45 && exec '+[process.execPath,worker,home,ready,completion,launchId,exe,...terminalArgs].map(quote).join(' ');
+    const command='stty cols 150 rows 45 && exec '+[process.execPath,worker,home,ready,completion,launchId,exe,...args].map(quote).join(' ');
                                                             
     const scriptArgs=process.platform==='darwin'?['-q','/dev/null','/bin/sh','-c',command]:['-q','-f','-e','-c',command,'/dev/null'];
                                                                           

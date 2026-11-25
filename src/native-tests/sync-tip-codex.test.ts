@@ -20,7 +20,7 @@ import { holdModelStream } from './model-stream-fixture.js';
 test('安装版 Codex：从未联系也收到三次提醒，真实输入用量随 PostToolUse 进入长上下文提醒',{skip:process.platform!=='win32',timeout:170000},async t=>{
   const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexhome=path.join(root,'codex'),claudehome=path.join(root,'agy');
   for(const d of [home,codexhome,claudehome])mkdirSync(d,{recursive:true});
-  const requests:any[]=[],errors:string[]=[],tip='recheck split per nxbridge routing + any extra user rules';
+  const requests:any[]=[],errors:string[]=[],tip='recheck split per agybridge routing + any extra user rules';
   const model=http.createServer(async(req,res)=>{try{
     const raw=await readModelBody(req);
     if(!req.url?.includes('/responses')){res.writeHead(200,{'content-type':'application/json'});res.end('{"data":[]}');return;}

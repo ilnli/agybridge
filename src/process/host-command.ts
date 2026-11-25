@@ -1,8 +1,9 @@
 import {spawn,type ChildProcess} from 'node:child_process';
-import {existsSync} from 'node:fs';
-import {homedir} from 'node:os';
+import {existsSync,mkdirSync,mkdtempSync,realpathSync,rmSync,symlinkSync} from 'node:fs';
+import {homedir,tmpdir} from 'node:os';
 import path from 'node:path';
 import {BridgeError} from '../shared/errors.js';
+import {sameDirectory} from '../shared/files.js';
 import type {Host,BridgeConfig} from '../types.js';
 import {selectHostLaunch,verifyLaunchImages,type HostLaunch} from '../hosts/host-launch.js';
 import {acquireHostControl,hostControlFailure} from '../hosts/host-control.js';
@@ -45,14 +46,38 @@ export async function runCli(host: Host, args: string[], options: { cwd?: string
 async function runSelectedCli(host:Host,args:string[],selection:HostLaunch,options:NonNullable<Parameters<typeof runCli>[2]>):Promise<string>{
   const exe=selection.executable;
   const release=await acquireHostControl(exe.command);
+  let isolatedHome:string|undefined,isolatedGemini:string|undefined;
   try{
     await options.beforeSpawn?.();
-    const settings={cwd:options.cwd??selection.cwd,env:options.env??selection.env,timeout:options.timeout??15000,maxBuffer:8*1024*1024};
+    let env=options.env??selection.env;
+    if(host==='agy'&&(args[0]==='plugin'||args[0]==='plugins')){
+      const currentGemini=path.join(env.USERPROFILE??env.HOME??homedir(),'.gemini');
+      if(!sameDirectory(selection.configHome,currentGemini)){
+        isolatedHome=realpathSync.native(mkdtempSync(path.join(tmpdir(),'agybridge-agy-home-')));
+        isolatedGemini=path.join(isolatedHome,'.gemini');
+        if(args[1]==='install')mkdirSync(selection.configHome,{recursive:true});
+        if(existsSync(selection.configHome)){
+          symlinkSync(selection.configHome,isolatedGemini,process.platform==='win32'?'junction':'dir');
+        }
+        env={...env,HOME:isolatedHome,...(process.platform==='win32'?{USERPROFILE:isolatedHome}:{})};
+      }
+    }
+    const settings={cwd:options.cwd??selection.cwd,env,timeout:options.timeout??15000,maxBuffer:8*1024*1024};
     const argv=[...exe.prefix,...args];
     try{
-      return(await executeContainedCommand(exe.command,argv,{...settings,home:options.home??bridgeHome(),onSpawn:options.onSpawn})).stdout;
+      let stdout=(await executeContainedCommand(exe.command,argv,{...settings,home:options.home??bridgeHome(),onSpawn:options.onSpawn})).stdout;
+      if(isolatedGemini){
+        stdout=stdout.replaceAll(isolatedGemini,selection.configHome);
+        if(process.platform==='win32'){
+          stdout=stdout.replaceAll(JSON.stringify(isolatedGemini).slice(1,-1),JSON.stringify(selection.configHome).slice(1,-1));
+        }
+      }
+      return stdout;
     }catch(error){throw hostControlFailure(host,args,error);}
-  }finally{release();}
+  }finally{
+    if(isolatedHome)try{rmSync(isolatedHome,{recursive:true,force:true});}catch{}
+    release();
+  }
 }
 
 export function spawnCli(host: Host, args: string[], options: Parameters<typeof spawn>[2] = {}, config = loadConfig(),home?:string): ChildProcess {

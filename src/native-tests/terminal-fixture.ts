@@ -107,10 +107,9 @@ export class NativeTerminal {
   static async start(root:string,home:string,exe:string,args:string[],cwd:string,env:NodeJS.ProcessEnv):Promise<NativeTerminal>{
     const host=path.basename(exe).toLowerCase().includes('agy')?'agy':'codex';
                                                   
-    const terminalArgs=host==='agy'&&!args.includes('--permission-mode')?[...args,'--permission-mode','default']:args;
     const directory=path.join(root,'terminal-'+randomUUID()),compiler=path.join(directory,'compiler'),ready=path.join(directory,'ready');mkdirSync(compiler,{recursive:true});
                                                          
-    const launcher=windowsPowerShell(),nativeReady=path.join(directory,'native-ready'),nativeCommand=[exe,...terminalArgs].map(windowsArgument).join(' '),startedAt=Date.now();
+    const launcher=windowsPowerShell(),nativeReady=path.join(directory,'native-ready'),nativeCommand=[exe,...args].map(windowsArgument).join(' '),startedAt=Date.now();
     const phases:{stage:string;at:number;elapsedMs:number;remainingMs:number}[]=[],mark=(stage:string)=>{const at=Date.now();phases.push({stage,at,elapsedMs:at-startedAt,remainingMs:Math.max(0,15000-(at-startedAt))});};
     mark('controller-spawn-requested');
     const child=spawn(launcher,['-NoLogo','-NoProfile','-NonInteractive','-Command',controller],{cwd,env:{...env,NXBRIDGE_TERMINAL_SOURCE:source,NXBRIDGE_TERMINAL_COMPILER:compiler,NXBRIDGE_TERMINAL_EXE:launcher,NXBRIDGE_TERMINAL_COMMAND:[launcher,'-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(nativeController,'utf16le').toString('base64')].map(windowsArgument).join(' '),NXBRIDGE_TERMINAL_NATIVE_EXE:exe,NXBRIDGE_TERMINAL_NATIVE_COMMAND:nativeCommand,NXBRIDGE_TERMINAL_NATIVE_READY:nativeReady,NXBRIDGE_TERMINAL_CWD:cwd,NXBRIDGE_TERMINAL_READY:ready},stdio:['pipe','pipe','pipe'],windowsHide:true});

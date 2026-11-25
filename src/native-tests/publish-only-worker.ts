@@ -11,7 +11,7 @@ if(fixture.processRegistry){
   const roots=path.join(fixture.processRegistry,'test-roots');mkdirSync(roots,{recursive:true});
   writeFileSync(path.join(roots,'fixture.json'),JSON.stringify({scope:process.env.AGYBRIDGE_TEST_SCOPE,directory,createdAt:Date.now()}),'utf8');
 }
-const env={...process.env,AGYBRIDGE_HOME:home,CODEX_HOME:codexHome,AGY_HOME:agyHome,PATH:[bin,...fixture.path].join(path.delimiter),NODE_PATH:'',DISABLE_AUTOUPDATER:'1',DISABLE_TELEMETRY:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'};
+const env={...process.env,AGYBRIDGE_HOME:home,CODEX_HOME:codexHome,AGY_HOME:agyHome,PATH:[bin,...fixture.path].join(path.delimiter),NODE_PATH:'',DISABLE_AUTOUPDATER:'1',DISABLE_TELEMETRY:'1'};
 const result:any={steps:[]},output=path.join(directory,'result.json');
 const run=async(entry:string,args:string[])=>{const response=await execute(process.execPath,['--no-warnings',entry,...args],{cwd:directory,env,windowsHide:true,timeout:80000,maxBuffer:8*1024*1024});return response.stdout;};
 const json=async(entry:string,args:string[])=>JSON.parse(await run(entry,args));
@@ -24,20 +24,20 @@ try{
   }
   for(const dir of [codexHome,agyHome])mkdirSync(dir,{recursive:true});
   const original='# 独立安装保留用户设置\r\nmodel_verbosity = "low"\r\n';writeFileSync(path.join(codexHome,'config.toml'),original,'utf8');
-  assert.equal(existsSync(home),false,'陌生用户安装前没有 nxbridge 配置或安装记录');assert.equal(existsSync(bin),false,'用户 PATH 目标尚未创建');
+  assert.equal(existsSync(home),false,'陌生用户安装前没有 agybridge 配置或安装记录');assert.equal(existsSync(bin),false,'用户 PATH 目标尚未创建');
   const source=path.join(publish,'agybridge.mjs'),args=['setup','--bin-dir',bin,'--codex-command',codex.command,...codex.prefix.flatMap((arg:string)=>['--codex-command-arg',arg]),'--agy-command',agy.command,...agy.prefix.flatMap((arg:string)=>['--agy-command-arg',arg]),'--codex-home',codexHome,'--agy-home',agyHome];
   const setup=await json(source,args);assert.equal(setup.installed,true);installed=true;result.steps.push('fresh-setup');
-  const state=JSON.parse(readFileSync(path.join(home,'setup-state.json'),'utf8'));assert.ok(state.managedFiles.some((file:any)=>file.file===path.join(bin,process.platform==='win32'?'nxbridge.cmd':'nxbridge')));assert.ok(state.managedFiles.every((file:any)=>file.file.startsWith(home+path.sep)||file.file.startsWith(bin+path.sep)));
+  const state=JSON.parse(readFileSync(path.join(home,'setup-state.json'),'utf8'));assert.ok(state.managedFiles.some((file:any)=>file.file===path.join(bin,process.platform==='win32'?'agybridge.cmd':'agybridge')));assert.ok(state.managedFiles.every((file:any)=>file.file.startsWith(home+path.sep)||file.file.startsWith(bin+path.sep)));
   if(process.platform==='win32'){
-    const shell=path.join(process.env.SystemRoot!,'System32','WindowsPowerShell','v1.0','powershell.exe'),script='chcp 65001 > $null; $OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::OutputEncoding=$OutputEncoding; (Get-Command nxbridge).Source; nxbridge --version; exit $LASTEXITCODE';
-    const command=await execute(shell,['-NoLogo','-NoProfile','-NonInteractive','-Command',script],{cwd:directory,env,windowsHide:true,timeout:15000});assert.ok(command.stdout.includes(path.join(bin,'nxbridge.cmd')));assert.ok(command.stdout.split(/\r?\n/).includes('nxbridge '+version));result.steps.push('bare-command-from-user-path');
+    const shell=path.join(process.env.SystemRoot!,'System32','WindowsPowerShell','v1.0','powershell.exe'),script='chcp 65001 > $null; $OutputEncoding=[Text.UTF8Encoding]::new($false); [Console]::OutputEncoding=$OutputEncoding; (Get-Command agybridge).Source; agybridge --version; exit $LASTEXITCODE';
+    const command=await execute(shell,['-NoLogo','-NoProfile','-NonInteractive','-Command',script],{cwd:directory,env,windowsHide:true,timeout:15000});assert.ok(command.stdout.includes(path.join(bin,'agybridge.cmd')));assert.ok(command.stdout.split(/\r?\n/).includes('agybridge '+version));result.steps.push('bare-command-from-user-path');
   }
   assert.match(readFileSync(path.join(codexHome,'config.toml'),'utf8'),/独立安装保留用户设置/);
                               
-  renameSync(publish,publish+'.removed');assert.equal((await run(launcher,['--version'])).trim(),'nxbridge '+version);result.steps.push('version-without-source');
+  renameSync(publish,publish+'.removed');assert.equal((await run(launcher,['--version'])).trim(),'agybridge '+version);result.steps.push('version-without-source');
   const updated=await json(launcher,['update','--bin-dir',bin]);assert.equal(updated.installed,true);assert.ok(updated.notes.some((note:string)=>note.includes('修复')));result.steps.push('update-without-source');
   const doctor=await json(launcher,['doctor']);assert.equal(doctor.elevated,false);assert.equal(doctor.runtime.independent,true);assert.deepEqual(doctor.runtime.drift,[]);assert.deepEqual(doctor.codexCapabilities.errors,{});assert.ok(doctor.codexCapabilities.mcp.some((server:any)=>server.tools.includes('config')));result.steps.push('doctor-without-source');
-  const removed=await json(launcher,['uninstall']);assert.equal(removed.removed,true,JSON.stringify(removed));installed=false;result.steps.push('uninstall-without-source');assert.equal(existsSync(path.join(bin,process.platform==='win32'?'nxbridge.cmd':'nxbridge')),false);assert.match(readFileSync(path.join(codexHome,'config.toml'),'utf8'),/独立安装保留用户设置/);assert.equal(existsSync(path.join(home,'config.managed.toml')),true);
+  const removed=await json(launcher,['uninstall']);assert.equal(removed.removed,true,JSON.stringify(removed));installed=false;result.steps.push('uninstall-without-source');assert.equal(existsSync(path.join(bin,process.platform==='win32'?'agybridge.cmd':'agybridge')),false);assert.match(readFileSync(path.join(codexHome,'config.toml'),'utf8'),/独立安装保留用户设置/);assert.equal(existsSync(path.join(home,'config.managed.toml')),true);
   result.passed=true;
 }catch(error){
   result.passed=false;result.error=error instanceof Error?error.stack:String(error);

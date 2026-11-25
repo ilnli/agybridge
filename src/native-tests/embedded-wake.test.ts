@@ -96,7 +96,7 @@ test('真实 Codex 队列：忙碌期合并、终态失败唤醒一次、零依�
   await wait(async()=>(await status()).peers.find((p:any)=>p.id===x.id).state==='ready','压缩前未空闲');
   await terminal.prompt('/compact');await delay(1500);const afterCompact=requests.length;
   await terminal.prompt('AFTER_PARTNER_COMPACT');
-  await wait(()=>requests.length>afterCompact&&requests.some((r,i)=>i>=afterCompact&&JSON.stringify(r.input).includes('nxbridge partner recovery digest')&&JSON.stringify(r.input).includes('COMPACT_PARTNER_TASK_BODY')),'压缩后恢复上下文没有自动携带搭档任务');
+  await wait(()=>requests.length>afterCompact&&requests.some((r,i)=>i>=afterCompact&&JSON.stringify(r.input).includes('agybridge partner recovery digest')&&JSON.stringify(r.input).includes('COMPACT_PARTNER_TASK_BODY')),'压缩后恢复上下文没有自动携带搭档任务');
   await wait(async()=>(await status()).peers.find((p:any)=>p.id===x.id).state==='ready','压缩验收后未空闲');
   t.diagnostic('阶段：搭档失败经真实原生队列叫醒 Codex，正文只进入上下文一次');
   const beforeFailure=requests.length,messagesBeforeFailure=(await status()).messages.length,wakesBeforeFailure=(await events()).filter(e=>e.type==='wake.queued').length;

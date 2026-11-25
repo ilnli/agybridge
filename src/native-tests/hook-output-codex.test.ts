@@ -38,9 +38,9 @@ test('原生 Codex 接受保护器 systemMessage，完成告警保留超时证�
   t.after(async()=>{await rpc?.close();assert.deepEqual(await releaseNativeTestLaunches(home),[]);if(child&&child.exitCode===null&&child.signalCode===null)await once(child,'exit');try{await brokerCall('shutdown',{releaseOwned:false},{home,start:false});}catch{}model.closeAllConnections();await new Promise<void>(resolve=>model.close(()=>resolve()));restoreEnvironment();await temp.cleanup();});
   const marketplace=await preparePlugins(home,{packageRoot:path.join(PACKAGE_ROOT,'publish')});await runCli('codex',['plugin','marketplace','add',marketplace,'--json'],{config});await runCli('codex',['plugin','add','agybridge@agybridge-local','--json'],{config});
                                            
-  const fixture=path.join(root,'marker.cjs');writeFileSync(fixture,"process.stdin.resume();process.stdin.on('end',()=>console.log(JSON.stringify({systemMessage:'nxbridge hook timed out after 10s; result unconfirmed'})));",'utf8');
+  const fixture=path.join(root,'marker.cjs');writeFileSync(fixture,"process.stdin.resume();process.stdin.on('end',()=>console.log(JSON.stringify({systemMessage:'agybridge hook timed out after 10s; result unconfirmed'})));",'utf8');
   const command='node "'+fixture.replaceAll('\\','/')+'"',hooks=Object.fromEntries(['SessionStart','UserPromptSubmit','Stop'].map(event=>[event,[{hooks:[{type:'command',command,timeout:10}]}]]));
-  writeFileSync(path.join(codexhome,'plugins','cache','agybridge-local','nxbridge',VERSION,'hooks','hooks.json'),JSON.stringify({hooks}),'utf8');
+  writeFileSync(path.join(codexhome,'plugins','cache','agybridge-local','agybridge',VERSION,'hooks','hooks.json'),JSON.stringify({hooks}),'utf8');
   const reserve=net.createServer();await new Promise<void>(resolve=>reserve.listen(0,'127.0.0.1',resolve));const port=(reserve.address() as AddressInfo).port;await new Promise<void>(resolve=>reserve.close(()=>resolve()));
   const address=`ws://127.0.0.1:${port}`,option=(key:string,value:unknown)=>['-c',key+'='+JSON.stringify(value)];
   child=spawnCli('codex',['--no-daemon','--dangerously-bypass-hook-trust','app-server','--listen',address,...option('features.hooks',true),...option('features.apps',false),...option('model_provider','hook_probe'),...option('model_providers.hook_probe.name','本地 hook 验收'),...option('model_providers.hook_probe.base_url',`http://127.0.0.1:${(model.address() as AddressInfo).port}/v1`),...option('model_providers.hook_probe.wire_api','responses'),...option('model_providers.hook_probe.requires_openai_auth',false)],{cwd:root,stdio:['ignore','ignore','pipe']},config);
@@ -51,7 +51,7 @@ test('原生 Codex 接受保护器 systemMessage，完成告警保留超时证�
   await rpc.request('turn/start',{threadId:thread.id,input:[{type:'text',text:'仅使用本地假模型验证 hook'}]},{mutation:true});
   const until=Date.now()+20000;while(!events.some(event=>event.method==='turn/completed')){assert.ok(Date.now()<until,stderr+'\n'+JSON.stringify(events));await delay(20);}
   const completed=events.filter(event=>event.method==='hook/completed').map(event=>event.params.run);assert.ok(completed.length>=2,JSON.stringify({methods:events.map(event=>event.method),stderr}));
-  for(const run of completed){assert.equal(run.status,'completed',JSON.stringify(run));assert.equal(hookGuardTimeout(run.entries),'nxbridge hook timed out after 10s; result unconfirmed');assert.equal(typeof run.durationMs,'number');}
+  for(const run of completed){assert.equal(run.status,'completed',JSON.stringify(run));assert.equal(hookGuardTimeout(run.entries),'agybridge hook timed out after 10s; result unconfirmed');assert.equal(typeof run.durationMs,'number');}
   const store=new Store(':memory:'),codex=new FakeAdapter(),broker=new Broker(store,config,{codex,agy:new FakeAdapter()} as any,home);t.after(async()=>{await broker.stop();store.close();});
   const peer=store.register(registration('codex',thread.id,{cwd:root,endpoint:{mode:'app-server',address,epoch:'native-hook-evidence',pid:null,procStart:null}}));
   for(const event of events.filter(event=>event.method==='hook/completed'))codex.emit('native',{address,message:event});
