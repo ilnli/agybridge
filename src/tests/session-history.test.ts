@@ -13,20 +13,20 @@ function fixture(t:TestContext,host:Host='codex'){
   const home=temporary(t),store=new Store(':memory:');t.after(()=>store.close());
   const input=registration(host,'history');input.endpoint.configHome=home;
   const peer=store.register(input),endpoint=store.endpoint(peer.id)!;
-  const directory=path.join(home,host==='codex'?'sessions':'projects','original');fs.mkdirSync(directory,{recursive:true});
-  const file=path.join(directory,host==='codex'?'rollout-2026-history.jsonl':'history.jsonl');fs.writeFileSync(file,body(host,peer.sessionId!),'utf8');
+  const directory=host==='codex'?path.join(home,'sessions','original'):path.join(home,'antigravity-cli','brain',peer.sessionId!,'.system_generated','logs');fs.mkdirSync(directory,{recursive:true});
+  const file=path.join(directory,host==='codex'?'rollout-2026-history.jsonl':'transcript_full.jsonl');fs.writeFileSync(file,body(host,peer.sessionId!),'utf8');
   return{home,store,peer,endpoint,file,record:()=>recordSessionHistory(store,peer,endpoint,file),state:()=>verifySessionHistory(store,peer,endpoint,{fresh:true}),peek:()=>sessionHistoryState(store,peer,endpoint)};
 }
 
-for(const host of ['codex','claude'] as const)test(host+' 历史只有实际核验落盘后才能判定删除，重复登记缺失路径不抹除凭据',async t=>{
+for(const host of ['codex','agy'] as const)test(host+' 历史只有实际核验落盘后才能判定删除，重复登记缺失路径不抹除凭据',async t=>{
   const f=fixture(t,host);assert.equal(await f.state(),'unknown');
   f.record();assert.equal(await f.state(),'present');assert.ok(f.store.setting(sessionHistoryKey(f.peer.id)));
   fs.unlinkSync(f.file);f.record();assert.equal(await f.state(),'missing');
   assert.equal(sessionHistoryState(f.store,{...f.peer,sessionId:'new'},f.endpoint),'unknown');
 });
 
-for(const host of ['codex','claude'] as const)test(host+' 历史库链接到其他目录仍可核验，目标被替换或离线时保留未知',async t=>{
-  const f=fixture(t,host),active=path.join(f.home,host==='codex'?'sessions':'projects'),target=path.join(temporary(t),'history-store');
+for(const host of ['codex','agy'] as const)test(host+' 历史库链接到其他目录仍可核验，目标被替换或离线时保留未知',async t=>{
+  const f=fixture(t,host),active=path.join(f.home,host==='codex'?'sessions':path.join('antigravity-cli','brain')),target=path.join(temporary(t),'history-store');
   fs.renameSync(active,target);fs.symlinkSync(target,active,process.platform==='win32'?'junction':'dir');
   f.record();assert.equal(await f.state(),'present');assert.ok(sessionHistoryPath(f.store,f.peer,f.endpoint));
   fs.unlinkSync(f.file);assert.equal(await f.state(),'missing');
@@ -67,7 +67,7 @@ test('原生路径、配置目录和成员变化后必须重新获得本会话�
   recordSessionHistory(f.store,f.peer,{...endpoint,configHome:other});assert.equal(sessionHistoryState(f.store,f.peer,endpoint),'unknown');
 });
 
-for(const host of ['codex','claude'] as const)test(host+' 错误身份、未完成文件和目录不能生成或复用历史凭据',async t=>{
+for(const host of ['codex','agy'] as const)test(host+' 错误身份、未完成文件和目录不能生成或复用历史凭据',async t=>{
   const f=fixture(t,host);
   fs.writeFileSync(f.file,body(host,'wrong-session'),'utf8');f.record();assert.equal(await f.state(),'unknown');
   fs.writeFileSync(f.file,body(host,'history'),'utf8');f.record();assert.equal(await f.state(),'present');
@@ -108,9 +108,9 @@ test('搜索遇到无法识别的新历史时保留未知，完整识别为其�
   const pending=path.join(f.home,'sessions','history.jsonl.pending');fs.writeFileSync(pending,'未完成的历史搬移','utf8');assert.equal(await f.state(),'unknown');
 });
 
-for(const host of ['codex','claude'] as const)test(host+' 历史库同路径被新目录替换后仍然未知，恢复原目录后才重新核验',async t=>{
+for(const host of ['codex','agy'] as const)test(host+' 历史库同路径被新目录替换后仍然未知，恢复原目录后才重新核验',async t=>{
   const f=fixture(t,host);f.record();
-  const active=path.join(f.home,host==='codex'?'sessions':'projects'),offline=path.join(f.home,'old-store');
+  const active=path.join(f.home,host==='codex'?'sessions':path.join('antigravity-cli','brain')),offline=path.join(f.home,'old-store');
   fs.renameSync(active,offline);fs.mkdirSync(active);assert.equal(await f.state(),'unknown');
   fs.rmdirSync(active);fs.renameSync(offline,active);assert.equal(await f.state(),'present');
   fs.unlinkSync(f.file);assert.equal(await f.state(),'missing');
@@ -149,7 +149,7 @@ test('压缩副本阻止误删，但不能作为原生恢复路径',async t=>{
 });
 
 test('Claude 工具输出和记忆文件不阻止识别真正删除的历史',async t=>{
-  const f=fixture(t,'claude');f.record();fs.unlinkSync(f.file);
+  const f=fixture(t,'agy');f.record();fs.unlinkSync(f.file);
   const project=path.dirname(f.file);
   for(const [directory,file] of [['tool-results','output.txt'],['memory','MEMORY.md']] as const){
     const folder=path.join(project,directory);fs.mkdirSync(folder);fs.writeFileSync(path.join(folder,file),'与会话身份无关的内容','utf8');
@@ -239,18 +239,6 @@ test('同一原生目录的不同成员共享历史清单',async t=>{
   assert.equal(sessionHistoryState(f.store,peer,endpoint),'missing');assert.equal(read.mock.callCount(),0);assert.equal(list.mock.callCount(),0);
   fs.writeFileSync(path.join(f.home,'sessions','relocated-second.jsonl'),body('codex',peer.sessionId!),'utf8');
   assert.equal(await f.state(),'missing');assert.equal(sessionHistoryNeedsVerification(f.store,peer,endpoint),false,'其他成员核验发现的路径也能阻止多余的持有者探测');
-});
-
-test('Claude 项目内辅助目录不枚举，项目本身名为 memory 仍需核验',async t=>{
-  const f=fixture(t,'claude');f.record();fs.unlinkSync(f.file);
-  const auxiliary=path.join(path.dirname(f.file),'tool-results');fs.mkdirSync(auxiliary);
-  fs.writeFileSync(path.join(auxiliary,'large-output.jsonl'),'工具输出，不是会话','utf8');
-  const read=fs.promises.readdir,list=t.mock.method(fs.promises,'readdir',((...args:Parameters<typeof fs.promises.readdir>)=>{
-    assert.notEqual(path.basename(String(args[0])),'tool-results');return read(...args);
-  }) as typeof fs.promises.readdir);
-  assert.equal(await f.state(),'missing');list.mock.restore();
-  const project=path.join(f.home,'projects','memory');fs.mkdirSync(project);fs.writeFileSync(path.join(project,'renamed.jsonl'),body('claude','history'),'utf8');
-  assert.equal(await f.state(),'present');
 });
 
 test('已缓存缺失不能掩盖最终确认遇到的文件 IO 错误',async t=>{

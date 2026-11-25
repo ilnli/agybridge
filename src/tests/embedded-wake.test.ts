@@ -72,7 +72,7 @@ test('可行动的嵌入通知不提前领取，唤醒当次提供正文且已�
   await (f.broker as any).runtimeHealth.checkDeliveryHealth();assert.equal(wakes,1);assert.equal(f.broker.deliveryHealth.peek(pair.id,x.id).length,1,'提交信号不能占用正文租约');
   const input={session_id:x.sessionId,hook_event_name:'UserPromptSubmit',actor,prompt:HEALTH_WAKE_NOTICE};
   const result=await f.broker.dispatch('hook',input) as any;
-  assert.notEqual(result.continue,false);assert.match(result.hookSpecificOutput.additionalContext,/精确健康事实/);assert.doesNotMatch(result.hookSpecificOutput.additionalContext,/claude msg pending/);
+  assert.notEqual(result.continue,false);assert.match(result.hookSpecificOutput.additionalContext,/精确健康事实/);assert.doesNotMatch(result.hookSpecificOutput.additionalContext,/agy msg pending/);
   assert.equal(f.store.peer(x.id).activityAt,x.activityAt);assert.equal(f.broker.deliveryHealth.due(pair.id,x.id),false);
   f.store.updatePeer(x.id,{state:'ready'});assert.deepEqual(await f.broker.dispatch('hook',input),{continue:false});
 });

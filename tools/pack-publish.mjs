@@ -8,9 +8,9 @@ import {createHash,randomUUID} from 'node:crypto';
 import {verifyPublish} from '../dist/install/runtime-install.js';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),source=path.join(root,'publish');
-const manifest=verifyPublish(source),top='nxbridge-'+manifest.version;
+const manifest=verifyPublish(source),top='agybridge-'+manifest.version;
                                                 
-const releases=path.join(root,'artifacts','releases'),archive=path.join(releases,'nxbridge-'+manifest.buildId+'.zip');
+const releases=path.join(root,'artifacts','releases'),archive=path.join(releases,'agybridge-'+manifest.buildId+'.zip');
 const expected=[...Object.keys(manifest.files),'publish.json'].sort();
 const sevenZip=process.platform==='win32'?'C:/Program Files/7-Zip/7z.exe':'7z';
                                                    
@@ -55,7 +55,7 @@ let checked;
 if(!process.argv.includes('--check')){
   fs.mkdirSync(releases,{recursive:true});
   if(fs.existsSync(archive)&&!process.argv.includes('--overwrite'))throw Error('发布包已经存在，显式传入 --overwrite 才可覆盖：'+archive);
-  const stage=fs.mkdtempSync(path.join(os.tmpdir(),'nxbridge-stage-')),staged=path.join(stage,top),temporary=path.join(stage,'release.zip');
+  const stage=fs.mkdtempSync(path.join(os.tmpdir(),'agybridge-stage-')),staged=path.join(stage,top),temporary=path.join(stage,'release.zip');
   try{
     fs.cpSync(source,staged,{recursive:true});
     if(process.platform==='win32'){
@@ -70,7 +70,7 @@ if(!process.argv.includes('--check')){
     try{fs.copyFileSync(temporary,pending,fs.constants.COPYFILE_EXCL);fs.renameSync(pending,archive);}
     finally{fs.rmSync(pending,{force:true});}
   }finally{
-    if(path.dirname(stage)!==path.resolve(os.tmpdir())||!path.basename(stage).startsWith('nxbridge-stage-'))throw Error('暂存目录越界');
+    if(path.dirname(stage)!==path.resolve(os.tmpdir())||!path.basename(stage).startsWith('agybridge-stage-'))throw Error('暂存目录越界');
     fs.rmSync(stage,{recursive:true,force:true,maxRetries:6,retryDelay:200});
   }
 }

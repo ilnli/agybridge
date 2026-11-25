@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readlinkSync } from 'node:fs';
 import {BridgeError} from '../shared/errors.js';
 import { readWindowsHookIdentity, readWindowsProcessArguments, readWindowsProcessGenerations, readWindowsJobMembers, readWindowsAncestors } from './windows/windows-hook-identity.js';
 import { remainingTime } from '../shared/time-budget.js';
@@ -37,13 +37,13 @@ export function liveProcess(pid: number): boolean {
 
 
                                             
-export async function nativeConfigHome(identity:ProcessIdentity,host:'codex'|'claude'):Promise<string|undefined>{
+export async function nativeConfigHome(identity:ProcessIdentity,host:'codex'|'agy'):Promise<string|undefined>{
   if(process.platform!=='linux')return;
   let configured:string|undefined;
   try{
     const environment=readFileSync('/proc/'+identity.pid+'/environ','utf8').split('\0'),get=(key:string)=>environment.find(value=>value.startsWith(key+'='))?.slice(key.length+1);
-    const value=get(host==='codex'?'CODEX_HOME':'CLAUDE_CONFIG_DIR'),userHome=get('HOME');
-    configured=value&&path.isAbsolute(value)?value:!value&&userHome&&path.isAbsolute(userHome)?path.join(userHome,host==='codex'?'.codex':'.claude'):undefined;
+    const value=get(host==='codex'?'CODEX_HOME':'AGY_HOME'),userHome=get('HOME');
+    configured=value&&path.isAbsolute(value)?value:!value&&userHome&&path.isAbsolute(userHome)?path.join(userHome,host==='codex'?'.codex':'.gemini'):undefined;
   }catch{return;}
   const current=await processIdentity(identity.pid);if(current.startedAt!==identity.startedAt)throw new BridgeError('process_identity_unknown','配置目录观察期间原生进程代次改变。');
   return configured;
@@ -112,7 +112,7 @@ export async function processDescendants(root:Pick<ProcessIdentity,'pid'|'starte
   return refresh([...found.values()].filter(value=>value.pid!==root.pid));
 }
 
-export async function nativeDescendant(rootPid:number,host:'codex'|'claude',startedAt:number,endpoint?:string,container?:ProcessContainer):Promise<ProcessIdentity>{
+export async function nativeDescendant(rootPid:number,host:'codex'|'agy',startedAt:number,endpoint?:string,container?:ProcessContainer):Promise<ProcessIdentity>{
   let rows:ProcessIdentity[];
   const minimum=process.platform==='win32'?BigInt(startedAt-2000)*10000n+116444736000000000n:undefined;
   {
@@ -160,13 +160,41 @@ export function selectNativeHost(candidates:ProcessIdentity[],rows:ProcessIdenti
   return roots[0]!;
 }
 
-export async function claudeBackgroundHost(native:ProcessIdentity,sessionId?:string):Promise<ProcessIdentity|undefined>{
-  if(sessionId&&!/^[a-f0-9-]{36}$/i.test(sessionId))return;
-  const parent=(await processAncestors(native.pid,2))[1];if(!parent||!/^claude(?:\.exe)?$/i.test(parent.name))return;
-  const args=await codexArguments(parent);
-                                                                             
-                                         
-  if(args.includes('--bg-pty-host')&&(!sessionId||args.some((arg,index)=>['--session-id','--resume'].includes(arg)&&args[index+1]===sessionId||['--session-id=','--resume='].some(flag=>arg===flag+sessionId))))return parent;
+export async function processCwd(identity:Pick<ProcessIdentity,'pid'|'startedAt'>,timeout=2000):Promise<string|undefined>{
+  if(process.platform==='linux'){
+    let value:string;
+    try{value=readlinkSync('/proc/'+identity.pid+'/cwd');}catch{return;}
+    try{
+      const current=await processIdentity(identity.pid);
+      if(current.startedAt!==identity.startedAt)return;
+    }catch{return;}
+    return path.isAbsolute(value)?value:undefined;
+  }
+  if(process.platform==='darwin'){
+    try{
+      const {stdout}=await execute('/usr/sbin/lsof',['-a','-p',String(identity.pid),'-d','cwd','-Fn'],{env:psEnvironment(),timeout:Math.max(200,timeout)});
+      const line=stdout.split('\n').find(row=>row.startsWith('n'));
+      const value=line?.slice(1).trim();
+      const current=await processIdentity(identity.pid);
+      if(current.startedAt!==identity.startedAt)return;
+      return value&&path.isAbsolute(value)?value:undefined;
+    }catch{return;}
+  }
+  return undefined;
+}
+
+export async function agyProcessIdentity(timeout=10000,originPid=process.ppid,windowsRead=readWindowsHookIdentity,skipOrigin=false):Promise<{pid:number;procStart:string;acp:boolean;cwd?:string}>{
+  const deadline=performance.now()+timeout;
+  if(process.platform==='win32'){
+    const found=await windowsRead(originPid,undefined,'agy',remainingTime(deadline,timeout),skipOrigin);
+    const args=windowsArguments(found.commandLine);return{pid:found.pid,procStart:found.procStart,acp:args.includes('acp')};
+  }
+  const found=(await processAncestors(originPid,skipOrigin?11:10,remainingTime(deadline,timeout))).slice(skipOrigin?1:0).find(p=>/^agy(?:\.exe)?$/i.test(p.name));
+  if(!found)throw new BridgeError('agy_process_missing','无法确认是哪个 AGY 进程发起了这次调用。');
+  let acp=false;
+  try{const args=await codexArguments(found,remainingTime(deadline,timeout));acp=args.includes('acp');}catch{}
+  const cwd=await processCwd(found,remainingTime(deadline,1500)).catch(()=>undefined);
+  return{pid:found.pid,procStart:found.startedAt,acp,...(cwd?{cwd}:{})};
 }
 
 export function matchesProcess(record: { procStart?: string; procStartFt?: string }, process: ProcessIdentity): boolean {
@@ -292,7 +320,7 @@ export async function readPsArguments(found:ProcessIdentity,timeout=2000,run:(co
   try{({stdout}=await run(ps(),['-ww','-p',String(found.pid),'-o','lstart=,args='],{timeout,env:psEnvironment(),maxBuffer:16*1024*1024}));}
   catch(error){
     const failure=error as {code?:unknown;stdout?:unknown;stderr?:unknown;killed?:boolean;signal?:unknown};
-                                                       
+
     if(failure.code===1&&failure.stdout===''&&failure.stderr===''&&!failure.killed&&!failure.signal)throw new BridgeError('process_missing','会话进程已经结束。');
     throw error;
   }

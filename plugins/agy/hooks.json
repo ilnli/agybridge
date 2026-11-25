@@ -1,0 +1,49 @@
+{
+  "agybridge-hooks": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "__AGYBRIDGE_HOOK_COMMAND__",
+        "timeout": 10
+      }
+    ],
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "__AGYBRIDGE_HOOK_COMMAND__",
+        "timeout": 10
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp_agybridge_codex_.*|invoke_subagent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__AGYBRIDGE_HOOK_COMMAND__",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp_agybridge_codex_.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "__AGYBRIDGE_HOOK_COMMAND__",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "__AGYBRIDGE_HOOK_COMMAND__",
+        "timeout": 10
+      }
+    ]
+  }
+}

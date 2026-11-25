@@ -22,7 +22,7 @@ async function performRestart(params:RestartSelector,home:string):Promise<{text:
   const runtime=target.runtime;
   const origin=await serviceOrigin();
   if(runtime&&origin.some(value=>value.pid===runtime.pid&&value.startedAt===runtime.procStart)||target.session_id&&[process.env.CODEX_THREAD_ID,process.env.CODEX_SESSION_ID].includes(target.session_id))throw new BridgeError('self_restart','请从目标 Codex 之外的终端执行重启；当前命令属于目标宿主，停止它会同时中断调用方。');
-  if(process.platform==='win32'&&!target.broker?.windowsIndependent)throw new BridgeError('bootstrap_required','协调器尚未核验为独立后台，请先在普通 PowerShell 运行 nxbridge bootstrap；本次未停止任何会话。');
+  if(process.platform==='win32'&&!target.broker?.windowsIndependent)throw new BridgeError('bootstrap_required','协调器尚未核验为独立后台，请先在普通 PowerShell 运行 agybridge bootstrap；本次未停止任何会话。');
   const request_id=randomUUID();
   try{return await brokerCall('codex.restart',{...(params.partner?{...params,peer_id:target.peer_id,pair_id:target.pair_id,session_id:target.session_id}:target.peer_id?{peer_id:target.peer_id}:{...params,session_id:target.session_id??params.session_id}),request_id,...(target.broker?.generation?{broker_pid:target.broker.pid,broker_generation:target.broker.generation}:{})},{home,start:false,mutation:true,timeout:60000});}
   catch(error){
@@ -34,7 +34,7 @@ async function performRestart(params:RestartSelector,home:string):Promise<{text:
         catch(resultError){if(!['restart_result_missing','starting','disconnected','timeout','broker_timeout','ENOENT','ECONNREFUSED','ECONNRESET','EPIPE'].includes((resultError as {code?:string}).code??''))throw resultError;}
         if(Date.now()<deadline)await delay(200);
       }while(Date.now()<deadline);
-      throw new DeliveryError('restart_unconfirmed',`重启请求 ${request_id} 的完成结果暂时无法确认；没有重复重启。请用 nxbridge status 核对原会话；仅看到新进程不能证明这次请求已完整完成。`,true);
+      throw new DeliveryError('restart_unconfirmed',`重启请求 ${request_id} 的完成结果暂时无法确认；没有重复重启。请用 agybridge status 核对原会话；仅看到新进程不能证明这次请求已完整完成。`,true);
     }
     throw error;
   }

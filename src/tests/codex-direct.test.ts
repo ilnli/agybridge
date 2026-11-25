@@ -24,7 +24,7 @@ test('429 失败后的 systemError 仍可注入新消息并续跑；回执和正
 test('协调器在取件后冷启动，按实际持久调用对补证旧 unknown，不重投也不误结算无回执消息',async t=>{
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),home=temporary(t),file=path.join(home,'cold-receipt.jsonl'),message=f.store.accept(pair,f.c,'重启前已取件','cold-receipt'),unseen=f.store.accept(pair,f.c,'没有原生回执','no-receipt');
   for(const value of [message,unseen]){f.store.claim(value.id);f.store.transition(value.id,'unknown');}
-  const row=(payload:unknown,type='response_item')=>({timestamp:new Date().toISOString(),type,payload});writeFileSync(file,[row({id:f.x.sessionId},'session_meta'),row({type:'function_call',name:'receive_messages',namespace:'claude',call_id:'native-receive'}),row({type:'function_call_output',call_id:'native-receive',output:JSON.stringify({messages:[{message_id:message.id}]})})].map(value=>JSON.stringify(value)).join('\n')+'\n','utf8');
+  const row=(payload:unknown,type='response_item')=>({timestamp:new Date().toISOString(),type,payload});writeFileSync(file,[row({id:f.x.sessionId},'session_meta'),row({type:'function_call',name:'receive_messages',namespace:'agy',call_id:'native-receive'}),row({type:'function_call_output',call_id:'native-receive',output:JSON.stringify({messages:[{message_id:message.id}]})})].map(value=>JSON.stringify(value)).join('\n')+'\n','utf8');
   const adapter=new CodexAdapter(DEFAULT_CONFIG,home);t.after(()=>adapter.close());adapter.connect=async()=>({request:async(method:string)=>method==='thread/read'?{thread:{id:f.x.sessionId,path:file,status:{type:'idle'}}}:{data:[]}}) as any;f.codex.reconcile=adapter.reconcile.bind(adapter);
   await f.broker.reconcile(f.x.id);await f.broker.reconcile(f.x.id);assert.equal(f.store.message(message.id).state,'contextObserved');assert.equal(f.store.message(message.id).attempts,1);assert.equal(f.store.message(unseen.id).state,'unknown');assert.equal(f.codex.injected.length,0);assert.equal(f.codex.woken.length,0);
 });
@@ -33,7 +33,7 @@ test('首次注入前没有历史游标时按提交时间找到新落盘调用�
   t.mock.timers.enable({apis:['Date'],now:1000000});
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),home=temporary(t),file=path.join(home,'first-materialized.jsonl'),endpoint=f.store.endpoint(f.x.id)!,message=f.store.accept(pair,f.c,'新线程的第一条来信','first-materialized');
   const adapter=new CodexAdapter(DEFAULT_CONFIG,home);t.after(()=>adapter.close());adapter.connect=async()=>({request:async(method:string)=>method==='thread/read'?{thread:{id:f.x.sessionId,path:file,status:{type:'idle'}}}:{data:[]}}) as any;
-  let injected=0,continued=0;adapter.inject=async(_peer,_endpoint,callId,output)=>{injected++;const row=(payload:unknown,type='response_item')=>({timestamp:new Date().toISOString(),type,payload});writeFileSync(file,[row({id:f.x.sessionId},'session_meta'),row({type:'function_call',name:'receive_messages',namespace:'claude',call_id:callId}),row({type:'function_call_output',call_id:callId,output})].map(value=>JSON.stringify(value)).join('\n')+'\n','utf8');};adapter.continueInjected=async()=>{continued++;return'first-turn';};
+  let injected=0,continued=0;adapter.inject=async(_peer,_endpoint,callId,output)=>{injected++;const row=(payload:unknown,type='response_item')=>({timestamp:new Date().toISOString(),type,payload});writeFileSync(file,[row({id:f.x.sessionId},'session_meta'),row({type:'function_call',name:'receive_messages',namespace:'agy',call_id:callId}),row({type:'function_call_output',call_id:callId,output})].map(value=>JSON.stringify(value)).join('\n')+'\n','utf8');};adapter.continueInjected=async()=>{continued++;return'first-turn';};
   const delivery=new CodexDirectDelivery(f.store,adapter),run=()=>delivery.deliver(f.x,endpoint,f.store.pending(f.x.id),async m=>JSON.stringify({messages:[{message_id:m.id,message:m.body}]}),()=>true,receipt=>f.store.transition(receipt.messageId,'contextObserved'));
   await run();await run();assert.equal(f.store.message(message.id).state,'contextObserved');assert.equal(f.store.message(message.id).attempts,1);assert.equal(injected,1);assert.equal(continued,1);assert.equal(delivery.status(f.x.id)?.attempts.length,0);assert.equal(delivery.pending(f.x.id),false);
 });
@@ -59,12 +59,12 @@ for(const authenticated of [false,true])test('回环端点只有托管认证证�
   saveManagedRuntime(home,{id:randomUUID(),owner:managedMarker(home),kind:'owned',state:'ready',endpoint:endpoint.address,createdAt:Date.now(),authenticatedLoopback:authenticated});
   const message=f.store.accept(pair,f.c,'回环正文','loopback');await f.broker.pump();
   assert.equal(f.store.message(message.id).state,authenticated?'contextObserved':'accepted');assert.equal(f.codex.injected.length,authenticated?1:0);assert.equal(f.codex.woken.length,1);
-  writeFileSync(history,[{type:'session_meta',payload:{id:f.x.sessionId}},{type:'response_item',payload:{type:'function_call',call_id:'proof',name:'receive_messages',namespace:'claude',arguments:'{}'}},{type:'response_item',payload:{type:'function_call_output',call_id:'proof',output:JSON.stringify({messages:[{message_id:message.id}]})}}].map(row=>JSON.stringify(row)).join('\n')+'\n','utf8');
+  writeFileSync(history,[{type:'session_meta',payload:{id:f.x.sessionId}},{type:'response_item',payload:{type:'function_call',call_id:'proof',name:'receive_messages',namespace:'agy',arguments:'{}'}},{type:'response_item',payload:{type:'function_call_output',call_id:'proof',output:JSON.stringify({messages:[{message_id:message.id}]})}}].map(row=>JSON.stringify(row)).join('\n')+'\n','utf8');
   const adapter=new CodexAdapter(DEFAULT_CONFIG,home);t.after(()=>adapter.close());
   adapter.attach=adapter.connect=async()=>({request:async()=>({thread:{id:f.x.sessionId,path:history,status:{type:'idle'},turns:[]}})}) as any;
   assert.equal((await adapter.injectionState(f.x,endpoint)).history.status,authenticated?'supported':'unavailable');
   assert.deepEqual((await adapter.reconcile(f.x,endpoint)).map(receipt=>receipt.messageId),[],'常规核验从尾部建立增量边界');
-  appendFileSync(history,[{type:'response_item',payload:{type:'function_call',call_id:'new-proof',name:'receive_messages',namespace:'claude',arguments:'{}'}},{type:'response_item',payload:{type:'function_call_output',call_id:'new-proof',output:JSON.stringify({messages:[{message_id:message.id}]})}}].map(row=>JSON.stringify(row)).join('\n')+'\n','utf8');
+  appendFileSync(history,[{type:'response_item',payload:{type:'function_call',call_id:'new-proof',name:'receive_messages',namespace:'agy',arguments:'{}'}},{type:'response_item',payload:{type:'function_call_output',call_id:'new-proof',output:JSON.stringify({messages:[{message_id:message.id}]})}}].map(row=>JSON.stringify(row)).join('\n')+'\n','utf8');
   assert.deepEqual((await adapter.reconcile(f.x,endpoint)).map(receipt=>receipt.messageId),authenticated?[message.id]:[]);
 });
 
@@ -103,7 +103,7 @@ test('超时续跑在同一空闲轮次下限次重试；未知注入核验有�
   await run();for(let i=0;i<6;i++){t.mock.timers.tick(30000);await run();}
   assert.equal(starts,3);assert.equal(f.codex.delivered.length,1);assert.equal(f.store.message(message.id).state,'contextObserved');
   assert.equal(delivery.pending(f.x.id),false,'达到上限后不再逐次轮询原生历史');
-  await f.broker.dispatch('health.monitor',{actor:{host:'claude',sessionId:f.c.sessionId!,callId:'monitor'}});
+  await f.broker.dispatch('health.monitor',{actor:{host:'agy',sessionId:f.c.sessionId!,callId:'monitor'}});
   assert.ok((f.broker.status() as any).capabilities.integrationIssues.some((issue:any)=>issue.code==='continuation_failed'));
   const next=f.store.accept(pair,f.c,'结果不明时保留','park');f.codex.inject=async()=>{throw new DeliveryError('timeout','注入结果未知',true);};
   await run();for(let i=0;i<6;i++){t.mock.timers.tick(30000);await run();}

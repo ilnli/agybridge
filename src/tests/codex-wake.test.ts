@@ -27,7 +27,7 @@ test('忙碌轮次中断不认领消息；原窗口下一次取件只消费一�
 });
 
 test('真实 MCP 工具完成历史能补证；失败工具、其他服务器及正文引用不能冒充回执',()=>{
-  const item={type:'mcpToolCall',id:'native-mcp',server:'claude',tool:'receive_messages',status:'completed',result:{content:[{type:'text',text:JSON.stringify({messages:[{message_id:'one',message:'quoted-id'}]})}]}};
+  const item={type:'mcpToolCall',id:'native-mcp',server:'agy',tool:'receive_messages',status:'completed',result:{content:[{type:'text',text:JSON.stringify({messages:[{message_id:'one',message:'quoted-id'}]})}]}};
   assert.deepEqual(codexContextReceipts(item,'turn'),[{messageId:'one',turnId:'turn',itemId:'native-mcp'}]);
   for(const change of [{server:'other'},{tool:'send_message'},{status:'failed'},{error:{message:'失败'}},{result:{content:[{type:'text',text:'quoted-id'}]}}])assert.deepEqual(codexContextReceipts({...item,...change},'turn'),[]);
 });

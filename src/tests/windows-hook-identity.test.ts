@@ -59,7 +59,7 @@ test('hook 等待共用助手启动时保留自己的截止预算，不取消后
 });
 
 test('正式重启路径只规范化精确更新后缀，不扩大宿主命名规则',()=>{
-  for(const host of ['claude','codex'] as const){
+  for(const host of ['agy','codex'] as const){
     assert.equal(relaunchHostImage('C:\\bin\\'+host.toUpperCase()+'.EXE.old.123',host,'win32'),'C:\\bin\\'+host+'.exe');
     for(const suffix of ['','.old.','.old.1x','.old.-1','.old.1.exe','.backup.123']){const value='C:\\bin\\'+host+'.exe'+suffix;assert.equal(relaunchHostImage(value,host,'win32'),value);}
     assert.equal(relaunchHostImage('/opt/'+host+'.exe.old.123',host,'linux'),'/opt/'+host+'.exe.old.123');
@@ -74,7 +74,7 @@ test('Windows 常驻助手短请求超时不取消并发请求，悬挂后下一
   await assert.rejects(session.read(3,50),{code:'process_identity_unknown'});assert.equal((await session.read(4,1000)).pid,4);assert.equal(children.length,2);
 });
 
-for(const host of ['codex','claude'] as const)test('Windows '+host+' 更新改名后原进程继续核验，启动捕获不保存旧映像',{skip:process.platform!=='win32',timeout:30000},async t=>{
+for(const host of ['codex','agy'] as const)test('Windows '+host+' 更新改名后原进程继续核验，启动捕获不保存旧映像',{skip:process.platform!=='win32',timeout:30000},async t=>{
   const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),binary=path.join(temp.directory,host+'.exe'),old=binary+'.old.1793751136207';copyFileSync(process.execPath,binary);
   const child=spawn(binary,['-e',"process.send('ready');setInterval(()=>{},1000)"],{argv0:host,windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),exit=once(child,'exit');
   t.after(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill();await exit;await temp.cleanup();});await once(child,'message');
@@ -96,7 +96,7 @@ for(const host of ['codex','claude'] as const)test('Windows '+host+' 更新改�
   }finally{copyFileSync(process.execPath,binary);}
 });
 
-for(const host of ['codex','claude'] as const)test('Windows 原生 '+host+' 助手以同一句柄读取完整代次和含中文引号的启动参数',{skip:process.platform!=='win32',timeout:30000},async t=>{
+for(const host of ['codex','agy'] as const)test('Windows 原生 '+host+' 助手以同一句柄读取完整代次和含中文引号的启动参数',{skip:process.platform!=='win32',timeout:30000},async t=>{
   const temp=temporaryDirectory(),binary=path.join(temp.directory,host+'.exe'),home=path.join(temp.directory,'bridge');copyFileSync(process.execPath,binary);
   const argument='本地身份 Ω "带引号"',child=spawn(binary,['-e',"process.send('ready');setInterval(()=>{},1000)",argument],{windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),exit=once(child,'exit');
   t.after(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill();await exit;await temp.cleanup();});await once(child,'message');

@@ -47,7 +47,7 @@ export function pruneHistory(db:DatabaseSync,policy:RetentionConfig,now:number,p
     AND (COALESCE(archived_at,created_at)<? OR id NOT IN (SELECT id FROM pairs WHERE archived=1 ORDER BY COALESCE(archived_at,created_at) DESC,rowid DESC LIMIT ?))`)).run(cutoff,policy.maxArchivedPairs);
 
   const idleCutoff=now-policy.peerMaxIdleMs;
-  const referenced=new Set(db.prepare(                          embeddedSource("sql", `SELECT claude AS id FROM pairs UNION SELECT codex FROM pairs
+  const referenced=new Set(db.prepare(                          embeddedSource("sql", `SELECT agy AS id FROM pairs UNION SELECT codex FROM pairs
     UNION SELECT sender FROM messages UNION SELECT recipient FROM messages
     UNION SELECT CASE WHEN json_valid(data) THEN json_extract(data,'$.from') END FROM questions UNION SELECT CASE WHEN json_valid(data) THEN json_extract(data,'$.to') END FROM questions`)).all().map(r=>r.id as string));
   const retirements=db.prepare(                          embeddedSource("sql", `SELECT value FROM settings WHERE key='processRetirements'`)).get();
@@ -68,7 +68,7 @@ export function pruneHistory(db:DatabaseSync,policy:RetentionConfig,now:number,p
     statement(db,'DELETE FROM settings WHERE key=?').run('cooperation:'+peer.id);
     statement(db,'DELETE FROM settings WHERE key IN (?,?,?)').run('cooperationUnpaired:'+peer.id,'codexTranscript:'+peer.id,'codexRecoveryFence:'+peer.id);
     statement(db,'DELETE FROM settings WHERE key IN (?,?)').run('checkpoint:'+peer.id,'recoveryRevision:'+peer.id);
-    statement(db,'DELETE FROM settings WHERE key IN (?,?)').run('codexWake:'+peer.id,'codexFinalForward:'+peer.id);
+    statement(db,'DELETE FROM settings WHERE key=?').run('codexWake:'+peer.id);
   }
   for(const ep of endpoints){
     if(dead.has(ep.peerId)||ep.seenAt>=idleCutoff)continue;
@@ -84,12 +84,10 @@ export function pruneHistory(db:DatabaseSync,policy:RetentionConfig,now:number,p
   db.exec(                          embeddedSource("sql", `UPDATE events SET data=json_remove(data,'$.health.fingerprint') WHERE seq IN
     (SELECT seq FROM events WHERE type='health.alert' AND json_type(data,'$.health.fingerprint') IS NOT NULL ORDER BY seq LIMIT 8)`));
   db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'turnHealthDelivery:%' AND updated_at<? AND NOT EXISTS (SELECT 1 FROM pairs WHERE archived=0 AND settings.key LIKE 'turnHealthDelivery:'||pairs.id||':%')`)).run(cutoff);
-  db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'codexFinalForwardStreak:%' AND NOT EXISTS (SELECT 1 FROM pairs WHERE settings.key='codexFinalForwardStreak:'||pairs.id)`)).run();
   db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'communicationTip:message:%' AND NOT EXISTS (SELECT 1 FROM messages WHERE settings.key='communicationTip:message:'||messages.id)`)).run();
   db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'syncTip:message:%' AND NOT EXISTS (SELECT 1 FROM messages WHERE settings.key='syncTip:message:'||messages.id)`)).run();
-  db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'claudeApproval:%' AND (value='null' OR NOT EXISTS (SELECT 1 FROM messages WHERE settings.key='claudeApproval:'||messages.id))`)).run();
   db.prepare(                          embeddedSource("sql", `DELETE FROM context_notices WHERE json_extract(data,'$.at')<? OR id NOT IN (SELECT id FROM context_notices ORDER BY rowid DESC LIMIT ?)`)).run(cutoff,policy.maxEvents);
-  db.prepare(                          embeddedSource("sql", `DELETE FROM session_lineage WHERE peer_id NOT IN (SELECT claude FROM pairs WHERE archived=0 UNION SELECT codex FROM pairs WHERE archived=0)
+  db.prepare(                          embeddedSource("sql", `DELETE FROM session_lineage WHERE peer_id NOT IN (SELECT agy FROM pairs WHERE archived=0 UNION SELECT codex FROM pairs WHERE archived=0)
     AND epoch NOT IN (SELECT json_extract(data,'$.epoch') FROM window_bindings WHERE active=1)
     AND (observed_at<? OR rowid NOT IN (SELECT rowid FROM session_lineage ORDER BY observed_at DESC,rowid DESC LIMIT ?))`)).run(cutoff,policy.maxReferences);
   db.prepare(                          embeddedSource("sql", `DELETE FROM window_bindings WHERE active=0 AND json_extract(data,'$.observedAt')<?`)).run(idleCutoff);

@@ -1,17 +1,9 @@
 import type { FieldObservation } from './storage/observed-fields.js';
-export type Host = 'claude' | 'codex';
+export type Host = 'agy' | 'codex';
 export interface ModelProfile {model?:string;effort?:string|number}
 export type PeerState = 'ready' | 'busy' | 'needsHuman' | 'offline' | 'unknown' | 'paused' | 'starting';
 export type DeliveryState = 'accepted' | 'sending' | 'runtimeQueued' | 'held' | 'contextObserved' | 'responded' | 'refused' | 'expired' | 'unknown';
 export type PermissionClass = 'prompting' | 'bypass' | 'unknown';
-export interface NativeInbound {
-  policy:'accept'|'hold'|'refuse'|'default'|'unknown';
-  source?:'policy'|'flag'|'user'|'project'|'local'|'invalid'|'default';
-  dialogExpiry?:string;
-  dialogTimeoutMs?:number;
-  observedAt:number;
-  permission?:PermissionClass;
-}
 export type ContextChangeReason = 'reset' | 'switch' | 'fork' | 'unknown';
 
 export interface WindowIdentity {
@@ -74,11 +66,11 @@ export interface Peer {
 
 export interface CodexPermissionEvidence {sandbox?:string;approval?:PermissionClass;autoReview?:boolean}
 export interface Endpoint {
-  nativeSession?:{transcriptPath?:string;interactive?:boolean};
+  nativeSession?:{transcriptPath?:string;interactive?:boolean;artifactsDir?:string};
   codexPermissionObservation?:FieldObservation<CodexPermissionEvidence>;
   peerId: string;
   epoch: string;
-  mode: 'app-server' | 'embedded' | 'claude-inbox';
+  mode: 'app-server' | 'embedded' | 'agy-acp' | 'agy-tui';
   address: string;
   pid: number | null;
   procStart: string | null;
@@ -94,21 +86,14 @@ export interface Endpoint {
   processKind?: 'foreground' | 'app-server';
   codexPermission?: CodexPermissionEvidence;
   daemon?: {address:string;rootSessionId?:string;forkedFromId?:string;sandbox?:string;approval?:PermissionClass;autoReview?:boolean};
-  modVersion?: string;
-  modRevision?: string;
   nativePermission?: {permission:PermissionClass;mode?:string;observedAt:number};
-  nativeDecision?: import('./integration/mod/mod-protocol.js').NativeDecision;
-  nativeAutoMode?: import('./hosts/claude/claude-auto-mode.js').NativeAutoMode;
-  nativeBackground?:{tasks?:number;crons?:number;observedAt:number};
-  nativeInbound?: NativeInbound;
-  nativeProfile?: import('./integration/mod/mod-protocol.js').NativeProfile;
   nativeHealth?: import('./broker/health/turn-health.js').TurnHealth;
   pendingContext?: boolean;
 }
 
 export interface Pair {
   id: string;
-  claude: string;
+  agy: string;
   codex: string;
   paused: boolean;
   archived: boolean;
@@ -139,6 +124,7 @@ export interface RegisterInput {
   host: Host;
   sessionId: string;
   cwd: string;
+  cwdFallback?: boolean;
   name?: string;
   kind?: Peer['kind'];
   parentId?: string;
@@ -175,12 +161,11 @@ export interface BridgeConfig {
   implicit: 'on-demand' | 'never';
   compatibilityWake: 'notify' | 'strict';
   codexBinary?: string;
-  claudeBinary?: string;
+  agyBinary?: string;
   codexHome?: string;
-  claudeHome?: string;
+  agyHome?: string;
   codexCommand?: string[];
-  claudeCommand?: string[];
-  claudeSdkUserPrompt?: boolean;
+  agyCommand?: string[];
   codexEndpoint?: string;
   codexAuthTokenEnv?: string;
   partnerProfiles?: Partial<Record<Host, ModelProfile & {source?:'host'|'frozen'}>>;
@@ -208,11 +193,9 @@ export interface RetentionConfig {
   logBackups:number;
 }
 
-                                                                   
-export const WAKE_NOTICE = 'nxbridge pickup notice (not user msg): claude msg pending -> claude.receive_messages()';
-                                      
-export const HEALTH_WAKE_NOTICE = 'nxbridge: runtime health notice pending; current hook provides verified facts; no partner message pickup required';
-export const isEmbeddedWake=(prompt:unknown):boolean=>prompt===WAKE_NOTICE||prompt==='nxbridge: claude msg pending -> claude.receive_messages()'||prompt===HEALTH_WAKE_NOTICE;
+export const WAKE_NOTICE = 'agybridge pickup notice (not user msg): agy msg pending -> agy.receive_messages()';
+export const AGY_WAKE_NOTICE = 'agybridge pickup notice (not user msg): codex msg pending -> receive_messages()';
+export const HEALTH_WAKE_NOTICE = 'agybridge: runtime health notice pending; current hook provides verified facts; no partner message pickup required';
+export const isEmbeddedWake=(prompt:unknown):boolean=>prompt===WAKE_NOTICE||prompt==='agybridge: agy msg pending -> agy.receive_messages()'||prompt===HEALTH_WAKE_NOTICE;
 
-export function otherHost(host: Host): Host { return host === 'claude' ? 'codex' : 'claude'; }
-
+export function otherHost(host: Host): Host { return host === 'agy' ? 'codex' : 'agy'; }

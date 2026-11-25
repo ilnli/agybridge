@@ -8,7 +8,7 @@ import { temporary } from './support/temporary.js';
 
 const row=(type:string,payload:unknown)=>JSON.stringify({timestamp:'2026-11-14T00:00:00Z',type,payload})+'\n';
 const meta=(id:string,extra:Record<string,unknown>={})=>row('session_meta',{id,...extra});
-const call=(id:string)=>row('response_item',{type:'function_call',name:'receive_messages',namespace:'claude',call_id:id});
+const call=(id:string)=>row('response_item',{type:'function_call',name:'receive_messages',namespace:'agy',call_id:id});
 const output=(id:string)=>row('response_item',{type:'function_call_output',call_id:id,output:JSON.stringify({messages:[{message_id:id}]})});
 
 test('分叉历史的祖先元数据不破坏唯一有序回执，首条身份仍须匹配目标',async t=>{

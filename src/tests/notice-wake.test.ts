@@ -28,7 +28,7 @@ for(const mode of ['embedded','websocket','unix'] as const)test(`${mode} 空闲 
     f.broker.deliveryHealth.enqueue(pair.id,x.id,{id:'passive',state:'pending',message:marker,...fields});
     await (f.broker as any).runtimeHealth.checkDeliveryHealth();
     await (f.broker as any)[mode==='embedded'?'signalEmbeddedWake':'signalCodexWake'](x,f.store.endpoint(x.id));
-    assert.equal(queued+f.codex.woken.length+f.codex.injected.length+f.claude.delivered.length,0);
+    assert.equal(queued+f.codex.woken.length+f.codex.injected.length+f.agy.delivered.length,0);
     assert.equal(f.broker.deliveryHealth.get(pair.id,x.id,'passive')?.wake,false);
     const stale=await f.broker.dispatch('hook',{session_id:x.sessionId,actor,hook_event_name:'UserPromptSubmit',prompt:HEALTH_WAKE_NOTICE});
     assert.deepEqual(stale,{continue:false});
@@ -45,7 +45,7 @@ test('明确行动类别按接收方判定，恢复和未知类别均静默',()=
   assert.equal(noticeCanWake(notice({kind:'explicit_recovery'}),'self'),true);
   for(const issue of ['mod_missing','mod_stale']){
     const own=notice({source:'pair_anomaly',kind:'pair_anomaly:claude:'+issue});
-    assert.equal(noticeCanWake(own,'claude'),false);assert.equal(noticeCanWake(own,'codex'),false);
+    assert.equal(noticeCanWake(own,'agy'),false);assert.equal(noticeCanWake(own,'codex'),false);
   }
   assert.equal(noticeCanWake(notice({kind:'pair_anomaly:other:busy_unanswered'}),'self'),false);
   assert.equal(noticeCanWake(notice({kind:'pair_anomaly:other:busy_unanswered',phase:'recovery'}),'self'),false);
@@ -75,17 +75,6 @@ test('重启的事实身份使用消息编号和状态，跨实例及历史裁�
   health.restarted(pair,f.x,counts,[facts[0]!,{id:'new-message-same-count',state:'unknown'}],0);
   assert.equal(f.store.events(0,1000).filter(e=>e.type==='health.delivery.restart').length,2);
   assert.match(health.notes(pair.id,f.x.id)[0]!.text,/bridge restarted/);
-});
-
-test('真实 Mod 缺失路由的 Codex 副本是被动通知，不借助旧回执故障唤醒',async t=>{
-  const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id);
-  f.broker.pairAnomalies.integration(f.c,{mcp:true});f.broker.pairAnomalies.observe(pair,f.c);
-  const pending=f.broker.deliveryHealth.peek(pair.id,f.x.id)[0]!;
-  assert.match(pending.message,/Mod/);assert.equal(pending.wake,false);
-  await (f.broker as any).runtimeHealth.checkDeliveryHealth();
-  assert.equal(f.codex.woken.length+f.codex.injected.length,0);
-  const result=await f.broker.dispatch('receive',{host:'codex',sessionId:f.x.sessionId,callId:'natural-mod'}) as any;
-  assert.ok(result.notices.some((n:any)=>n.message.includes('Mod')));
 });
 
 test('升级前的信息类注入续跑预约被撤销，原生历史仍保留',async t=>{

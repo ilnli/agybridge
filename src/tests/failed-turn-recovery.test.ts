@@ -32,7 +32,7 @@ test('最新失败轮次按用户要求继续，不中断、不伪造搭档消�
   assert.deepEqual(f.store.messages(),before);assert.equal(f.codex.delivered.length,0);assert.equal(f.codex.woken.length,1);assert.ok(!f.calls.includes('turn/interrupt'));
   assert.equal(f.store.setting('codexRecoveryFence:'+f.x.id),undefined,'结束轮次不留下中断豁免');
   const after:any=await f.broker.dispatch('codex.recover',{preview:true});assert.equal(after.recoveryCommand,null);assert.equal(after.recoveryBlocked,'recovery_already_requested');
-  const restored=new Broker(f.store,{...DEFAULT_CONFIG,implicit:'never'},{codex:f.codex,claude:f.claude} as any,f.broker.home);
+  const restored=new Broker(f.store,{...DEFAULT_CONFIG,implicit:'never'},{codex:f.codex,agy:f.agy} as any,f.broker.home);
   try{await assert.rejects(restored.dispatch('codex.recover',{turn_id:'failed-turn',request_id:'after-restart'}),{code:'recovery_already_requested'});}finally{await restored.stop();}
   assert.equal(f.codex.injectedNotices.length,1);assert.equal(f.codex.woken.length,1);
 });

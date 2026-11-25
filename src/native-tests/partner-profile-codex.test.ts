@@ -27,7 +27,7 @@ import { temporaryDirectory } from '../tests/support/temporary.js';
 test('真实自有 Codex：默认与显式选择、原会话双字段切换、持久重启及冻结默认值隔离原生配置漂移',{timeout:170000},async t=>{
   const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexHome=path.join(root,'codex');
   mkdirSync(codexHome);await ensureHome(home);
-  const env={NXBRIDGE_HOME:home,CODEX_HOME:codexHome,CLAUDE_CONFIG_DIR:path.join(root,'claude'),OPENAI_API_KEY:'nxbridge-local-profile-test'};
+  const env={AGYBRIDGE_HOME:home,CODEX_HOME:codexHome,AGY_HOME:path.join(root,'agy'),OPENAI_API_KEY:'agybridge-local-profile-test'};
   const restoreEnvironment=overrideEnvironment(env);
   const bodies:any[]=[],errors:string[]=[];
   const model=http.createServer(async(req,res)=>{try{
@@ -53,15 +53,15 @@ test('真实自有 Codex：默认与显式选择、原会话双字段切换、�
   const initialNative=nativeConfig({model:'gpt-5.1-codex',effort:'low'});writeFileSync(nativeFile,initialNative,'utf8');
   config={...DEFAULT_CONFIG,implicit:'on-demand',compatibilityWake:'strict',syncTipMinutes:0,contextTipTokens:[],idleNoticeMinutes:0,codexHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{}),partnerProfiles:{codex:{source:'frozen',...defaults}}};
   const database=path.join(home,'profile-state.db');
-  const open=()=>{store=new Store(database);adapter=new CodexAdapter(config,home);broker=new Broker(store,config,{codex:adapter,claude:new FakeAdapter()} as unknown as Adapters,home);};
+  const open=()=>{store=new Store(database);adapter=new CodexAdapter(config,home);broker=new Broker(store,config,{codex:adapter,agy:new FakeAdapter()} as unknown as Adapters,home);};
   open();
   const wait=async(predicate:()=>boolean|Promise<boolean>,reason:string)=>{
     const until=Date.now()+15000;
     while(!await predicate()){assert.ok(Date.now()<until,reason+'；'+JSON.stringify({errors,requests:bodies.map(body=>({model:body.model,effort:body.reasoning?.effort})),events:store!.events(0,100).slice(-12)}));await delay(30);}
   };
   const create=async(name:string,choice:ModelProfile={})=>{
-    const source=store!.register(registration('claude','profile-source-'+name,{cwd:root,permission:'bypass'}));
-    const actor:Actor={host:'claude',sessionId:source.sessionId!,callId:'profile-create-'+name};
+    const source=store!.register(registration('agy','profile-source-'+name,{cwd:root,permission:'bypass'}));
+    const actor:Actor={host:'agy',sessionId:source.sessionId!,callId:'profile-create-'+name};
     const view=store!.selections.create(source,actor,config) as any;
     const before=bodies.length,result=await broker!.dispatch('pair.selection.commit',{actor,selection_id:view.selection_id,action:'create',...choice});
     const pair=store!.pairFor(source.id);assert.ok(pair,JSON.stringify(result));

@@ -22,10 +22,10 @@ import { releaseNativeTestLaunches } from '../tests/support/native-launch.js';
 
 test('真实子代理忙碌时拒绝重启，结束后原根会话恢复并停用原宿主全部子端点',{timeout:170000},async t=>{
   const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),codexHome=path.join(temp.directory,'codex');mkdirSync(codexHome,{recursive:true});
-  const env={NXBRIDGE_HOME:home,CODEX_HOME:codexHome,CLAUDE_CONFIG_DIR:path.join(temp.directory,'claude'),OPENAI_API_KEY:'isolated-subagent-restart'};
+  const env={AGYBRIDGE_HOME:home,CODEX_HOME:codexHome,AGY_HOME:path.join(temp.directory,'agy'),OPENAI_API_KEY:'isolated-subagent-restart'};
   const restoreEnvironment=overrideEnvironment(env);
   const config={...DEFAULT_CONFIG,codexHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};
-  const adapter=new CodexAdapter(config,home),store=new Store(':memory:'),broker=new Broker(store,config,{codex:adapter,claude:new FakeAdapter()} as unknown as Adapters,home);
+  const adapter=new CodexAdapter(config,home),store=new Store(':memory:'),broker=new Broker(store,config,{codex:adapter,agy:new FakeAdapter()} as unknown as Adapters,home);
   const stoppedTree=new Map<string,ProcessIdentity>();
   const captureTree=async()=>{for(const record of ownedProcesses(home).records.filter(value=>value.role==='codex-runtime'))if(record.windowsJob||record.posixGroup)for(const identity of [record.identity,...await processDescendants(record.identity,record)])stoppedTree.set(identity.pid+':'+identity.startedAt,identity);};
   const treeState=()=>Promise.all([...stoppedTree.values()].map(async identity=>({pid:identity.pid,procStart:identity.startedAt,name:identity.name,state:await ownedProcessState(identity)})));
@@ -63,7 +63,7 @@ test('真实子代理忙碌时拒绝重启，结束后原根会话恢复并停�
                                                    
   (adapter as any).attached.add(address+'|'+started.thread.id);
   input.endpoint={...input.endpoint,configHome:codexHome,runtimeId:runtime.id,pid:runtime.pid!,procStart:runtime.procStart!};const root=store.adopt(placeholder.id,input),endpoint=store.endpoint(root.id)!;
-  const partner=store.register(registration('claude','subagent-counterpart'));store.pair(partner.id,root.id);await adapter.attach(root,endpoint);
+  const partner=store.register(registration('agy','subagent-counterpart'));store.pair(partner.id,root.id);await adapter.attach(root,endpoint);
   const completed=new Set<string>();rpc.on('notification',message=>{if(message.method==='turn/completed')completed.add(message.params.turn.id);});
   const wait=async(check:()=>boolean|Promise<boolean>)=>{const deadline=Date.now()+30000;while(!await check()){if(serverError)throw Error(serverError);if(Date.now()>deadline)throw Error('原生子代理状态超时；spawn='+spawnResult);await delay(50);}};
   const turn=await rpc.request('turn/start',{threadId:root.sessionId,input:[{type:'text',text:'生成隔离子代理后结束主轮次。'}]});

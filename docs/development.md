@@ -1,153 +1,84 @@
 # 开发说明
 
-面向想从源码构建、修改或了解实现的开发者：目录结构、构建安装、安装细节和测试。只想安装使用的话，看仓库首页的 README 和 [user-guide.md](user-guide.md)。
+面向从源码构建、修改或排查 `agybridge` 实现的开发者：目录结构、构建打包、安装机制与验证测试。日常安装与使用请先看仓库首页 [README.md](../README.md) 与 [user-guide.md](user-guide.md)。
 
 ## 目录结构
 
-| 位置 | 放什么 |
+| 位置 | 说明 |
 |---|---|
-| `src/` 根目录 | 只放固定入口：`cli.ts`、`hook-entry.ts`、`mcp-entry.ts`、`mod-entry.ts`、`question-control.ts`，以及全局共用的 `types.ts`、`version.ts` 等少数文件。入口名和发布文件名保持不变，插件按这些名字加载 |
-| `src/app/` | 命令行分派与帮助；`commands/` 按命令放实现，运行哪条命令才加载哪条 |
-| `src/broker/` | 协调器 `coordinator.ts` 及其服务，各服务管理自己的状态：`requests/`（RPC 请求契约）、`pairing/`（配对、选择、解除与恢复配对）、`profiles/`（搭档模型与推理强度）、`lifecycle/`（后台准备、恢复编排与回收）、`recovery/`（恢复、接手、会话托管与历史）、`delivery/`（消息投递、引用与协作提醒）、`health/`（轮次、资源与运行状态检查及提醒） |
-| `src/hosts/` | 后台启动与宿主程序识别；`claude/`、`codex/` 放各自的协议、会话、身份和适配器 |
-| `src/integration/` | 模型和宿主接入：`mcp/`（MCP 工具与问答）、`mod/`（Claude Mod 通道）、`hooks/`（hook 处理），`instructions.ts` 是 Codex 端的协作规则 |
-| `src/install/` | 安装、更新、卸载、兼容检查与私有运行目录 |
-| `src/config/` | 配置文件的读取、校验、重载和宿主内修改 |
-| `src/ipc/` | 本机通信：socket、RPC、唤醒 |
-| `src/process/` | 进程启动、归属、容器与回收；`windows/`、`posix/` 放平台实现 |
-| `src/storage/` | 账本、事务、日志与数据保留 |
-| `src/shared/` | 多处共用、不依赖具体功能的小工具 |
-| `src/tests/`、`src/native-tests/` | 普通测试与使用实际官方 CLI 的原生测试；共用夹具在 `src/tests/support/` |
-| `plugins/claude/`、`plugins/codex/` | 两端插件源文件。Claude 的协作规则在 `plugins/claude/hooks/register.js`，并同步到 `skills/partner/SKILL.md` |
-| `tools/` | 构建、打包、版本同步、测试运行与诊断脚本 |
-| `docs/` | 使用说明、行为说明、本开发说明和模型特点（供 AI 读取） |
-| `publish/` | 构建生成的发行版，不进仓库；由 GitHub Actions 构建，打版本标签时附到 Releases |
-| `.github/` | GitHub Actions：推送时构建一次并测试；打版本标签时发布已通过 macOS 检查的发布包；每周两次检查新旧版本官方 CLI 的兼容性 |
+| `src/` 根目录 | 固定运行入口：`cli.ts`、`hook-entry.ts`、`mcp-entry.ts`，以及全局共用的 `types.ts`、`version.ts`。入口名与发布文件名保持稳定，插件按固定名字加载 |
+| `src/app/` | 命令行分派（`dispatch.ts`）与帮助（`help.ts`）；`commands/` 按子命令拆分实现，按需加载 |
+| `src/broker/` | 本机协调器 `coordinator.ts` 及其领域模块：`requests/`（RPC 契约）、`pairing/`（配对、候选选择、解除与恢复）、`profiles/`（后台搭档模型与推理强度管理）、`lifecycle/`（后台准备、恢复编排与进程回收）、`recovery/`（故障恢复、前台接管、会话托管与历史核验）、`delivery/`（消息投递、`nxref:` 引用展开与协作提醒）、`health/`（轮次进展、在途工具、资源与运行状态监测） |
+| `src/hosts/` | 后台启动与宿主协议适配：`agy/`（`acp-client.ts` JSON-RPC over stdio 客户端、`adapter.ts` 后台 `agy acp` 会话生命周期与权限处理、`identity.ts` MCP/hook 会话与产物路径解析）、`codex/`（App Server、共用 daemon、持久历史回执、命名权限隔离与冷重启） |
+| `src/integration/` | 模型与宿主接入：`mcp/`（`server.ts` 双端 MCP 工具集、问答协议、错误映射与终端展示）、`hooks/`（AGY 与 Codex hook 客户端、命令入口、超时守卫与会话绑定），`instructions.ts` 维护常驻协作指令 |
+| `src/install/` | `setup` / `update` / `uninstall`、安装事务日志、插件缓存保留、版本兼容预检与独立运行时管理 |
+| `src/config/` | `config.toml` 与 `config.managed.toml` 解析、schema 校验、自动热重载与宿主内配置提案 |
+| `src/ipc/` | 本地 Unix socket / Windows Named Pipe 通信、64 位令牌校验与修复、唤醒通道 |
+| `src/process/` | 宿主命令解析、进程代次核验、归属登记与安全回收；`windows/`、`posix/` 为平台实现 |
+| `src/storage/` | `node:sqlite` WAL 账本、schema 迁移、落盘原子文件写入（`atomic-file.ts`、`state-directory.ts`）、日志轮转与数据保留 |
+| `src/shared/` | 跨模块基础工具（路径、时间预算、错误类型、内嵌脚本标记） |
+| `src/tests/`、`src/native-tests/` | 单元测试与调用真实官方 CLI 的原生集成测试；测试夹具位于 `src/tests/support/` |
+| `plugins/agy/`、`plugins/codex/` | 两端插件源码。`plugins/agy/` 包含 `plugin.json`、`mcp_config.json`、`hooks.json`、`rules/AGENTS.md`、`skills/partner/` 及图标资源；`plugins/codex/` 包含 `.codex-plugin/plugin.json`、`.mcp.json`、`hooks/hooks.json` 与 `skills/partner/` |
+| `tools/` | 构建打包（`build-publish.mjs`、`pack-publish.mjs`）、版本同步（`sync-version.mjs`）、内嵌代码处理、测试运行器与诊断脚本 |
+| `docs/` | 使用说明（`user-guide.md`）、协作指南（`collaboration.md`，构建时同步至两端 `partner` 技能）、行为说明（`behavior.md`）与本开发说明 |
+| `publish/` | `npm run build:publish` 生成的零外部依赖发行目录（不入库）；打标签发布时打包为 Release zip |
+| `.github/` | GitHub Actions：推送构建与跨平台单元/原生测试（`ci.yml`）、版本标签发版（`release.yml`）、定时兼容性巡检（`canary.yml`） |
 
-Codex 插件包里的文件一旦有字节变化，用户就要在 Codex 里用 `/hooks` 重新授权，所以 `plugins/codex/` 的内容和发布文件名都要保持稳定。
+> 注意：Codex 插件目录下的文件一旦发生字节变化，用户需要在 Codex 的 `/hooks` 中重新授权一次信任，因此 `plugins/codex/` 的文件内容和入口名应尽量保持稳定。
 
-## 开发与安装
+## 从源码构建与安装
 
 ### 环境要求
 
-需要 Node.js 24 LTS 和两家官方 CLI。
+- Node.js 24～26（内置 `node:sqlite`）
+- 官方 `agy` CLI 与 `codex` CLI（`>= 0.164.0`）
 
-已在提权 Windows 上使用实际官方 Codex 0.164.0、0.166.0 和 Claude Code 2.1.316 完成协议测试；Codex 0.166 的共用后台服务（daemon）模式在 WSL ext4 上用实际 daemon 验收。Codex 各版本的兼容情况见 [behavior.md](behavior.md) 的“Codex 版本兼容”。
-
-### 构建与安装
+### 构建与本地部署
 
 ```sh
 npm ci
+npm run build
 npm run build:publish
-node publish/nxbridge.mjs setup
-nxbridge codex
+node publish/agybridge.mjs setup --dry-run   # 预检
+node publish/agybridge.mjs setup             # 安装或更新本机环境
 ```
 
-`npm run build:publish` 生成 `publish/`：它是压缩打包后的完整发行版，依赖都已打包在内，不需要 `node_modules`。拿到 `publish/` 的机器只要有 Node.js 24～26，就能直接 `node publish/nxbridge.mjs setup` 安装。
+`npm run build:publish` 使用 `esbuild` 将运行时与依赖打包进 `publish/`（无需 `node_modules`），同时生成第三方依赖许可证清单 `publish/THIRD-PARTY-NOTICES.md` 和完整性校验清单 `publish/publish.json`。
 
-### `setup` 做什么、不做什么
-
-`setup` 在 nxbridge 私有目录准备两端插件，通过两家官方插件命令安装，并通过 Codex 官方配置接口合并限定在 `claude` 命名空间的工具设置。
-
-- 它不会修改模型、审批、沙箱或 hooks 信任，也不安装系统服务或修改 shell profile。
-- 已有同名 MCP 配置会明确报冲突，不会被覆盖。
-
-**安装前检查**
-
-- 检查 Node.js 版本和 `node:sqlite`、两家 CLI 的版本与能力，以及已有的同名市场、命名空间配置和 `nxbridge` 命令有没有冲突。
-- 任何一项不通过就不写入，并说明原因。
-- Codex 最低要求 0.164.0；无法核验版本或版本过旧时，在安装和更新前拒绝并提示升级。Claude 仍按必需能力预检判断。
-- 调用两家 CLI 的检查命令按程序逐个执行，失败时一定给出退出码和输出片段。
-
-**命令行参数**
-
-- `setup` / `update` 的 `--help` 只显示帮助；未知参数、缺值和非法位置参数在预检之前报错，不产生任何副作用。
-- 只想看会做什么、不实际改动时，加 `--dry-run`，它和正式安装做完全相同的检查；`--dry-run` 会清理本次预检新建的空归属目录。
-- 只生成插件文件、不碰两家 CLI 配置时，用 `--prepare-only`。
+校验 AGY 插件清单与结构：
 
 ```sh
-nxbridge setup --dry-run
-nxbridge update --from <新的 publish 目录>
-nxbridge setup --prepare-only
+agy plugin validate plugins/agy --strict
 ```
 
-### 私有运行目录
+### `setup` / `update` 的工作流
 
-安装时会把 `publish/` 复制到 nxbridge 私有目录（`~/.nxbridge/runtime/<版本>`）。插件、`nxbridge` 命令和 shell wrapper 都从这里运行，所以**装好后原工程目录可以移走或删除**。
+1. **只读预检**：检查 Node.js 版本与 `node:sqlite`、两端 CLI 版本与必需能力、本地市场目录与命令路径冲突，以及本地 IPC 令牌完整性。任一检查未通过均直接退出，不落盘修改。
+2. **独立运行时落盘**：将 `publish/` 复制到 `~/.agybridge/runtime/<buildId>`（仅保留当前版与上一版），更新 `~/.agybridge/bin/runtime.json` 指针，并在用户可写的 `PATH` 目录（优先 `~/.local/bin`、`~/bin`、用户 npm 全局目录等）生成 `agybridge` 启动命令。
+3. **双端插件安装与同步**：
+   - 在 `~/.agybridge/marketplace/` 生成注入了本机 Node 与桥接路径的 `plugins/agy` 和 `plugins/codex`，并将 `docs/collaboration.md` 同步为技能参考文档。
+   - **AGY 侧**：首次通过 `agy plugin install` 安装到 `~/.gemini/config/plugins/agybridge/`；后续更新优先文件级同步或重装，保留启用状态。
+   - **Codex 侧**：通过 `agybridge-local` 本地市场安装 `agybridge@agybridge-local`，并通过 Codex 官方配置接口写入限定在 `agy` 命名空间的直接工具配置（不改动模型、沙箱、审批或 hooks 信任记录）。
+4. **平滑重启协调器**：若有损坏的本地 IPC 令牌，在确认归属后安全停止旧协调器并重新生成令牌；正常更新时平滑重启 broker，已有会话与专用 App Server 保持不断线。
 
-私有目录只保留当前版和上一版；更旧的版本如果还在被运行中的进程使用，会等它退出后在下次更新时清理。
+### 更新后重新加载
 
-### 更新、修复与中断后续装
+- **已打开的 AGY 前台窗口**：退出后通过 `agy --conversation <会话ID>` 恢复，或新开窗口即可加载最新插件与 MCP 服务；其中短生命周期 command hooks（如 `PreToolUse`、`PreInvocation`、`Stop`）每次执行都会经稳定入口连接新协调器。
+- **后台 AGY ACP 会话**：空闲时可通过 `agybridge open agy` 接管或由协调器按原会话 ID 重新连接。
+- **后台 Codex 搭档**：空闲后在外部终端执行 `agybridge restart codex`（多配对时指定 `--member <ID>`）。
+- **用户前台 Codex 窗口**：退出后用 `codex resume <会话ID>` 恢复或新开会话。
 
-`setup` 可以重复执行：已安装时它就是更新和修复，`update` 是同一命令的别名。每次执行会：
-
-- 重新生成插件文件，同步两端已安装的插件。Claude 走官方更新命令；Codex 没有官方更新命令，改为同步 nxbridge 自有的插件缓存，启用状态和 hooks 信任保持不变。
-- 平滑重启 broker，现有会话和 App Server 不受影响。
-- 最后用中文列出已打开窗口还需要的操作。
-
-安装或更新中途被打断（进程被杀、文件被占用）时，直接再运行一次 `setup` 或 `update` 就会接着完成。
-
-- 如果被打断后有文件被改过，它会列出具体文件和处理办法，不会覆盖。
-- Windows 上文件暂时被占用时会自动短暂重试，仍然不行就报告占用它的进程（能查到的话）。
-- 之前记下的启动程序已经不在了（比如 Claude 桌面端自动更新后删掉了旧版本目录），不会让安装停下。安装本身只需要找到能运行的 Codex 和 Claude 命令；以后在后台启动时用哪个程序，按“启动方式的选择”重新挑选，挑不出来也只在结果里提示怎么修。
-- `--dry-run` 做同样的检查：安装要用的命令找不到时，预演阶段就会报出来。
-
-**升级到新版本**
-
-- 用 `--from` 指定新构建的 `publish/` 目录。
-- 不带 `--from` 时沿用上次的安装来源；来源已经不在的话，就用私有目录里已安装的版本做修复。
-- 推荐由新版本自己的安装程序执行：`node <新 publish 目录>/nxbridge.mjs update --from <新 publish 目录>`。
-
-### `nxbridge` 命令的位置
-
-`setup` 还会在一个已经在 PATH 里、且当前用户可写的用户目录放一个 `nxbridge` 命令，此后可以直接运行 `nxbridge status`、`nxbridge restart codex` 等。
-
-- 新安装依次优先选 `~/.local/bin`、`~/bin`、用户自己的 npm 全局目录、当前用户可写的 Homebrew 目录，再到其他用户目录。
-- 不会选 Rust（`~/.cargo/bin`）、Go、pyenv / rbenv / asdf、nvm / fnm / volta / mise 这类工具专用目录，也不会因为管理员能写就选 Program Files。
-- 不需要管理员权限；已经装好的命令位置保持不变。
-- dry-run 和安装结果都会显示选了哪个目录、为什么。
-- 它不修改 PATH，也不覆盖不属于 nxbridge 的同名文件。
-- 可以用 `--bin-dir <目录>` 指定目录，这个目录必须已经在 PATH 中，不存在的话会自动创建。
-- 找不到合适目录时，安装结果会给出可直接运行的完整命令。没有 `nxbridge` 命令时，用 setup 输出的完整命令代替。
-
-### 安装或更新后的重新加载
-
-安装后，Claude 原窗口用 `/reload-plugins` 加载；Codex 新会话或冷恢复使用新工具。
-
-更新后，已打开的窗口要重新加载才会用上新版本：
-
-- Claude 窗口执行 `/reload-plugins`；如果在用 codex MCP 备用入口，再到 `/mcp` 里重新连接。
-- nxbridge 后台的 Codex 等它空闲后，在 Codex 之外的终端执行 `nxbridge restart codex`。
-- 你自己开的 Codex 窗口，按该命令给出的步骤退出后用原 ID 恢复。
-
-前提条件：
-
-- Claude 的登录和项目目录信任须已在原生界面完成，否则后台会话可能等待人处理，或不会加载 Mod。
-- embedded 模式的 hooks 必须在 Codex 原生 `/hooks` 中获得信任，nxbridge 不代写信任记录。
-
-## 验证
+## 验证与测试
 
 ```sh
-npm test
-npm run test:native
-npm run test:native:target
-npm run check
+npm run check               # 版本元数据同步检查、Windows 原生身份修订检查与 TypeScript 类型检查
+npm test                    # 构建并运行全部单元测试（dist/tests/**/*.test.js）
+npm run test:native         # 在隔离临时目录中使用真实 CLI + 本地模拟模型服务运行原生协议测试
+npm run test:native:target  # 临时下载指定版本官方 Codex 二进制做隔离兼容性验证
+npm run pack:zip            # 生成并校验 artifacts/releases/agybridge-<buildId>.zip 发布包
 ```
 
-| 脚本（`npm test` / `npm run …`） | 覆盖范围 |
-|---|---|
-| `npm test` | 普通测试：核心配对、队列、幂等、暂停、断连、持久恢复、Mod 契约、资源归属和 shell 包装的参数转发、编码保留与撤销 |
-| `test:native` | 在独立临时配置下使用实际安装的官方 CLI 与本机模拟模型接口，验证安装、配置保留、App Server、MCP、Claude 后台 Mod 和消息往返 |
-| `test:native:target` | 临时下载官方 Codex 0.166.0 二进制，验证后清理，不升级用户安装 |
+测试准则：
 
-- shell 用例在对应 shell 可用时执行；Windows 上验证 PowerShell，Bash / Zsh 明确跳过。
-- Claude 原生后台集成用例在 Windows 运行；托管子进程用例在 Linux 运行，其他系统明确跳过。
-- 测试不调用真实模型、不修改用户真实 CLI 配置，并清理自己的配置和进程。
-- GitHub Actions 每次推送只构建一次，之后的测试都用这份构建结果：
-  - macOS 上运行普通测试，并安装官方 Codex 和 Claude Code CLI，配合本机模拟模型运行原生测试。这部分决定能否发版。
-  - 其余移植到 macOS 的原生测试（Claude 后台、共用后台等）也会运行，结果仅供参考，不阻止发版。
-  - Linux（Node 24、26）和 Windows 上运行普通测试，结果仅供参考，不阻止发版。
-- 打版本标签时不重新构建，直接发布同一提交在 main 上通过 macOS 检查的那份发布包。
-- 每周两次用最新版和最低支持版本的官方 CLI 运行原生测试，并在 Linux 上运行全部原生测试，只用于及早发现兼容问题。Windows 测试机的进程都在不允许脱离的 Job 里，启动不了独立后台，所以 Windows 只跑不依赖独立后台的那部分原生测试；完整的原生测试要在不受这种限制的真实 Windows 上运行。
-- CI 里的原生测试不调用真实模型，也不需要任何账号或密钥。ChatGPT 应用界面、合盖休眠等场景只能在 Mac 真机上人工验证，见 [tools/macos-validation.md](../tools/macos-validation.md)。
-- GitHub 的 Windows 测试机把进程放在不允许脱离的 Job 里。普通测试中，需要完全独立的后台进程才能成功的用例，以及持久 PATH 回退的集成用例（普通测试的测试机没有把 Node 登记进系统 PATH），在这种环境下明确标为跳过，在普通 Windows 机器上照常执行；拒绝启动、重试等路径在测试机上照常测试。原生测试的任务会把官方 CLI 和 Node 登记进测试机的用户 PATH。
+- 所有自动化测试均在临时隔离目录（`AGYBRIDGE_HOME`、`CODEX_HOME`、`AGY_HOME`）中运行，使用本机模拟模型接口或模拟 ACP 进程，**不调用真实在线模型，也不读写用户真实配置**。
+- 测试运行器（`tools/run-tests.mjs`）自动追踪每个测试批次派生的子进程并在批次结束时核验回收，防止孤儿进程残留。

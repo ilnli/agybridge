@@ -13,15 +13,14 @@ import { brokerOutageNotice, isBrokerOutageNotice, releaseBrokerOutageClaim } fr
 import { startupHeldElsewhere } from '../broker-startup.js';
 import { retryStorageReceipt } from '../../storage/storage-errors.js';
 import { remainingTime } from '../../shared/time-budget.js';
-import { assertClaudeSession } from '../../hosts/claude/claude-session.js';
 
 type Native={pid:number;procStart:string};
 function sameNative(value:HealthSnapshot,native:Native):boolean{
   const endpoint=value.senderEndpoint,recorded=endpoint?.native??(endpoint?.pid?{pid:endpoint.pid,procStart:endpoint.procStart}:undefined);
   return recorded?.pid===native.pid&&recorded.procStart===native.procStart;
 }
-                                                        
-export async function collectRuntimeNotices(home:string,host:Host,sessionId:string,native:Native,contextKey?:string,modVersion?:string,modRevision?:string,options:{admit?:boolean;noticeId?:string;binding?:{key:string;epoch:string};deadline?:number;readyBoundary?:boolean;onDeferred?:()=>void}={}):Promise<RuntimeNotice[]>{
+
+export async function collectRuntimeNotices(home:string,host:Host,sessionId:string,native:Native,contextKey?:string,options:{admit?:boolean;noticeId?:string;binding?:{key:string;epoch:string};deadline?:number}={}):Promise<RuntimeNotice[]>{
   const timeout=(limit:number)=>remainingTime(options.deadline,limit);
   if(!installationEnabled(home))return[];
   const value=readHealthSnapshot(home,host,sessionId,contextKey,native,timeout(300));
@@ -29,12 +28,10 @@ export async function collectRuntimeNotices(home:string,host:Host,sessionId:stri
   if(value.sender.enabled===false)return[];
   const claimant={host,peerId:value.sender.id,sessionId,...native};
   if(options.binding&&(value.binding?.key!==options.binding.key||value.binding.epoch!==options.binding.epoch))return[];
-                                   
   if(options.admit!==false&&options.deadline!==undefined&&options.deadline-performance.now()<4500)return[];
   if(value.change&&!value.change.admitted)return updateHealthSnapshot(home,host,sessionId,contextKey,(_health,current,storage)=>sameNative(current,native)?changeNotices(storage,current.sender,options):[],native,timeout(3000))??[];
   if(value.pair.archived&&!value.loss)return[];
   if(value.partner.enabled===false)return[];
-                                                
   if(value.loss)return updateHealthSnapshot(home,host,sessionId,contextKey,(_health,current,storage)=>{
     if(!current.loss||current.loss.id!==value.loss!.id||!sameNative(current,native))return[];
     return lossNotices(storage,current.sender,current.loss,options);
@@ -45,21 +42,18 @@ export async function collectRuntimeNotices(home:string,host:Host,sessionId:stri
     const rpc=await connectBroker(home,timeout(500));
     try{
       const requestTimeout=timeout(3500);requested=true;
-      const result=await rpc.request<{notices:RuntimeNotice[];deferred?:boolean}>('health.monitor',{actor:{host,memberId:value.sender.id,sessionId,callId:randomUUID(),...(value.binding?{binding:value.binding}:{})},...(contextKey?{context_key:contextKey}:{}),...(modVersion?{mod_version:modVersion}:{}),...(modRevision?{mod_revision:modRevision}:{}),admit:options.admit!==false,...(options.noticeId?{notice_id:options.noticeId}:{}),...(host==='claude'&&options.readyBoundary?{ready_boundary:true}:{})},{timeout:requestTimeout,mutation:options.admit!==false});
-      if(result.deferred)options.onDeferred?.();
-      return result.notices;
+      const result=(await rpc.request<{notices:RuntimeNotice[]}>('health.monitor',{actor:{host,memberId:value.sender.id,sessionId,callId:randomUUID(),...(value.binding?{binding:value.binding}:{})},...(contextKey?{context_key:contextKey}:{}),admit:options.admit!==false,...(options.noticeId?{notice_id:options.noticeId}:{})},{timeout:requestTimeout,mutation:options.admit!==false})).notices;
+      return result;
     }
     finally{rpc.close();}
   }catch(error){
-                                            
     if(requested&&options.admit!==false&&(error as {uncertain?:boolean}).uncertain===true)throw error;
     const code=(error as {code?:string}).code??'';
     if(!['ENOENT','ECONNREFUSED','ECONNRESET','EPIPE','disconnected','broker_timeout','timeout','ETIMEDOUT'].includes(code))throw error;
     if(['broker_timeout','timeout','ETIMEDOUT'].includes(code)){brokerState='unknown';brokerFailure='broker runtime monitor timed out; delivery unverified';}
   }
-  let suppressed=false;try{suppressed=await startupHeldElsewhere(home,timeout(1500));}catch(error){process.stderr.write('nxbridge startup reservation unverified: '+String((error as Error).message)+'\n');}
-  const inbound=value.senderEndpoint?.nativeInbound,permission=value.senderEndpoint?.nativePermission?.permission??inbound?.permission;
-  const eligible=value.sender.owner==='user'&&['root','fork'].includes(value.sender.kind)&&['ready','busy'].includes(value.sender.state)&&!value.pair.paused&&!value.pair.archived&&(!inbound||!['hold','refuse'].includes(inbound.policy))&&(inbound?.policy!=='default'||!!permission&&permission!=='unknown');
+  let suppressed=false;try{suppressed=await startupHeldElsewhere(home,timeout(1500));}catch(error){process.stderr.write('agybridge startup reservation unverified: '+String((error as Error).message)+'\n');}
+  const eligible=value.sender.owner==='user'&&['root','fork'].includes(value.sender.kind)&&['ready','busy'].includes(value.sender.state)&&!value.pair.paused&&!value.pair.archived;
   const outage=await brokerOutageNotice(home,claimant,{...options,suppressed,eligible},records=>probeProcesses(records,timeout(1500)));
   if(outage)return[options.admit===false?noticeSignal(outage) as RuntimeNotice:outage];
   const config=loadConfig(home),token=config.codexAuthTokenEnv?process.env[config.codexAuthTokenEnv]:undefined;
@@ -75,14 +69,13 @@ export async function collectRuntimeNotices(home:string,host:Host,sessionId:stri
     health.observe(current.pair,current.sender,current.partner,current.counts,availability,true,current.scope);
     if(['paused','needsHuman','offline'].includes(current.sender.state))return[];
     const notices=options.noticeId?([health.get(current.pair.id,current.sender.id,options.noticeId)].filter(Boolean) as RuntimeNotice[]):options.admit===false?health.peek(current.pair.id,current.sender.id,true):health.take(current.pair.id,current.sender.id,true);
-                                                     
     const fresh=notices.filter(n=>!n.source);
     return options.admit===false?fresh.map(n=>noticeSignal(n) as RuntimeNotice):fresh.flatMap(n=>{const prepared=health.prepare(current.pair.id,current.sender.id,n.id,current.scope,true);return prepared?[prepared]:[];});
   },native,timeout(3000))??[];
 }
 export async function acknowledgeRuntimeNotice(home:string,host:Host,sessionId:string,native:Native,id:string,state:'submitted'|'denied'|'unknown',error?:string,contextKey?:string,timeoutMs=3000):Promise<void>{
   if(isBrokerOutageNotice(id)){
-    if(state==='denied'){const value=readHealthSnapshot(home,host,sessionId,contextKey,native);if(value&&sameNative(value,native)){if(host==='claude')assertClaudeSession(value.senderEndpoint?.configHome,sessionId,native);releaseBrokerOutageClaim(home,{host,peerId:value.sender.id,sessionId,...native},id);}}
+    if(state==='denied'){const value=readHealthSnapshot(home,host,sessionId,contextKey,native);if(value&&sameNative(value,native))releaseBrokerOutageClaim(home,{host,peerId:value.sender.id,sessionId,...native},id);}
     return;
   }
   await retryStorageReceipt(remaining=>{

@@ -5,27 +5,27 @@ import { promisify } from 'node:util';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 const execute=promisify(execFile),fixture=JSON.parse(readFileSync(process.argv[2]!,'utf8'));
-const {directory,home,bin,codexHome,claudeHome,publish,codex,claude,version}=fixture;
+const {directory,home,bin,codexHome,agyHome,publish,codex,agy,version}=fixture;
 if(fixture.processRegistry){
-  process.env.NXBRIDGE_PROCESS_REGISTRY=fixture.processRegistry;
+  process.env.AGYBRIDGE_PROCESS_REGISTRY=fixture.processRegistry;
   const roots=path.join(fixture.processRegistry,'test-roots');mkdirSync(roots,{recursive:true});
-  writeFileSync(path.join(roots,'fixture.json'),JSON.stringify({scope:process.env.NXBRIDGE_TEST_SCOPE,directory,createdAt:Date.now()}),'utf8');
+  writeFileSync(path.join(roots,'fixture.json'),JSON.stringify({scope:process.env.AGYBRIDGE_TEST_SCOPE,directory,createdAt:Date.now()}),'utf8');
 }
-const env={...process.env,NXBRIDGE_HOME:home,CODEX_HOME:codexHome,CLAUDE_CONFIG_DIR:claudeHome,PATH:[bin,...fixture.path].join(path.delimiter),NODE_PATH:'',DISABLE_AUTOUPDATER:'1',DISABLE_TELEMETRY:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'};
+const env={...process.env,AGYBRIDGE_HOME:home,CODEX_HOME:codexHome,AGY_HOME:agyHome,PATH:[bin,...fixture.path].join(path.delimiter),NODE_PATH:'',DISABLE_AUTOUPDATER:'1',DISABLE_TELEMETRY:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'};
 const result:any={steps:[]},output=path.join(directory,'result.json');
 const run=async(entry:string,args:string[])=>{const response=await execute(process.execPath,['--no-warnings',entry,...args],{cwd:directory,env,windowsHide:true,timeout:80000,maxBuffer:8*1024*1024});return response.stdout;};
 const json=async(entry:string,args:string[])=>JSON.parse(await run(entry,args));
-const launcher=path.join(home,'bin','nxbridge.cjs');
+const launcher=path.join(home,'bin','agybridge.cjs');
 let installed=false;
 try{
   if(process.platform==='win32'){
     const groups=(await execute(path.join(process.env.SystemRoot!,'System32','whoami.exe'),['/groups','/fo','csv','/nh'],{windowsHide:true})).stdout;
     result.integrity=groups.match(/S-1-16-\d+/)?.[0];assert.equal(result.integrity,'S-1-16-8192','必须以真正的中完整性非提权令牌验收');
   }
-  for(const dir of [codexHome,claudeHome])mkdirSync(dir,{recursive:true});
+  for(const dir of [codexHome,agyHome])mkdirSync(dir,{recursive:true});
   const original='# 独立安装保留用户设置\r\nmodel_verbosity = "low"\r\n';writeFileSync(path.join(codexHome,'config.toml'),original,'utf8');
   assert.equal(existsSync(home),false,'陌生用户安装前没有 nxbridge 配置或安装记录');assert.equal(existsSync(bin),false,'用户 PATH 目标尚未创建');
-  const source=path.join(publish,'nxbridge.mjs'),args=['setup','--bin-dir',bin,'--codex-command',codex.command,...codex.prefix.flatMap((arg:string)=>['--codex-command-arg',arg]),'--claude-command',claude.command,...claude.prefix.flatMap((arg:string)=>['--claude-command-arg',arg]),'--codex-home',codexHome,'--claude-home',claudeHome];
+  const source=path.join(publish,'agybridge.mjs'),args=['setup','--bin-dir',bin,'--codex-command',codex.command,...codex.prefix.flatMap((arg:string)=>['--codex-command-arg',arg]),'--agy-command',agy.command,...agy.prefix.flatMap((arg:string)=>['--agy-command-arg',arg]),'--codex-home',codexHome,'--agy-home',agyHome];
   const setup=await json(source,args);assert.equal(setup.installed,true);installed=true;result.steps.push('fresh-setup');
   const state=JSON.parse(readFileSync(path.join(home,'setup-state.json'),'utf8'));assert.ok(state.managedFiles.some((file:any)=>file.file===path.join(bin,process.platform==='win32'?'nxbridge.cmd':'nxbridge')));assert.ok(state.managedFiles.every((file:any)=>file.file.startsWith(home+path.sep)||file.file.startsWith(bin+path.sep)));
   if(process.platform==='win32'){

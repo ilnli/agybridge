@@ -1,26 +1,34 @@
 {
-  "name": "nxbridge",
+  "name": "agybridge",
   "version": "0.1.1",
-  "description": "Claude Code 与 Codex CLI 的本地平等搭档通信",
+  "description": "Antigravity CLI (agy) 与 Codex CLI 的本地平等搭档通信",
   "type": "module",
   "engines": {
     "node": ">=24.0.0 <27"
   },
   "bin": {
-    "nxbridge": "publish/nxbridge.mjs"
+    "agybridge": "publish/agybridge.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ilnli/agybridge.git"
+  },
+  "homepage": "https://github.com/ilnli/agybridge#readme",
+  "bugs": {
+    "url": "https://github.com/ilnli/agybridge/issues"
   },
   "license": "MIT",
   "files": [
     "publish"
   ],
   "scripts": {
-    "build": "node tools/sync-version.mjs && node tools/mod-revision.mjs && node tools/identity-revision.mjs && tsc -p tsconfig.json",
+    "build": "node tools/sync-version.mjs && node tools/identity-revision.mjs && tsc -p tsconfig.json",
     "build:publish": "node tools/build-publish.mjs",
     "pack:zip": "node tools/pack-publish.mjs",
     "test": "npm run build && npm run build:publish && node tools/run-tests.mjs --test --test-timeout=30000 \"dist/tests/**/*.test.js\"",
     "test:native": "npm run build && npm run build:publish && node tools/run-tests.mjs --test --test-concurrency=1 --test-timeout=180000 \"dist/native-tests/**/*.test.js\"",
     "test:native:target": "npm run build && npm run build:publish && node tools/test-native-version.mjs 0.166.0",
-    "check": "node tools/sync-version.mjs --check && node tools/mod-revision.mjs --check && node tools/identity-revision.mjs --check && tsc -p tsconfig.json --noEmit",
+    "check": "node tools/sync-version.mjs --check && node tools/identity-revision.mjs --check && tsc -p tsconfig.json --noEmit",
     "prepack": "npm run build:publish"
   },
   "dependencies": {

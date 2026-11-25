@@ -10,7 +10,6 @@ import { recordFixtureLaunch } from './support/native-launch.js';
 import { formatPairInventory, resolvePairMember } from '../app/commands/pair-command.js';
 import { pairLoss, pairLossKey } from '../broker/pairing/pair-loss.js';
 import { restorableOwnedPartner, partnerConfigHome } from '../broker/pairing/pair-restore.js';
-import { forgetNativeOwnership, nativeOwnership } from '../process/owned-native.js';
 import {BridgeError} from '../shared/errors.js';
 import {type Host,type Peer} from '../types.js';
 import { listenBroker } from '../ipc/ipc.js';
@@ -18,7 +17,7 @@ import {ensureHome} from '../ipc/home.js';
 
 type Fixture=ReturnType<typeof fixture>;
 function history(f:Fixture,peer:Peer):string{
-  const home=f.broker.home,file=path.join(home,peer.host==='codex'?'sessions':'projects/test',peer.sessionId+'.jsonl');
+  const home=f.broker.home,file=peer.host==='codex'?path.join(home,'sessions',peer.sessionId+'.jsonl'):path.join(home,'antigravity-cli','brain',peer.sessionId!,'.system_generated','logs','transcript_full.jsonl');
   mkdirSync(path.dirname(file),{recursive:true});
   writeFileSync(file,JSON.stringify(peer.host==='codex'?{type:'session_meta',payload:{id:peer.sessionId,cwd:peer.cwd}}:{sessionId:peer.sessionId})+'\n','utf8');
   f.store.saveEndpoint({...f.store.endpoint(peer.id)!,configHome:home});
@@ -33,12 +32,8 @@ async function select(f:Fixture,source:Peer,target:Peer,callId:string){
   return{result,choice,view};
 }
 
-for(const host of ['codex','claude'] as Host[])test('反复切换后可接回原后台会话，历史去重并保持幂等：'+host,async t=>{
+for(const host of ['codex','agy'] as Host[])test('反复切换后可接回原后台会话，历史去重并保持幂等：'+host,async t=>{
   const f=fixture(t),source=host==='codex'?f.c:f.x,original=host==='codex'?f.x:f.c;history(f,original);
-  if(host==='claude'){
-    const discover=f.claude.discover.bind(f.claude);
-    f.claude.discover=async sessionId=>{const input=(await discover(sessionId))!;return{...input,endpoint:{...input.endpoint,configHome:f.broker.home}};};
-  }
   const next=f.store.register(registration(host,'next-'+host));f.store.pair(f.c.id,f.x.id);
   for(let index=0;index<2;index++){
     await select(f,source,next,'switch-'+index);await lifecycle(f.broker).waitForRelease(original.id);
@@ -47,7 +42,7 @@ for(const host of ['codex','claude'] as Host[])test('反复切换后可接回原
     assert.equal(restored.view.candidates.filter((value:any)=>value.member_id===original.id).length,1);
     assert.deepEqual(await f.broker.dispatch('pair.selection.commit',restored.choice),restored.result);
   }
-  assert.equal(f.codex.created.length+f.claude.created.length,0);assert.equal(f.store.messages().length,0);
+  assert.equal(f.codex.created.length+f.agy.created.length,0);assert.equal(f.store.messages().length,0);
   const latest=f.store.pairFor(source.id)!;f.store.unpair(latest.id,{reason:'broker_shutdown'});
   await f.broker.dispatch('pair.restore',{pair_id:latest.id});assert.equal(f.store.pairFor(source.id)?.id,latest.id);
   assert.equal(pairLoss(f.store,source),undefined);
@@ -76,7 +71,7 @@ for(const cause of ['missing','claimed','session','disabled','owner'] as const)t
   f.store.pair(f.c.id,next.id,true);const current=f.store.pairFor(f.c.id)!,a=actor(f.c,'stale-'+cause),view=await f.broker.dispatch('pair.code',{actor:a}) as any,candidate=view.candidates.find((value:any)=>value.member_id===f.x.id);
   assert.ok(candidate);assert.notEqual(current.id,old.id);
   if(cause==='missing')rmSync(file);
-  if(cause==='claimed')f.store.pair(f.store.register(registration('claude','claim')).id,f.x.id);
+  if(cause==='claimed')f.store.pair(f.store.register(registration('agy','claim')).id,f.x.id);
   if(cause==='session')f.store.updatePeer(f.x.id,{sessionId:'another-session'});
   if(cause==='disabled')f.store.updatePeer(f.x.id,{enabled:false});
   if(cause==='owner')f.store.updatePeer(f.x.id,{owner:'user'});
@@ -93,7 +88,7 @@ test('CLI 列表和选择器区分历史成员与运行窗口，重复会话仍�
   const formatted=formatPairInventory(inventory);assert.ok(formatted.includes('之前的后台搭档'));assert.ok(formatted.includes(f.x.id));
   const duplicate={...inventory.previous_partners[0],member_id:'alias'};
   assert.throws(()=>resolvePairMember({...inventory,previous_partners:[...inventory.previous_partners,duplicate]},'codex',f.x.sessionId!),{code:'ambiguous_context'});
-  const result=await f.broker.dispatch('pair',{claude:f.c.id,codex:resolvePairMember(inventory,'codex',f.x.sessionId!)}) as any;
+  const result=await f.broker.dispatch('pair',{agy:f.c.id,codex:resolvePairMember(inventory,'codex',f.x.sessionId!)}) as any;
   assert.equal(result.restored_members[0].member_id,f.x.id);assert.equal(f.store.peer(f.x.id).sessionId,f.x.sessionId);
   f.store.unpair(result.id);await f.broker.dispatch('pair.restore',{pair_id:result.id});assert.equal(f.store.pairFor(f.c.id)?.id,result.id,'主动切换历史也能显式恢复，不依赖丢失记录');
 });
@@ -117,26 +112,15 @@ test('离线用户窗口不进入后台恢复列表；缺失的后台历史不�
   assert.equal(restorableOwnedPartner(f.store,f.store.peer(f.x.id)),false);
   assert.equal((await f.broker.dispatch('pair.inventory',{}) as any).previous_partners.length,0);
   f.store.updatePeer(f.x.id,{owner:'nxbridge'});
-  await assert.rejects(f.broker.dispatch('pair',{claude:f.c.id,codex:f.x.id}),{code:'pair_restore_unavailable'});
+  await assert.rejects(f.broker.dispatch('pair',{agy:f.c.id,codex:f.x.id}),{code:'pair_restore_unavailable'});
   assert.equal(f.store.pairFor(f.c.id),undefined);
-  await assert.rejects(f.broker.dispatch('open',{host:'codex',peer_id:f.x.id}),error=>/nxbridge pair/.test(String(error)));
+  await assert.rejects(f.broker.dispatch('open',{host:'codex',peer_id:f.x.id}),error=>/agybridge pair/.test(String(error)));
 });
 
-test('普通切换回收 Claude 前保存原启动来源，无删除凭据也能恢复原会话',async t=>{
-  const f=fixture(t);history(f,f.c);const ownership=nativeOwnership(f.broker.home,f.c.id)!;
-  f.claude.release=async peer=>{f.claude.released.push(peer);forgetNativeOwnership(ownership);};
-  const discover=f.claude.discover.bind(f.claude);f.claude.discover=async sessionId=>{const input=(await discover(sessionId))!;return{...input,endpoint:{...input.endpoint,configHome:f.broker.home}};};
-  f.store.pair(f.c.id,f.x.id);const next=f.store.register(registration('claude','replacement-claude'));
-  await f.broker.dispatch('pair',{claude:next.id,codex:f.x.id,replace:true});await lifecycle(f.broker).waitForRelease(f.c.id);
-  const saved=f.store.setting<any>('managedLaunchProof:'+f.c.id);assert.equal(saved.nativeLaunchId,ownership.id);assert.equal(saved.configHome,ownership.configHome);
-  assert.equal(nativeOwnership(f.broker.home,f.c.id),undefined);
-  await f.broker.dispatch('pair',{claude:f.c.id,codex:f.x.id,replace:true});assert.equal(f.store.peer(f.c.id).sessionId,f.c.sessionId);assert.equal(f.store.setting('managedLaunchProof:'+f.c.id),null);
-});
-
-for(const host of ['codex','claude'] as Host[])for(const entry of ['picker','rpc','restore'] as const)test('恢复已提交后启动失败仍返回原配对与消息回执：'+host+'/'+entry,async t=>{
+for(const host of ['codex','agy'] as Host[])for(const entry of ['picker','rpc','restore'] as const)test('恢复已提交后启动失败仍返回原配对与消息回执：'+host+'/'+entry,async t=>{
   const f=fixture(t),target=host==='codex'?f.x:f.c,source=host==='codex'?f.c:f.x;
   history(f,target);const original=f.store.pair(f.c.id,f.x.id);f.store.unpair(original.id);f.store.deactivate(target.id);
-  const adapter=host==='codex'?f.codex:f.claude,error=new BridgeError('plugin_unavailable','原后台暂未完成登记');
+  const adapter=host==='codex'?f.codex:f.agy,error=new BridgeError('plugin_unavailable','原后台暂未完成登记');
   if(host==='codex')adapter.attachFailure=error;else adapter.fail=error;
   let result:any;
   if(entry==='picker'){
@@ -147,20 +131,20 @@ for(const host of ['codex','claude'] as Host[])for(const entry of ['picker','rpc
     const retried=await f.broker.dispatch('pair.selection.commit',choice) as any;
     assert.equal(retried.message_id,result.message_id);assert.equal(f.store.messages().length,1);
   }else if(entry==='rpc'){
-    const next=f.store.register(registration(host,'next-failed-start')),current=f.store.pair(source.host==='claude'?source.id:next.id,source.host==='codex'?source.id:next.id);
+    const next=f.store.register(registration(host,'next-failed-start')),current=f.store.pair(source.host==='agy'?source.id:next.id,source.host==='codex'?source.id:next.id);
     const cancelled=f.store.accept(current,source,'还未投递','old-unsent'),uncertain=f.store.accept(current,source,'结果未知','old-uncertain');
     f.store.transition(uncertain.id,'sending');f.store.transition(uncertain.id,'unknown');
-    result=await f.broker.dispatch('pair',{claude:f.c.id,codex:f.x.id,replace:true}) as any;
+    result=await f.broker.dispatch('pair',{agy:f.c.id,codex:f.x.id,replace:true}) as any;
     assert.deepEqual(result.cancelled_message_ids,[cancelled.id]);assert.deepEqual(result.uncertain_message_ids,[uncertain.id]);
     assert.equal(f.store.message(uncertain.id).state,'unknown');
   }else result=await f.broker.dispatch('pair.restore',{pair_id:original.id}) as any;
   assert.equal(result.status,'launch_precondition');assert.equal(result.launch_precondition.code,'plugin_unavailable');
   if(entry!=='picker'){
-    const retried=await f.broker.dispatch(entry==='rpc'?'pair':'pair.restore',entry==='rpc'?{claude:f.c.id,codex:f.x.id,replace:true}:{pair_id:original.id}) as any;
+    const retried=await f.broker.dispatch(entry==='rpc'?'pair':'pair.restore',entry==='rpc'?{agy:f.c.id,codex:f.x.id,replace:true}:{pair_id:original.id}) as any;
     assert.equal(retried.status,'launch_precondition','重复操作仍如实返回同一个未解决的启动前置条件');
   }
   assert.equal(f.store.pairFor(source.id)?.[host],target.id);assert.equal(f.store.peer(target.id).sessionId,target.sessionId);
-  assert.equal(f.codex.created.length+f.claude.created.length,0);
+  assert.equal(f.codex.created.length+f.agy.created.length,0);
 });
 
 test('历史扫描观察可复用；提交与显式重新打开列表会刷新历史变化',async t=>{
@@ -192,12 +176,11 @@ for(const unavailable of ['gone','unverified'] as const)test('未配对发信重
   assert.equal(view.status,'selection_required');assert.ok(view.candidates.some((candidate:any)=>candidate.member_id===f.x.id));assert.equal(f.codex.created.length,0);
 });
 
-for(const cause of ['released','auto','conflict','takeover'] as const)test('归档后台的已知启动限制在选择前排除，提交时也重新核验：'+cause,async t=>{
-  const f=fixture(t),target=cause==='auto'?f.c:f.x,source=cause==='auto'?f.x:f.c;history(f,target);
+for(const cause of ['released','conflict','takeover'] as const)test('归档后台的已知启动限制在选择前排除，提交时也重新核验：'+cause,async t=>{
+  const f=fixture(t),target=f.x,source=f.c;history(f,target);
   const pair=f.store.pair(f.c.id,f.x.id);f.store.unpair(pair.id);f.store.deactivate(target.id);
   const a=actor(source,'blocked-'+cause),view=await f.broker.dispatch('pair.code',{actor:a}) as any,candidate=view.candidates.find((value:any)=>value.member_id===target.id);assert.ok(candidate);
   if(cause==='released')f.store.setSetting('hosting:'+target.id,{memberId:target.id,sessionId:target.sessionId,pairId:pair.id,released:true});
-  if(cause==='auto')f.store.setSetting('claudeAutoFallback:'+target.id,{old_session_id:target.sessionId,pair_id:pair.id,phase:'launching'});
   if(cause==='conflict')f.store.setSetting('managedSessionConflict:'+target.id,{pairId:pair.id});
   if(cause==='takeover')f.store.setSetting('takeover:'+target.id,{sessionId:target.sessionId});
   assert.equal(restorableOwnedPartner(f.store,f.store.peer(target.id)),false);
@@ -212,10 +195,10 @@ test('旧版回收的 Codex 没有运行时副本凭据时仍可从原会话历�
   const restored=await select(f,f.c,f.x,'legacy-codex');assert.equal(restored.result.status,'paired');assert.equal(f.store.peer(f.x.id).sessionId,f.x.sessionId);assert.equal(f.codex.created.length,0);
 });
 
-for(const host of ['codex','claude'] as Host[])test('启动来源目录优先于较新的不同目录端点，核验与启动沿用同一目录：'+host,async t=>{
+for(const host of ['codex','agy'] as Host[])test('启动来源目录优先于较新的不同目录端点，核验与启动沿用同一目录：'+host,async t=>{
   const f=fixture(t),target=host==='codex'?f.x:f.c,source=host==='codex'?f.c:f.x;history(f,target);
   const home=f.broker.home,wrong=path.join(home,'another-home');mkdirSync(wrong);
-  if(host==='claude')f.store.setSetting('managedLaunchProof:'+target.id,{sessionId:target.sessionId,configHome:home});
+  if(host==='agy')f.store.setSetting('managedLaunchProof:'+target.id,{sessionId:target.sessionId,configHome:home});
   f.store.saveEndpoint({...f.store.endpoint(target.id)!,epoch:'new-wrong-home',configHome:wrong,seenAt:Date.now()+100});
   const pair=f.store.pair(f.c.id,f.x.id);f.store.unpair(pair.id,{reason:'broker_shutdown'});f.store.deactivate(target.id);
   assert.equal(pairLoss(f.store,source)?.partner_config_home,home);assert.equal(partnerConfigHome(f.store,f.store.peer(target.id)),home);
@@ -224,7 +207,7 @@ for(const host of ['codex','claude'] as Host[])test('启动来源目录优先于
     f.codex.attach=async()=>{throw new BridgeError('endpoint_unavailable','旧端点已退出');};
     f.codex.ensureEndpoint=async(_cwd,_peer,_requester,_session,configHome,beforeLaunch)=>{launched=configHome;await beforeLaunch?.();return'new-endpoint';};
   }else{
-    f.claude.wake=async(_peer,_endpoint,_signal,beforeLaunch,affinity?:{configHome?:string})=>{launched=affinity?.configHome;await beforeLaunch?.();};
+    f.agy.wake=async(_peer,_endpoint,_signal,beforeLaunch,affinity?:{configHome?:string})=>{launched=affinity?.configHome;await beforeLaunch?.();};
   }
   const result=await f.broker.dispatch('pair.restore',{pair_id:pair.id}) as any;
   assert.equal(result.restored,true);assert.equal(launched,home);
@@ -239,9 +222,9 @@ test('两种 CLI 恢复入口均展示已保留的配对和启动前置条件',a
     assert.ok(method==='pair'||method==='pair.restore');return pending;
   });
   t.after(()=>server.close());
-  for(const args of [['--restore','old-pair'],['--claude',f.c.id,'--codex',f.x.id]]){
+  for(const args of [['--restore','old-pair'],['--agy',f.c.id,'--codex',f.x.id]]){
     const script=`import{pairCommand}from${JSON.stringify(new URL('../app/commands/pair-command.js',import.meta.url).href)};await pairCommand(${JSON.stringify(args)});`;
-    const result=await promisify(execFile)(process.execPath,['--input-type=module','-e',script],{env:{...process.env,NXBRIDGE_HOME:f.broker.home},windowsHide:true,timeout:15000});
+    const result=await promisify(execFile)(process.execPath,['--input-type=module','-e',script],{env:{...process.env,AGYBRIDGE_HOME:f.broker.home},windowsHide:true,timeout:15000});
     assert.match(result.stdout,/请等待原会话登记。配对已保留，不用重新配对/);assert.doesNotMatch(result.stdout,/会在后台接着原来的会话运行/);
   }
   assert.ok(methods.includes('pair.restore'));assert.ok(methods.includes('pair'));

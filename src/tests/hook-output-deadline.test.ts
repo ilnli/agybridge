@@ -10,7 +10,7 @@ import {PACKAGE_ROOT} from '../shared/package-location.js';
 import { WAKE_NOTICE, HEALTH_WAKE_NOTICE } from '../types.js';
 
 async function invoke(script:string,input:unknown,options:{age?:number;openStdin?:boolean;code?:number}={}){
-  const start=performance.now(),child=spawn(process.execPath,['--no-warnings','--input-type=module','-e',script],{env:{...process.env,NXBRIDGE_HOOK_STARTED_AT:String(Date.now()-(options.age??0))},windowsHide:true,stdio:['pipe','pipe','pipe']});
+  const start=performance.now(),child=spawn(process.execPath,['--no-warnings','--input-type=module','-e',script],{env:{...process.env,AGYBRIDGE_HOOK_STARTED_AT:String(Date.now()-(options.age??0))},windowsHide:true,stdio:['pipe','pipe','pipe']});
   child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
   let out='',err='';child.stdout.on('data',data=>out+=data);child.stderr.on('data',data=>err+=data);
   const ended=once(child,'close');if(!options.openStdin)child.stdin.end(JSON.stringify(input));
@@ -49,17 +49,17 @@ test('加载或执行失败及总预算超时都不能放行未经核验的唤�
 });
 
 test('总预算到达时等待已经开始的异步输出，长上下文不会被截断',{timeout:5000},async()=>{
-  const delayed=`const write=process.stdout.write.bind(process.stdout);process.stdout.write=(chunk,callback)=>{const elapsed=performance.timeOrigin-Number(process.env.NXBRIDGE_HOOK_STARTED_AT)+performance.now();setTimeout(()=>write(chunk,callback),Math.max(0,2750-elapsed));return true;};`;
+  const delayed=`const write=process.stdout.write.bind(process.stdout);process.stdout.write=(chunk,callback)=>{const elapsed=performance.timeOrigin-Number(process.env.AGYBRIDGE_HOOK_STARTED_AT)+performance.now();setTimeout(()=>write(chunk,callback),Math.max(0,2750-elapsed));return true;};`;
   const value=await invoke(delayed+script("async()=>({hookSpecificOutput:{hookEventName:'Interrupt',additionalContext:'完整上下文'.repeat(40000)}})"),{hook_event_name:'Interrupt'},{age:2300});
   assert.equal(value.result.hookSpecificOutput.additionalContext,'完整上下文'.repeat(40000));assert.ok(value.wall<1000);
 });
 
 test('退出保护器用 stderr 和退出码1，SessionStart 保留锚点，控制命令仍拦截',{timeout:20000},async()=>{
-  const end=await invoke(script('async()=>new Promise(()=>{})'),{hook_event_name:'SessionEnd'},{age:2300,code:1});assert.equal(end.out,'');assert.match(end.err,/nxbridge hook timed out after 3s/);
+  const end=await invoke(script('async()=>new Promise(()=>{})'),{hook_event_name:'SessionEnd'},{age:2300,code:1});assert.equal(end.out,'');assert.match(end.err,/agybridge hook timed out after 3s/);
                                         
   const [start,control]=await Promise.all([
     invoke(script('async()=>new Promise(()=>{})'),{hook_event_name:'SessionStart'},{age:1800}),
-    invoke(script('async()=>new Promise(()=>{})'),{hook_event_name:'UserPromptSubmit',prompt:'nxbridge off'},{age:1800}),
+    invoke(script('async()=>new Promise(()=>{})'),{hook_event_name:'UserPromptSubmit',prompt:'agybridge off'},{age:1800}),
   ]);
   assert.match(start.result.systemMessage,/timed out after 10s/);assert.match(start.result.hookSpecificOutput.additionalContext,/standing developer instructions/);
   assert.equal(control.result.decision,'block');assert.match(control.result.systemMessage,/timed out after 10s/);

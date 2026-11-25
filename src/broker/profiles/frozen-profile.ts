@@ -8,16 +8,16 @@ import {type BridgeConfig,type Host,type ModelProfile} from '../../types.js';
 export type { ModelProfile } from '../../types.js';
 export interface FrozenProfile extends ModelProfile {at:number}
 interface FrozenProfileState {version:1;profiles:Partial<Record<Host,FrozenProfile>>}
-const hosts:Host[]=['claude','codex'];
+const hosts:Host[]=['agy','codex'];
 const filename=(home:string)=>path.join(home,'frozen-profiles.json');
 function readState(home:string):FrozenProfileState{
   let text:string;
   try{text=readFileSync(filename(home),'utf8');}
   catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return{version:1,profiles:{}};throw error;}
   let state:FrozenProfileState;
-  try{state=JSON.parse(text);}catch{throw new BridgeError('invalid_frozen_profiles',`${filename(home)}：固定的模型和推理强度记录格式无效；原文件未修改。新建依赖固定值的后台搭档会先停下。修复：删掉这个文件（下一个新建的后台搭档会重新记录），或把对应的 partners.<codex|claude>.profile_source 改回 host。`);}
+  try{state=JSON.parse(text);}catch{throw new BridgeError('invalid_frozen_profiles',`${filename(home)}：固定的模型和推理强度记录格式无效；原文件未修改。新建依赖固定值的后台搭档会先停下。修复：删掉这个文件（下一个新建的后台搭档会重新记录），或把对应的 partners.<codex|agy>.profile_source 改回 host。`);}
   if(!state||state.version!==1||!state.profiles||typeof state.profiles!=='object'||Array.isArray(state.profiles))
-    throw new BridgeError('invalid_frozen_profiles',`${filename(home)}：固定的模型和推理强度记录版本或结构无效；原文件未修改。新建依赖固定值的后台搭档会先停下。修复：删掉这个文件（下一个新建的后台搭档会重新记录），或把对应的 partners.<codex|claude>.profile_source 改回 host。`);
+    throw new BridgeError('invalid_frozen_profiles',`${filename(home)}：固定的模型和推理强度记录版本或结构无效；原文件未修改。新建依赖固定值的后台搭档会先停下。修复：删掉这个文件（下一个新建的后台搭档会重新记录），或把对应的 partners.<codex|agy>.profile_source 改回 host。`);
   return state;
 }
 function saveState(home:string,state:FrozenProfileState):void{

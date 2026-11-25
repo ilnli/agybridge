@@ -19,6 +19,6 @@ export class ProviderRecovery {
     if(message.method==='turn/completed'&&p.turn?.status==='failed'&&value.retryTurn===turn){value.failed=[...new Set([...value.failed,turn])].slice(-32);delete value.retryTurn;this.store.setSetting(key,value);return;}
     if(message.method!=='item/completed'||p.item?.type!=='agentMessage'||typeof p.item.text!=='string'||!p.item.text.trim()||!value.failed.length||value.failed.includes(turn))return;
     value.notified=true;this.store.setSetting(key,value);this.store.event('provider.output_resumed',{peerId:peer.id,incidentId:value.id,failedTurns:value.failed});
-    return{id:'provider-recovered:'+value.id,source:'turn_health',kind:'provider_recovered',factKey:value.id,state:'pending',wake:false,message:`nxbridge runtime notice (not partner task or user approval): ${peer.name} has produced new model output in the same native session/provider scope after native retries. Earlier failed turns: ${value.failed.join(', ')}. Nothing replayed. This proves this operation succeeded, not that the entire provider is healthy.`};
+    return{id:'provider-recovered:'+value.id,source:'turn_health',kind:'provider_recovered',factKey:value.id,state:'pending',wake:false,message:`agybridge runtime notice (not partner task or user approval): ${peer.name} has produced new model output in the same native session/provider scope after native retries. Earlier failed turns: ${value.failed.join(', ')}. Nothing replayed. This proves this operation succeeded, not that the entire provider is healthy.`};
   }
 }

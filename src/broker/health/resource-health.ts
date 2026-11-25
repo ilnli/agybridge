@@ -12,7 +12,7 @@ export type ResourceSampler=(lagMs:number)=>Promise<ResourceSample>;
                                                 
 export function resourceSampler(home:string,platform:NodeJS.Platform=process.platform):ResourceSampler{
                                        
-  if(process.env.NXBRIDGE_TEST_SCOPE)return async lag=>({checkedAt:Date.now(),brokerLagMs:lag,io:{systemAvailable:false},unavailable:['isolated test sampler']});
+  if(process.env.AGYBRIDGE_TEST_SCOPE)return async lag=>({checkedAt:Date.now(),brokerLagMs:lag,io:{systemAvailable:false},unavailable:['isolated test sampler']});
   return async brokerLagMs=>{
     const totals=()=>os.cpus().reduce((sum,c)=>({idle:sum.idle+c.times.idle,total:sum.total+Object.values(c.times).reduce((a,b)=>a+b,0)}),{idle:0,total:0});
     const before=totals(),usage=process.resourceUsage(),cpuStarted=performance.now();
@@ -27,7 +27,7 @@ export function resourceSampler(home:string,platform:NodeJS.Platform=process.pla
     const disk=results[0];if(disk.status==='fulfilled'){value.diskFreeBytes=disk.value.bavail*disk.value.bsize;value.diskTotalBytes=disk.value.blocks*disk.value.bsize;}else value.unavailable.push('data-volume free space unavailable');
     const memory=results[1];if(memory.status==='fulfilled'&&memory.value){const available=/^MemAvailable:\s+(\d+) kB$/m.exec(memory.value);if(available)value.memoryFreeBytes=Number(available[1])*1024;}
     const pressure=results[2];if(pressure.status==='fulfilled'&&pressure.value){for(const [kind,key] of [['some','pressureSomeAvg10'],['full','pressureFullAvg10']] as const){const match=new RegExp('^'+kind+' avg10=([\\d.]+)','m').exec(pressure.value);if(match)value.io[key]=Number(match[1]);}value.io.systemAvailable=value.io.pressureSomeAvg10!==undefined;}
-    if(!value.io.systemAvailable)value.unavailable.push(platform+' system-wide IO pressure unavailable; metadata latency measures nxbridge filesystem access only');
+    if(!value.io.systemAvailable)value.unavailable.push(platform+' system-wide IO pressure unavailable; metadata latency measures agybridge filesystem access only');
     return value;
   };
 }
@@ -39,8 +39,8 @@ export function resourceEvidence(value:ResourceSample|undefined):string{
 }
 export function resourceSummary(value:ResourceSample):string{
   const size=(bytes:number)=>(bytes/GiB).toFixed(1)+' GB',at=new Date(value.checkedAt),time=[at.getHours(),at.getMinutes(),at.getSeconds()].map(n=>String(n).padStart(2,'0')).join(':');
-  const fields=[value.cpuPercent===undefined?undefined:`CPU 约 ${Math.round(value.cpuPercent)}%（${Math.round(value.cpuWindowMs??0)} ms 采样）`,value.memoryFreeBytes===undefined||value.memoryTotalBytes===undefined?undefined:`内存剩余 ${size(value.memoryFreeBytes)}/${size(value.memoryTotalBytes)}`,value.diskFreeBytes===undefined||value.diskTotalBytes===undefined?undefined:`nxbridge 数据盘剩余 ${size(value.diskFreeBytes)}/${size(value.diskTotalBytes)}`,value.brokerLagMs===undefined?undefined:`nxbridge 响应延迟 ${Math.round(value.brokerLagMs)} ms`,value.io.metadataMs===undefined?undefined:`文件访问延迟 ${Math.round(value.io.metadataMs)} ms`,value.io.pressureSomeAvg10===undefined?undefined:`IO 压力 ${value.io.pressureSomeAvg10}%`].filter(Boolean);
-  return fields.length?`机器资源（${time}）：${fields.join('，')}${value.io.systemAvailable?'':'（此系统无法测整体 IO 压力，只测 nxbridge 自身文件访问）'}`:'';
+  const fields=[value.cpuPercent===undefined?undefined:`CPU 约 ${Math.round(value.cpuPercent)}%（${Math.round(value.cpuWindowMs??0)} ms 采样）`,value.memoryFreeBytes===undefined||value.memoryTotalBytes===undefined?undefined:`内存剩余 ${size(value.memoryFreeBytes)}/${size(value.memoryTotalBytes)}`,value.diskFreeBytes===undefined||value.diskTotalBytes===undefined?undefined:`agybridge 数据盘剩余 ${size(value.diskFreeBytes)}/${size(value.diskTotalBytes)}`,value.brokerLagMs===undefined?undefined:`agybridge 响应延迟 ${Math.round(value.brokerLagMs)} ms`,value.io.metadataMs===undefined?undefined:`文件访问延迟 ${Math.round(value.io.metadataMs)} ms`,value.io.pressureSomeAvg10===undefined?undefined:`IO 压力 ${value.io.pressureSomeAvg10}%`].filter(Boolean);
+  return fields.length?`机器资源（${time}）：${fields.join('，')}${value.io.systemAvailable?'':'（此系统无法测整体 IO 压力，只测 agybridge 自身文件访问）'}`:'';
 }
 
 export class ResourceHealth {

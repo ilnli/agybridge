@@ -15,10 +15,10 @@ test('登记丢失、禁用与已卸载分别诊断，查询保留配置原字�
   assert.equal(inspectCodexRegistration(home).state,'repair_required');
   for(const [config,expected] of [
     ['# 用户设置\nmodel_verbosity="low"\n','repair_required'],
-    ['[plugins."nxbridge@nxbridge-local"]\nenabled=true\n','repair_required'],
-    ['[marketplaces.nxbridge-local]\nsource="本地市场"\n','repair_required'],
-    ['[plugins."nxbridge@nxbridge-local"]\nenabled=false\n[marketplaces.nxbridge-local]\nsource="本地市场"\n','disabled'],
-    ['[plugins."nxbridge@nxbridge-local"]\nenabled=true\n[marketplaces.nxbridge-local]\nsource="本地市场"\n','current'],
+    ['[plugins."agybridge@agybridge-local"]\nenabled=true\n','repair_required'],
+    ['[marketplaces.agybridge-local]\nsource="本地市场"\n','repair_required'],
+    ['[plugins."agybridge@agybridge-local"]\nenabled=false\n[marketplaces.agybridge-local]\nsource="本地市场"\n','disabled'],
+    ['[plugins."agybridge@agybridge-local"]\nenabled=true\n[marketplaces.agybridge-local]\nsource="本地市场"\n','current'],
     ['损坏的 toml = [','unknown'],
   ] as const){
     writeFileSync(file,config,'utf8');
@@ -38,17 +38,17 @@ test('命名空间设置丢失或排除 claude 时提示修复，兼容全局启
     [{non_prefixed_mcp_tool_names:{enabled:true,server_names:['other']},code_mode:false},'repair_required'],
     [{non_prefixed_mcp_tool_names:true},'repair_required'],
     [{non_prefixed_mcp_tool_names:true,code_mode:false},'current'],
-    [{non_prefixed_mcp_tool_names:{enabled:true},code_mode:{direct_only_tool_namespaces:['claude']}},'current'],
-    [{non_prefixed_mcp_tool_names:{enabled:true,server_names:['claude']},code_mode:{enabled:false}},'current'],
-    [{code_mode_only_strict_3p_tools:true,code_mode:{direct_only_tool_namespaces:['claude']}},'current'],
+    [{non_prefixed_mcp_tool_names:{enabled:true},code_mode:{direct_only_tool_namespaces:['agy']}},'current'],
+    [{non_prefixed_mcp_tool_names:{enabled:true,server_names:['agy']},code_mode:{enabled:false}},'current'],
+    [{code_mode_only_strict_3p_tools:true,code_mode:{direct_only_tool_namespaces:['agy']}},'current'],
     [{code_mode_only_strict_3p_tools:true},'current'],
   ] as const){
-    writeFileSync(path.join(codex,'config.toml'),stringify({plugins:{'nxbridge@nxbridge-local':{enabled:true}},marketplaces:{'nxbridge-local':{source:'本地市场'}},features}));
+    writeFileSync(path.join(codex,'config.toml'),stringify({plugins:{'agybridge@agybridge-local':{enabled:true}},marketplaces:{'agybridge-local':{source:'本地市场'}},features}));
     assert.equal(inspectCodexRegistration(home).state,expected);
   }
                                            
   writeFileSync(state,JSON.stringify(setup));
-  writeFileSync(path.join(codex,'config.toml'),stringify({plugins:{'nxbridge@nxbridge-local':{enabled:true}},marketplaces:{'nxbridge-local':{source:'本地市场'}}}));
+  writeFileSync(path.join(codex,'config.toml'),stringify({plugins:{'agybridge@agybridge-local':{enabled:true}},marketplaces:{'agybridge-local':{source:'本地市场'}}}));
   assert.equal(inspectCodexRegistration(home).state,'current');
 });
 
@@ -59,7 +59,7 @@ test('状态输出明确提示修复缺失登记，诊断不把配置正文输�
   const codexRegistration=inspectCodexRegistration(home);
   assert.doesNotMatch(JSON.stringify(codexRegistration),/不能输出的凭据/);
   const text=formatGlobalStatus({pairs:[],peers:[],codexRegistration});
-  assert.match(text,/nxbridge setup/);assert.match(text,/\/hooks/);
+  assert.match(text,/agybridge setup/);assert.match(text,/\/hooks/);
   writeFileSync(path.join(codex,'config.toml'),'token="不能输出的凭据');
   const unreadable=inspectCodexRegistration(home);
   assert.equal(unreadable.state,'unknown');assert.doesNotMatch(JSON.stringify(unreadable),/不能输出的凭据/);

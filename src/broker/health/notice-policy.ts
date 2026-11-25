@@ -10,21 +10,19 @@ export function noticeTier(notice:RuntimeNotice):0|1|2|3|4{
   if(notice.source==='managed_recovery')return notice.recovery?.wake?4:1;
   if(notice.source==='idle_unanswered')return 3;
   if(notice.source==='pair_anomaly'&&/:(?:hooks_timeout|hooks_missing|contract_inactive|native_denied)$/.test(notice.kind??''))return 1;
-  if(notice.source==='claude_auto_mode'||notice.source==='broker_outage')return notice.wake?4:3;
+  if(notice.source==='broker_outage')return notice.wake?4:3;
   return 3;
 }
 interface Admission {lastAt:number;kinds:Record<string,{at:number;severity:number;factKey?:string}>}
 
-                                           
 export function noticeCanWake(notice:RuntimeNotice,_recipient:string):boolean{
   if(notice.tier!==undefined)return notice.tier===4;
-  if(notice.source==='claude_auto_mode')return notice.wake===true&&notice.kind?.startsWith('claude_auto_mode:')===true&&!!notice.factKey;
   if(notice.source==='broker_outage')return notice.kind==='broker_outage'&&notice.phase!=='recovery'&&notice.wake===true&&!!notice.epoch;
   if(notice.kind==='explicit_recovery')return true;
   return notice.source==='managed_recovery'&&notice.phase!=='recovery'&&notice.recovery?.wake===true;
 }
 
-export const noticeSignal=(notice:RuntimeNotice)=>({id:notice.id,source:notice.source,tier:noticeTier(notice),wake:noticeTier(notice)===4,...(notice.readyOnly?{readyOnly:true}:{}),...(notice.source==='broker_outage'?{kind:notice.kind,epoch:notice.epoch,since:notice.since,claimedBy:notice.claimedBy}:{})});
+export const noticeSignal=(notice:RuntimeNotice)=>({id:notice.id,source:notice.source,tier:noticeTier(notice),wake:noticeTier(notice)===4,...(notice.source==='broker_outage'?{kind:notice.kind,epoch:notice.epoch,since:notice.since,claimedBy:notice.claimedBy}:{})});
 
                                      
 export class HealthNoticePolicy {
@@ -41,8 +39,6 @@ export class HealthNoticePolicy {
                                           
     if(notice.kind==='explicit_recovery')return true;
     if(state&&now-state.lastAt<HEALTH_NOTICE_INTERVAL_MS)return false;
-                                               
-    if(notice.source==='codex_final'&&notice.factKey!==undefined)return true;
     if(notice.source==='managed_recovery'&&notice.recovery?.wake===true)return true;
     if(notice.phase==='recovery')return true;
     return !last||now-last.at>=HEALTH_NOTICE_REPEAT_MS||(notice.severity??1)>last.severity;

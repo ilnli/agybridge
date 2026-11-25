@@ -60,7 +60,7 @@ export function hostingStatus(store:Store,peer:Peer){
   const conflict=store.setting('managedRuntimeConflict:'+peer.id);
   const verifying=verificationPending(peer,value),verificationError=verifying?value?.verificationError:undefined;
   const phase=conflict||verificationError||peer.owner==='nxbridge'&&value?.reason==='bootstrap_policy_unsupported'||value?.reason&&['adopting','releasing'].includes(value.phase??'')?'blocked':value?.phase??(verifying?'verifying':endpoint&&peer.state!=='offline'?peer.owner==='nxbridge'&&preference==='bg'&&!binding&&!lease?'background':'foreground':'window_closed');
-  const pair=store.pairFor(peer.id)!,counts=store.deliveryCounts(pair.id,pair.claude===peer.id?pair.codex:pair.claude);
+  const pair=store.pairFor(peer.id)!,counts=store.deliveryCounts(pair.id,pair.agy===peer.id?pair.codex:pair.agy);
   return{preference,phase,verifying:verifying&&!verificationError,name:peer.name,pair_id:store.pairFor(peer.id)!.id,member_id:peer.id,session_id:peer.sessionId,config_home:value?.configHome??endpoint?.configHome??store.endpoints(peer.id).find(ep=>ep.configHome)?.configHome,cwd:peer.cwd,wake_capable:!hostingGate(store,peer)&&!!endpoint&&(endpoint.mode==='app-server'&&!endpoint.daemon||endpoint.mode==='embedded'&&!!endpoint.bridge),...(holder?{holder:{mode:endpoint?.daemon?'daemon':endpoint?.mode??'foreground',pid:holder.pid,generation:holder.procStart}}:{}),held_unsent:hostingGate(store,peer)?counts.accepted:0,uncertain:counts.unknown+counts.sending+counts.runtimeQueued,...(value?.policy?{policy:value.policy}:{}),...(conflict?{reason:'session_conflict'}:verificationError?{reason:verificationError.code,user_step:verificationError.message}:value?.reason?{reason:value.reason}:{}),...(!verificationError&&value?.userStep?{user_step:value.userStep}:{})};
 }
 export function closeHostedWindow(store:Store,peer:Peer,epoch?:string):void{
@@ -82,11 +82,11 @@ export class SessionTransfers {
     holder:(peer:Peer)=>Promise<'alive'|'dead'|'unknown'>;prepare:(peer:Peer)=>Promise<void>;stop:(peer:Peer,endpoint:Endpoint,guard:()=>void)=>Promise<void>;enabled:(peer:Peer)=>void;
     loaded?:(peer:Peer,endpoint:Endpoint)=>Promise<'alive'|'dead'|'unknown'>;daemon?:(peer:Peer,runtime:{pid:number;procStart:string})=>Promise<'alive'|'dead'|'unknown'>;cleanup?:(peer:Peer,endpoint:string)=>Promise<void>;
     inspect?:(runtime:ManagedRuntime,sessionId:string)=>Promise<{id:string;parentThreadId?:string|null;source?:any;threadSource?:string;status?:{type:string}}|undefined>;
-    processes?:(host:'codex'|'claude')=>Promise<KnownNativeProcess[]>;identity?:typeof processIdentity;
+    processes?:(host:'codex'|'agy')=>Promise<KnownNativeProcess[]>;identity?:typeof processIdentity;
   }){}
   private assert(peer:Peer):void{this.ops.enabled(peer);if(peer.host!=='codex'||!peer.sessionId||!this.store.pairFor(peer.id))throw new BridgeError('session_missing','托管切换需要已配对的 Codex 原会话。');}
   private human(peer:Peer):void{
-    if(peer.state==='needsHuman'||this.store.questions(true).some(q=>q.from===peer.id||q.to===peer.id))throw new BridgeError('pending_approval','原会话仍有问题或审批待处理；请先 nxbridge open codex 打开并回答，再切换托管。');
+    if(peer.state==='needsHuman'||this.store.questions(true).some(q=>q.from===peer.id||q.to===peer.id))throw new BridgeError('pending_approval','原会话仍有问题或审批待处理；请先 agybridge open codex 打开并回答，再切换托管。');
   }
   private run(peer:Peer,kind:'adopt'|'release',work:()=>Promise<unknown>):Promise<unknown>{
     const pending=this.pending.get(peer.id);if(pending?.kind===kind)return pending.work;
@@ -204,7 +204,7 @@ export class SessionTransfers {
         continue;
       }
       if(!codexAppServerArguments(args)&&args.includes(peer.sessionId!))throw new BridgeError('holder_active',`原会话仍由 Codex 窗口 PID ${row.pid} 持有，请退出该窗口后重试。`);
-      if(codexAppServerArguments(args)&&!args.includes('--managed-daemon')&&!args.includes('proxy')&&!args.some(arg=>/[\\/]app-server-(?:control|daemon)[\\/]/i.test(arg)))throw new BridgeError('holder_unknown',`原生 App Server（PID ${row.pid}）可能仍持有原会话，当前无法观察其线程。请先在 ChatGPT 应用中关闭该会话；若仍受阻，完全退出 ChatGPT 应用或对应 Codex 应用，再运行 nxbridge adopt codex --member ${peer.id} 重试。`);
+      if(codexAppServerArguments(args)&&!args.includes('--managed-daemon')&&!args.includes('proxy')&&!args.some(arg=>/[\\/]app-server-(?:control|daemon)[\\/]/i.test(arg)))throw new BridgeError('holder_unknown',`原生 App Server（PID ${row.pid}）可能仍持有原会话，当前无法观察其线程。请先在 ChatGPT 应用中关闭该会话；若仍受阻，完全退出 ChatGPT 应用或对应 Codex 应用，再运行 agybridge adopt codex --member ${peer.id} 重试。`);
       }catch(error){
         const code=(error as {code?:string}).code;if(code==='process_missing')continue;
                                                

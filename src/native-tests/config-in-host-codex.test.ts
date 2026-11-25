@@ -29,7 +29,7 @@ test(registrationDelay?'官方 Codex MCP 注册延迟：真实配置和发信不
   mkdirSync(home);mkdirSync(codexhome);
   const config={...DEFAULT_CONFIG,implicit:'never' as const,compatibilityWake:'strict' as const,codexHome:codexhome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};
   writeFileSync(path.join(home,'config.json'),JSON.stringify(config),'utf8');
-  const env={NXBRIDGE_HOME:home,CODEX_HOME:codexhome,CLAUDE_CONFIG_DIR:path.join(directory,'claude')},restoreEnvironment=overrideEnvironment(env);
+  const env={AGYBRIDGE_HOME:home,CODEX_HOME:codexhome,AGY_HOME:path.join(directory,'agy')},restoreEnvironment=overrideEnvironment(env);
   const registrationLog=path.join(directory,'mcp-registration.jsonl');
   assert.ok([0,2100,15100].includes(registrationDelay),'注册延迟诊断只接受既定的隔离探针值');
   const hook=path.join(directory,'capture.mjs');writeFileSync(hook,`import{readFileSync,appendFileSync}from'node:fs';appendFileSync(${JSON.stringify(hooklog)},JSON.stringify(JSON.parse(readFileSync(0,'utf8')))+'\\n','utf8');`,'utf8');
@@ -62,7 +62,7 @@ test(registrationDelay?'官方 Codex MCP 注册延迟：真实配置和发信不
     for(const event of [{type:'response.created',response:{id:'config-response',status:'in_progress',output:[]}},{type:'response.output_item.added',output_index:0,item},{type:'response.output_item.done',output_index:0,item},{type:'response.completed',response:{id:'config-response',status:'completed',output:[item],usage:{input_tokens:1,output_tokens:1,total_tokens:2}}}])res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);res.end();
   }catch(error){errors.push(String(error));res.writeHead(500);res.end(String(error));}});
   await new Promise<void>(resolve=>model.listen(0,'127.0.0.1',resolve));
-  writeFileSync(path.join(codexhome,'config.toml'),stringify({model:'gpt-5.1-codex',model_provider:'config_test',approval_policy:'never',sandbox_mode:'danger-full-access',web_search:'disabled',model_providers:{config_test:{name:'配置隔离测试',base_url:`http://127.0.0.1:${(model.address() as AddressInfo).port}/v1`,wire_api:'responses',requires_openai_auth:false}},features:{multi_agent:true,multi_agent_v2:false,apps:false,code_mode:false,non_prefixed_mcp_tool_names:{enabled:true,server_names:['claude']}},analytics:{enabled:false}}),'utf8');
+  writeFileSync(path.join(codexhome,'config.toml'),stringify({model:'gpt-5.1-codex',model_provider:'config_test',approval_policy:'never',sandbox_mode:'danger-full-access',web_search:'disabled',model_providers:{config_test:{name:'配置隔离测试',base_url:`http://127.0.0.1:${(model.address() as AddressInfo).port}/v1`,wire_api:'responses',requires_openai_auth:false}},features:{multi_agent:true,multi_agent_v2:false,apps:false,code_mode:false,non_prefixed_mcp_tool_names:{enabled:true,server_names:['agy']}},analytics:{enabled:false}}),'utf8');
   let client:Awaited<ReturnType<typeof connectAppServer>>|undefined;
   t.after(async()=>{
     hold=false;release?.();client?.close();try{await brokerCall('shutdown',{releaseOwned:false},{home,start:false});}catch{}
@@ -71,8 +71,8 @@ test(registrationDelay?'官方 Codex MCP 注册延迟：真实配置和发信不
     restoreEnvironment();await temp.cleanup();
   });
   const marketplace=await preparePlugins(home),trace=path.join(directory,'mcp.jsonl'),mcpFile=path.join(marketplace,'plugins/codex/.mcp.json'),mcpConfig=JSON.parse(readFileSync(mcpFile,'utf8'));
-  mcpConfig.mcpServers.claude={command:process.execPath,args:[fileURLToPath(new URL('../../tools/trace-hook-mcp.mjs',import.meta.url)),'mcp','--host','codex'],env:{NXBRIDGE_HOME:home,CODEX_HOME:codexhome,NXBRIDGE_PROFILE_LOG:trace}};writeFileSync(mcpFile,JSON.stringify(mcpConfig),'utf8');
-  await runCli('codex',['plugin','marketplace','add',marketplace,'--json'],{config});await runCli('codex',['plugin','add','nxbridge@nxbridge-local','--json'],{config});
+  mcpConfig.mcpServers.agy={command:process.execPath,args:[fileURLToPath(new URL('../../tools/trace-hook-mcp.mjs',import.meta.url)),'mcp','--host','codex'],env:{AGYBRIDGE_HOME:home,CODEX_HOME:codexhome,NXBRIDGE_PROFILE_LOG:trace}};writeFileSync(mcpFile,JSON.stringify(mcpConfig),'utf8');
+  await runCli('codex',['plugin','marketplace','add',marketplace,'--json'],{config});await runCli('codex',['plugin','add','agybridge@agybridge-local','--json'],{config});
                                                               
   const declared=JSON.parse(readFileSync(path.join(PACKAGE_ROOT,'plugins/codex/hooks/hooks.json'),'utf8'));
   for(const groups of Object.values(declared.hooks) as any[])for(const group of groups)for(const entry of group.hooks)if(entry.type==='command')entry.command=entry.command.replaceAll('${PLUGIN_ROOT}',path.join(marketplace,'plugins/codex').replaceAll('\\','/'));
@@ -94,7 +94,7 @@ test(registrationDelay?'官方 Codex MCP 注册延迟：真实配置和发信不
   const {thread}=await client.request('thread/start',{cwd:directory,approvalPolicy:'never',sandbox:'danger-full-access',config:{'hooks.state':state}});
   rootId=thread.id;
                                              
-  const mcp=await client.request('mcpServerStatus/list',{threadId:thread.id,limit:100}),bridge=mcp.data.find((server:any)=>server.name==='claude');
+  const mcp=await client.request('mcpServerStatus/list',{threadId:thread.id,limit:100}),bridge=mcp.data.find((server:any)=>server.name==='agy');
   assert.ok(bridge?.tools?.config,'原生插件尚未提供配置工具：'+JSON.stringify(mcp.data.map((server:any)=>({name:server.name,status:server.runtimeStatus,error:server.toolsError}))));
   await start(thread.id,{input:[{type:'text',text:'测试模型配置入口'}]});
   if(registrationDelay){
@@ -114,9 +114,9 @@ test(registrationDelay?'官方 Codex MCP 注册延迟：真实配置和发信不
   const output=bodies.at(-1).input.find((item:any)=>item.type==='function_call_output'&&item.call_id==='sensitive-config').output;
   const unpack=(value:any):any=>{if(typeof value==='string')return unpack(JSON.parse(value));if(Array.isArray(value)){for(const item of value)try{return unpack(item.text);}catch{}}if(value.status==='needs_confirmation')return value;if(value.content)return unpack(value.content);throw Error('配置工具结果格式未知：'+JSON.stringify(value));};
   const proposed=unpack(output);assert.equal(proposed.token,undefined);assert.equal(proposed.review,'nxbridge config pending');phase='final';
-  await start(thread.id,{input:[],toolOutput:{namespace:'claude',name:'receive_messages',output:JSON.stringify({message:proposed.review})}});assert.equal(loadBridgeConfig(home).implicit,'never');
+  await start(thread.id,{input:[],toolOutput:{namespace:'agy',name:'receive_messages',output:JSON.stringify({message:proposed.review})}});assert.equal(loadBridgeConfig(home).implicit,'never');
   hold=true;release=undefined;const active=await client.request('turn/start',{threadId:thread.id,input:[{type:'text',text:'队列测试'}]});await wait(()=>!!release);
-  await client.request('turn/start',{threadId:thread.id,input:[],toolOutput:{namespace:'claude',name:'receive_messages',output:JSON.stringify({message:proposed.review})}});hold=false;release!();await wait(()=>completed.has(active.turn.id));assert.equal(loadBridgeConfig(home).implicit,'never');
+  await client.request('turn/start',{threadId:thread.id,input:[],toolOutput:{namespace:'agy',name:'receive_messages',output:JSON.stringify({message:proposed.review})}});hold=false;release!();await wait(()=>completed.has(active.turn.id));assert.equal(loadBridgeConfig(home).implicit,'never');
   phase='child';await start(thread.id,{input:[{type:'text',text:'启动 V1 子代理核验确认隔离'}]});await wait(()=>bodies.some(body=>body.model==='gpt-6-sol'&&body.input?.some((item:any)=>['function_call_output','custom_tool_call_output'].includes(item.type)&&item.call_id==='child-command')));phase='final';assert.equal(loadBridgeConfig(home).implicit,'never');
   const seen=readFileSync(hooklog,'utf8').trim().split('\n').map(line=>JSON.parse(line)),child=seen.find(item=>item.prompt==='nxbridge config confirm 0000000000000000');assert.ok(child?.agent_id,'V1 子代理必须有原生子代理标记');assert.notEqual(child.transcript_path,seen[0].transcript_path);
   phase='forge';await start(thread.id,{input:[{type:'text',text:'核验模型自发 pending 不能获得确认码'}]});await wait(()=>feedback.some(text=>/nxbridge config confirm [a-f0-9]{16}/.test(text)));assert.equal(loadBridgeConfig(home).implicit,'never');
@@ -126,7 +126,7 @@ test(registrationDelay?'官方 Codex MCP 注册延迟：真实配置和发信不
   await start(thread.id,{input:[{type:'text',text:confirmation}]});assert.equal(bodies.length,before,'确认应由原生 hook 消费，不调用模型');assert.equal(loadBridgeConfig(home).implicit,'on-demand');
   await start(thread.id,{input:[{type:'text',text:confirmation}]});assert.equal(loadBridgeConfig(home).implicit,'on-demand');assert.equal(bodies.length,before);
                                            
-  const store=new Store(path.join(home,'nxbridge.db'));try{const peer=store.find('codex',thread.id)!;store.updatePeer(peer.id,{owner:'nxbridge'});}finally{store.close();}
+  const store=new Store(path.join(home,'agybridge.db'));try{const peer=store.find('codex',thread.id)!;store.updatePeer(peer.id,{owner:'nxbridge'});}finally{store.close();}
   const next:any=await brokerCall('config.model',{actor:{host:'codex',sessionId:thread.id,callId:'owned-config'},input:{action:'set',key:'collaboration.subagent_send',value:'deny'}});
   await start(thread.id,{input:[{type:'text',text:next.review}]});const nextConfirmation=/nxbridge config confirm [a-f0-9]{16}/.exec(feedback.at(-1)!)![0];
   await start(thread.id,{input:[{type:'text',text:nextConfirmation}]});assert.equal(loadBridgeConfig(home).subagentSend,'deny');assert.equal(bodies.length,before);
@@ -134,7 +134,7 @@ test(registrationDelay?'官方 Codex MCP 注册延迟：真实配置和发信不
   const postTools=notes.filter(note=>note.method==='hook/completed'&&note.params.run.eventName==='postToolUse').map(note=>note.params.run);assert.ok(postTools.length);
   if(postTools.some(run=>run.status!=='completed')){
     const meta=JSON.parse(readFileSync(child.transcript_path,'utf8').split('\n')[0]!).payload,logfile=path.join(home,'run/broker.log');
-    const calls=existsSync(trace)?readFileSync(trace,'utf8').trim().split('\n').map(line=>JSON.parse(line)).filter(call=>call.params.name==='nxbridge_hook').map(call=>({threadId:call.params._meta.threadId,input:call.params.arguments,error:call.error})):[];
+    const calls=existsSync(trace)?readFileSync(trace,'utf8').trim().split('\n').map(line=>JSON.parse(line)).filter(call=>call.params.name==='agybridge_hook').map(call=>({threadId:call.params._meta.threadId,input:call.params.arguments,error:call.error})):[];
     t.diagnostic(JSON.stringify({child,meta:{id:meta.id,source:meta.source,parent_thread_id:meta.parent_thread_id,thread_source:meta.thread_source},calls,broker:existsSync(logfile)?readFileSync(logfile,'utf8').slice(-4000):undefined}));
   }
   assert.ok(postTools.every(run=>run.status==='completed'),JSON.stringify(postTools.filter(run=>run.status!=='completed')));

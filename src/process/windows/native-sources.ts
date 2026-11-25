@@ -173,7 +173,7 @@ public static class NxHookIdentity {
   return current;
  }
  static string LaunchImage(string image) {
-  foreach(string host in new string[]{"claude","codex"}){string candidate=HostImage(image,host);if(candidate!=null)return candidate;}
+  foreach(string host in new string[]{"agy","codex"}){string candidate=HostImage(image,host);if(candidate!=null)return candidate;}
   return image;
  }
  static int Ancestors(string[] args) {
@@ -330,7 +330,7 @@ public static class NxHookIdentity {
    if(args.Length>0&&args[0]=="job-root")return NxJobHolder.Declare(args);
    if(args.Length>0&&(args[0]=="job-members"||args[0]=="job-stop"))return Job(args);
    if(args.Length>0&&args[0]=="ancestors")return Ancestors(args);
-   string host=args.Length==2?args[0]:"codex";bool hook=host=="codex-hook"||host=="claude-hook";if(hook)host=host.Substring(0,host.Length-5);bool exact=host=="process";if(!exact&&host!="codex"&&host!="claude")throw new ArgumentException("invalid native host");
+   string host=args.Length==2?args[0]:"codex";bool hook=host=="codex-hook"||host=="agy-hook";if(hook)host=host.Substring(0,host.Length-5);bool exact=host=="process";if(!exact&&host!="codex"&&host!="agy")throw new ArgumentException("invalid native host");
    uint pid;if((args.Length!=1&&args.Length!=2)||!UInt32.TryParse(args[args.Length-1],out pid)||pid==0)throw new ArgumentException("invalid ancestor pid");
    HashSet<uint> seen=new HashSet<uint>();long childCreated=Int64.MaxValue;
    for(int depth=0;depth<(exact?1:hook?11:10)&&pid>0&&seen.Add(pid);depth++) {
@@ -428,7 +428,7 @@ public static class NxOwnedCommand {
    Basic own,target;int returned;long created,exited,kernel,user;
    if(NtQueryInformationProcess(GetCurrentProcess(),0,out own,Marshal.SizeOf(typeof(Basic)),out returned)!=0||NtQueryInformationProcess(child,0,out target,Marshal.SizeOf(typeof(Basic)),out returned)!=0||target.parent!=own.parent)throw new InvalidOperationException("gated child is not caller's direct child");
    if(!GetProcessTimes(child,out created,out exited,out kernel,out user)||created!=generation||WaitForSingleObject(child,0)!=258)throw new InvalidOperationException("gated child generation changed");
-   string name="Global\\\\nxbridge-job-"+Guid.NewGuid().ToString("N");job=CreateJobObjectW(IntPtr.Zero,name);if(job==IntPtr.Zero)throw NativeError();
+   string name="Global\\\\agybridge-job-"+Guid.NewGuid().ToString("N");job=CreateJobObjectW(IntPtr.Zero,name);if(job==IntPtr.Zero)throw NativeError();
    JobLimits limits=new JobLimits();limits.basic.flags=0x0800;int size=Marshal.SizeOf(typeof(JobLimits));IntPtr data=Marshal.AllocHGlobal(size);
    try{Marshal.StructureToPtr(limits,data,false);if(!SetInformationJobObject(job,9,data,(uint)size))throw NativeError();}finally{Marshal.FreeHGlobal(data);}
    if(!AssignProcessToJobObject(job,child))throw NativeError();Console.Write(NxJobHolder.LaunchAttached(name,pid,generation,args[3]));return 0;

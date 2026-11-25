@@ -134,7 +134,7 @@ test('拒绝 breakaway 的实际 Job 内执行 bootstrap，预检失败保留旧
   t.after(async()=>{try{await server.close();}finally{await temp.cleanup();}});
   const owner=await startController(t,home,root,{runner,compiler,close,error,ready,membership},false,false);
   await until(()=>existsSync(ready)||existsSync(error),'实际 Job 中的 bootstrap 未返回');assert.equal(existsSync(error),false,existsSync(error)?readFileSync(error,'utf8'):'');
-  const result=JSON.parse(readFileSync(ready,'utf8'));assert.equal(result.ok,false);assert.equal(result.code,'bootstrap_context_unavailable');assert.match(result.message,/普通 PowerShell.*nxbridge bootstrap/);
+  const result=JSON.parse(readFileSync(ready,'utf8'));assert.equal(result.ok,false);assert.equal(result.code,'bootstrap_context_unavailable');assert.match(result.message,/普通 PowerShell.*agybridge bootstrap/);
   await until(()=>existsSync(membership),'未确认调用进程实际属于拒绝 breakaway 的 Job');assert.equal(JSON.parse(readFileSync(membership,'utf8')).runner,true);
   assert.deepEqual(methods,['ping']);assert.deepEqual(readFileSync(state),before);assert.equal(existsSync(path.join(home,'run','broker-startup.db')),false);
   assert.equal((await brokerCall<any>('ping',{}, {home,start:false})).pid,process.pid);

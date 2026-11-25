@@ -3,7 +3,7 @@ import type { RequestOptions } from '@modelcontextprotocol/sdk/shared/protocol.j
 import type { PairCandidate } from './pair-selection.js';
 import { hostLabel } from './pair-presentation.js';
 
-interface SelectionView {status:string;selection_id:string;host:'claude'|'codex';candidates:PairCandidate[];allowed_actions:string[];pairing_code?:string;expires_at:number;mode?:'change';current_partner?:{name:string;owner:string;state:string}}
+interface SelectionView {status:string;selection_id:string;host:'agy'|'codex';candidates:PairCandidate[];allowed_actions:string[];pairing_code?:string;expires_at:number;mode?:'change';current_partner?:{name:string;owner:string;state:string}}
 type SelectionRpc=(method:string,params:Record<string,unknown>)=>Promise<any>;
 
                                       
@@ -22,11 +22,11 @@ export async function elicitPartner(server:Pick<Server,'getClientCapabilities'|'
     };
     if(live.length)choices.push(group(live,'existing','现有窗口'));
     if(previous.length)choices.push(group(previous,'previous','之前的后台 '+label));
-    if(view.allowed_actions.includes('create'))choices.push({const:'create',title:`新建后台 ${label} · 由 nxbridge 在后台启动一个新的 ${label}，不占用已打开的窗口`});
+    if(view.allowed_actions.includes('create'))choices.push({const:'create',title:`新建后台 ${label} · 由 agybridge 在后台启动一个新的 ${label}，不占用已打开的窗口`});
     if(view.allowed_actions.includes('unpair'))choices.push({const:'unpair',title:'解除配对 · 只解除当前搭档，不会另开窗口'});
     choices.push({const:'cancel',title:view.mode==='change'?'保持不变 · 继续使用当前搭档':'暂不配对 · 消息不发送，之后可以再发一次'});
     if(choices.length>4)choices.splice(0,2,group(candidates,'existing_or_previous','现有窗口或之前的后台 '+label));
-    const message=(view.mode==='change'?`当前搭档：${label}「${view.current_partner?.name??''}」。要怎么处理？`:previous.length?(live.length?'要使用现有窗口、接回之前的后台搭档，还是新建后台搭档？':view.allowed_actions.includes('create')?`要接回之前的后台 ${label}，还是新建一个后台搭档？`:`要接回之前的后台 ${label} 吗？`):live.length===1?`这个项目已经开着一个 ${label} 窗口（${live[0]!.label??live[0]!.name}），要和它配对吗？`:'要使用现有窗口，还是新建一个后台搭档？')+(view.pairing_code?`分不清是哪个窗口的话，在那个 ${label} 窗口里输入 ${view.host==='claude'?'/':''}nxbridge pair ${view.pairing_code}（${Math.max(1,Math.ceil((view.expires_at-Date.now())/60000))} 分钟内有效）。`:'');
+    const message=(view.mode==='change'?`当前搭档：${label}「${view.current_partner?.name??''}」。要怎么处理？`:previous.length?(live.length?'要使用现有窗口、接回之前的后台搭档，还是新建后台搭档？':view.allowed_actions.includes('create')?`要接回之前的后台 ${label}，还是新建一个后台搭档？`:`要接回之前的后台 ${label} 吗？`):live.length===1?`这个项目已经开着一个 ${label} 窗口（${live[0]!.label??live[0]!.name}），要和它配对吗？`:'要使用现有窗口，还是新建一个后台搭档？')+(view.pairing_code?`分不清是哪个窗口的话，在那个 ${label} 窗口里输入 agybridge pair ${view.pairing_code}（${Math.max(1,Math.ceil((view.expires_at-Date.now())/60000))} 分钟内有效）。`:'');
     let result:Awaited<ReturnType<Server['elicitInput']>>;
     try{result=await server.elicitInput({mode:'form',message,requestedSchema:{type:'object',properties:{choice:{type:'string',title:'选择搭档',oneOf:choices}},required:['choice']}},options);}
     catch(error){if(options?.signal?.aborted)throw error;return inChat();}

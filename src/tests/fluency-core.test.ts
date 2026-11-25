@@ -22,7 +22,7 @@ test('同步与异步跳过均保留故障次数，真正完成才解除退避',
 
 test('broker 重试门槛不清零故障，握手不清除投递事件，实际送达并稳定后恢复',async t=>{
   t.mock.timers.enable({apis:['Date'],now:1000000});const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id);
-  const message=f.store.accept(pair,f.x,'须投递','fault');f.claude.fail=new DeliveryError('timeout','等待超时',false);
+  const message=f.store.accept(pair,f.x,'须投递','fault');f.agy.fail=new DeliveryError('timeout','等待超时',false);
   for(let count=1;count<=3;count++){
     await f.broker.pump();assert.equal(f.broker.incidents.current(f.c,f.store.endpoint(f.c.id))?.attempts,count);
     for(let skip=0;skip<3;skip++)await f.broker.pump();
@@ -32,7 +32,7 @@ test('broker 重试门槛不清零故障，握手不清除投递事件，实际�
   const incident=f.broker.incidents.current(f.c,f.store.endpoint(f.c.id))!;
   await f.broker.dispatch('status',{host:'codex',sessionId:'x',callId:'status'});
   assert.equal(f.broker.incidents.current(f.c,f.store.endpoint(f.c.id))?.id,incident.id);
-  f.claude.fail=undefined;await f.broker.pump();assert.equal(f.store.message(message.id).state,'runtimeQueued');
+  f.agy.fail=undefined;await f.broker.pump();assert.equal(f.store.message(message.id).state,'runtimeQueued');
   assert.equal(f.broker.incidents.current(f.c,f.store.endpoint(f.c.id))?.state,'recovering');
   t.mock.timers.tick(30000);assert.equal(f.broker.incidents.current(f.c,f.store.endpoint(f.c.id)),undefined);
 });

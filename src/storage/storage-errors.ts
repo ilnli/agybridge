@@ -4,7 +4,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 export type StoragePhase='prepare'|'enqueue';
 export class StorageBusyError extends BridgeError {
   constructor(public operation:string,public phase?:StoragePhase,public sqliteCode?:number,public uncertain?:boolean){
-    super('storage_busy','nxbridge 数据库暂时繁忙，请稍后重试。');
+    super('storage_busy','agybridge 数据库暂时繁忙，请稍后重试。');
     if(uncertain===undefined&&phase!==undefined)this.uncertain=false;
   }
 }

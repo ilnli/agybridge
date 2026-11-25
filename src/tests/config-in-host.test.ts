@@ -11,45 +11,28 @@ import { FakeAdapter } from './support/fake-adapter.js';
 import { registration } from './support/registration.js';
 import { temporary } from './support/temporary.js';
 
-const session=(host:'claude'|'codex',id='root',window='123:generation'):ConfigurationSession=>({host,sessionId:id,window});
+const session=(host:'agy'|'codex',id='root',window='123:generation'):ConfigurationSession=>({host,sessionId:id,window});
 function makeProposal(service:InHostConfiguration,who:ConfigurationSession,input:unknown):any{
   const shown=service.model(who,input) as any,hidden=service.pending(who) as any,token=/confirm ([a-f0-9]{16})$/.exec(hidden.confirmation)![1]!;
   assert.equal(shown.token,undefined);assert.ok(!JSON.stringify(shown).includes(token),'模型结果不能包含确认码');return{...shown,token,confirmation:hidden.confirmation};
 }
 test('双端模型安全写入直接生效，敏感项只生成精确差异，原生确认单次提交',t=>{
-  for(const host of ['claude','codex'] as const){
+  for(const host of ['agy','codex'] as const){
     const home=temporary(t),service=new InHostConfiguration(home),who=session(host);
     service.model(who,{action:'set',key:'questions.timeout_ms',value:450});assert.equal(loadBridgeConfig(home).questionTimeoutMs,450);
     const proposed=makeProposal(service,who,{action:'set',key:'collaboration.implicit',value:'never'});
     assert.equal(loadBridgeConfig(home).implicit,'on-demand');assert.deepEqual(proposed.diff,[{key:'collaboration.implicit',operation:'set',before:'on-demand',after:'never',managedValue:'never'}]);
-    assert.match(proposed.confirmation,/nxbridge config confirm [a-f0-9]{16}$/);
+    assert.match(proposed.confirmation,/agybridge config confirm [a-f0-9]{16}$/);
     assert.throws(()=>service.model(who,{action:'confirm',token:proposed.token}));
-    for(const foreign of [session(host,'other'),session(host,'root','124:generation'),session(host==='codex'?'claude':'codex')])assert.throws(()=>service.confirm(foreign,proposed.token),{code:'config_confirmation_invalid'});
+    for(const foreign of [session(host,'other'),session(host,'root','124:generation'),session(host==='codex'?'agy':'codex')])assert.throws(()=>service.confirm(foreign,proposed.token),{code:'config_confirmation_invalid'});
     service.confirm(who,proposed.token);assert.equal(loadBridgeConfig(home).implicit,'never');assert.throws(()=>service.confirm(who,proposed.token),{code:'config_confirmation_invalid'});
     const audit=readFileSync(path.join(home,'config-last-change.json'),'utf8');assert.equal(JSON.parse(audit).origin,host+'-user');assert.doesNotMatch(audit,new RegExp(proposed.token));
     service.model(who,{action:'unset',key:'questions.timeout_ms'});assert.equal(loadBridgeConfig(home).questionTimeoutMs,DEFAULT_CONFIG.questionTimeoutMs);
   }
 });
 
-test('SDK 用户提示默认关闭，模型只能提案，开启和恢复默认均由用户确认',t=>{
-  const key='hosts.claude.sdk_user_prompt';
-  for(const host of ['claude','codex'] as const){
-    const home=temporary(t),service=new InHostConfiguration(home),who=session(host);
-    const entry=service.model(who,{action:'get',key}) as any;
-    assert.equal(entry.value,false);assert.equal(entry.safe,false);
-    const enable=makeProposal(service,who,{action:'set',key,value:true});
-    assert.equal(enable.status,'needs_confirmation');assert.equal(loadBridgeConfig(home).claudeSdkUserPrompt,false);
-    service.confirm(who,enable.token);assert.equal(loadBridgeConfig(home).claudeSdkUserPrompt,true);
-    const reset=makeProposal(service,who,{action:'unset',key});
-    assert.equal(reset.status,'needs_confirmation');assert.equal(loadBridgeConfig(home).claudeSdkUserPrompt,true);
-    service.confirm(who,reset.token);assert.equal(loadBridgeConfig(home).claudeSdkUserPrompt,false);
-    for(const value of ['true',1,null])assert.throws(()=>service.model(who,{action:'set',key,value}),{code:'invalid_config'});
-    service.human(who,['set',key,'true']);assert.equal(loadBridgeConfig(home).claudeSdkUserPrompt,true);
-  }
-});
-
 test('双端同步提醒配置默认三十分钟，允许安全关闭和恢复，拒绝无效分钟',t=>{
-  for(const host of ['claude','codex'] as const){
+  for(const host of ['agy','codex'] as const){
     const home=temporary(t),service=new InHostConfiguration(home),who=session(host);
     assert.equal(loadBridgeConfig(home).syncTipMinutes,30);
     assert.equal((service.model(who,{action:'set',key:'collaboration.sync_tip_minutes',value:0}) as any).status,undefined);
@@ -60,7 +43,7 @@ test('双端同步提醒配置默认三十分钟，允许安全关闭和恢复�
 });
 
 test('双端空闲提醒默认五分钟，模型可安全关闭和恢复，拒绝无效分钟',t=>{
-  for(const host of ['claude','codex'] as const){
+  for(const host of ['agy','codex'] as const){
     const home=temporary(t),service=new InHostConfiguration(home),who=session(host);
     assert.equal(loadBridgeConfig(home).idleNoticeMinutes,5);
     service.model(who,{action:'set',key:'collaboration.idle_notice_minutes',value:0});assert.equal(loadBridgeConfig(home).idleNoticeMinutes,0);
@@ -84,7 +67,7 @@ test('过期、替换、结束和协调器重启使提案失效；文件变化�
 });
 
 test('原生命令允许敏感写入但不改用户 TOML，非法批次不写入，秘密不进入差异',t=>{
-  const home=temporary(t),service=new InHostConfiguration(home),who=session('claude');
+  const home=temporary(t),service=new InHostConfiguration(home),who=session('agy');
   assert.deepEqual(configurationArguments('set hosts.codex.command ["程序", "带 空格", ""]'),['set','hosts.codex.command','["程序", "带 空格", ""]']);
   service.human(who,configurationArguments('set collaboration.implicit never'));assert.equal(loadBridgeConfig(home).implicit,'never');
   assert.throws(()=>service.model(who,{action:'propose',edits:[{key:'collaboration.implicit',value:'on-demand'},{key:'questions.timeout_ms',value:0}]}));assert.equal(loadBridgeConfig(home).implicit,'never');
@@ -96,12 +79,12 @@ test('原生命令允许敏感写入但不改用户 TOML，非法批次不写入
 
 test('协调器仅根窗口可信确认入口可提交，模型参数与子代理不能伪造；两类 Codex 所有者一致',async t=>{
   for(const owner of ['user','nxbridge'] as const){
-    const home=temporary(t),store=new Store(':memory:'),codex=new FakeAdapter(),claude=new FakeAdapter(),broker=new Broker(store,{...DEFAULT_CONFIG},{codex,claude} as any,home);
+    const home=temporary(t),store=new Store(':memory:'),codex=new FakeAdapter(),agy=new FakeAdapter(),broker=new Broker(store,{...DEFAULT_CONFIG},{codex,agy} as any,home);
     t.after(async()=>{await broker.stop();store.close();});
     const root=store.register(registration('codex','root'));store.updatePeer(root.id,{owner});
     const actor={host:'codex',sessionId:'root',callId:'config'};
     const propose=async()=>{const shown:any=await broker.dispatch('config.model',{actor,input:{action:'set',key:'collaboration.implicit',value:'never'}}),hidden:any=broker.configuration!.pending(session('codex','root',`${process.pid}:test`));return{...shown,token:/confirm ([a-f0-9]{16})$/.exec(hidden.confirmation)![1]};};
-    const proposed=await propose(),prompt='nxbridge config confirm '+proposed.token,context_key=`${process.pid}:test:root`;
+    const proposed=await propose(),prompt='agybridge config confirm '+proposed.token,context_key=`${process.pid}:test:root`;
     const hook={session_id:'root',hook_event_name:'UserPromptSubmit',context_key,prompt};
     assert.equal((await broker.dispatch('hook',{...hook,context_key:`${process.pid}:test:foreign.jsonl`}) as any).decision,'block');assert.equal(loadBridgeConfig(home).implicit,'on-demand');
     await broker.dispatch('hook',{session_id:'root',hook_event_name:'SessionStart',source:'startup',context_key});
@@ -112,12 +95,12 @@ test('协调器仅根窗口可信确认入口可提交，模型参数与子代�
     assert.match((await broker.dispatch('hook',hook) as any).reason,/保存成功/);assert.equal(loadBridgeConfig(home).implicit,'never');assert.equal(broker.config.implicit,'never');assert.equal(DEFAULT_CONFIG.implicit,'on-demand');
     assert.match((await broker.dispatch('hook',hook) as any).reason,/已使用/);
     const next=await propose();await broker.dispatch('hook',{session_id:'root',hook_event_name:'SessionEnd',context_key});
-    assert.match((await broker.dispatch('hook',{...hook,prompt:'nxbridge config confirm '+next.token}) as any).reason,/核验当前宿主进程|已过期/);
+    assert.match((await broker.dispatch('hook',{...hook,prompt:'agybridge config confirm '+next.token}) as any).reason,/核验当前宿主进程|已过期/);
   }
 });
 
 test('App Server 无进程字段时使用原生 MCP 的独立证据，不覆盖路由或父链',async t=>{
-  const home=temporary(t),store=new Store(':memory:'),codex=new FakeAdapter(),claude=new FakeAdapter(),broker=new Broker(store,DEFAULT_CONFIG,{codex,claude} as any,home);
+  const home=temporary(t),store=new Store(':memory:'),codex=new FakeAdapter(),agy=new FakeAdapter(),broker=new Broker(store,DEFAULT_CONFIG,{codex,agy} as any,home);
   t.after(async()=>{await broker.stop();store.close();});
   const direct=registration('codex','root');direct.endpoint.pid=null;direct.endpoint.procStart=null;
   const root=store.register(direct),actor={host:'codex',sessionId:'root',callId:'config'};

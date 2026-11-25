@@ -13,12 +13,12 @@ import { fixture } from './support/broker-fixture.js';
 import { registration } from './support/registration.js';
 import { temporaryDirectory } from './support/temporary.js';
 
-for(const host of ['claude','codex'] as const)test(host+' 实际宿主代次被终止后按配置目录身份恢复原成员',async t=>{
-  const {store,broker,c,x}=fixture(t),pair=store.pair(c.id,x.id),peer=host==='claude'?c:x,children:ReturnType<typeof spawn>[]=[];
+for(const host of ['agy','codex'] as const)test(host+' 实际宿主代次被终止后按配置目录身份恢复原成员',async t=>{
+  const {store,broker,c,x}=fixture(t),pair=store.pair(c.id,x.id),peer=host==='agy'?c:x,children:ReturnType<typeof spawn>[]=[];
   t.after(async()=>{for(const child of children)if(child.exitCode===null&&child.signalCode===null){const closed=once(child,'close');child.kill();await closed;}});
   const launch=async()=>{const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});children.push(child);await once(child,'spawn');return{child,identity:await processIdentity(child.pid!)};};
-  const old=await launch(),oldInput=registration(host,peer.sessionId!,{endpoint:{mode:host==='claude'?'claude-inbox':'embedded',address:host==='claude'?'crash-inbox':'',epoch:'old-native',pid:old.identity.pid,procStart:old.identity.startedAt,configHome:path.resolve('/isolated/old-home',host)}});
-  store.adopt(peer.id,oldInput);store.updatePeer(peer.id,{state:'paused'});const queued=store.accept(pair,host==='claude'?x:c,'崩溃前的来信','before-crash');
+  const old=await launch(),oldInput=registration(host,peer.sessionId!,{endpoint:{mode:host==='agy'?'agy-tui':'embedded',address:host==='agy'?'crash-inbox':'',epoch:'old-native',pid:old.identity.pid,procStart:old.identity.startedAt,configHome:path.resolve('/isolated/old-home',host)}});
+  store.adopt(peer.id,oldInput);store.updatePeer(peer.id,{state:'paused'});const queued=store.accept(pair,host==='agy'?x:c,'崩溃前的来信','before-crash');
   const closed=once(old.child,'close');old.child.kill();await closed;const replacement=await launch();
   const restored=await broker.dispatch('register',{...oldInput,endpoint:{...oldInput.endpoint,epoch:'replacement-native',pid:replacement.identity.pid,procStart:replacement.identity.startedAt,configHome:host==='codex'?oldInput.endpoint.configHome:path.resolve('/isolated/new-home',host)}}) as any;
   assert.equal(restored.id,peer.id);assert.equal(restored.state,'ready');assert.equal(store.pairFor(peer.id)?.id,pair.id);assert.equal(store.message(queued.id).state,'accepted');
@@ -29,7 +29,7 @@ test('写事务中实际进程崩溃：WAL 保留已提交配对和消息，回�
   const temp=temporaryDirectory(),directory=temp.directory,database=path.join(directory,'crash.db'),ready=path.join(directory,'ready.json'),module=pathToFileURL(path.join(PACKAGE_ROOT,'dist/storage/store.js')).href;let recovered:Store|undefined,phase='launch';
   const source=`import{writeFileSync}from'node:fs';import{Store}from${JSON.stringify(module)};
 const s=new Store(${JSON.stringify(database)}),input=(host,id)=>({host,sessionId:id,cwd:${JSON.stringify(directory)},kind:'root',permission:'prompting',endpoint:{mode:'embedded',address:'',epoch:id,pid:process.pid,procStart:'fixture'}});
-const c=s.register(input('claude','c')),x=s.register(input('codex','x')),other=s.register(input('claude','other')),pair=s.pair(c.id,x.id),queued=s.accept(pair,c,'已提交排队消息','queued'),sending=s.accept(pair,x,'已提交但未确认','sending');s.claim(sending.id);
+const c=s.register(input('agy','c')),x=s.register(input('codex','x')),other=s.register(input('agy','other')),pair=s.pair(c.id,x.id),queued=s.accept(pair,c,'已提交排队消息','queued'),sending=s.accept(pair,x,'已提交但未确认','sending');s.claim(sending.id);
 s.transaction(()=>{s.pair(other.id,x.id,true);s.claim(queued.id);s.updatePeer(c.id,{state:'offline'});writeFileSync(${JSON.stringify(ready)},JSON.stringify({c:c.id,x:x.id,pair:pair.id,queued:queued.id,sending:sending.id}),'utf8');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);});`;
   const child=spawn(process.execPath,['--input-type=module','-e',source],{stdio:['ignore','ignore','pipe'],windowsHide:true});let logs='';child.stderr!.on('data',chunk=>logs+=chunk);const closed=once(child,'close');
   const waitExit=async()=>{let timer:NodeJS.Timeout|undefined;try{await Promise.race([closed,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('隔离写进程未退出：'+phase)),5000);})]);}finally{clearTimeout(timer);}};

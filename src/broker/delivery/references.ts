@@ -41,7 +41,7 @@ export class References {
       else{
         const pair=this.store.pairFor(peer.id);let source:Message|undefined;
         try{source=this.store.message(ref[2]!);}catch(error){if(!(error instanceof BridgeError)||error.code!=='message_missing')throw error;}
-        if(pair&&source&&source.pairId===pair.id&&(pair.claude===peer.id||pair.codex===peer.id))value=this.message(source);
+        if(pair&&source&&source.pairId===pair.id&&(pair.agy===peer.id||pair.codex===peer.id))value=this.message(source);
       }
       if(value===undefined)throw new BridgeError('ref_missing','nxref 不存在，或不属于当前会话及配对。');
       append(`[nxref ${key}]\n`);append(this.expand(peer,value,next));append('\n[/nxref]');offset=match.index+'nxref:'.length+token.length;

@@ -9,7 +9,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { hook } from '../integration/hooks/hook-control.js';
 
-const cx={host:'codex' as const,sessionId:'x',callId:'ref'},cc={host:'claude' as const,sessionId:'c',callId:'ref'};
+const cx={host:'codex' as const,sessionId:'x',callId:'ref'},cc={host:'agy' as const,sessionId:'c',callId:'ref'};
 const code=(expected:string)=>(error:unknown)=>error instanceof BridgeError&&error.code===expected;
 const wrap=(key:string,body:string)=>`[nxref ${key}]\n${body}\n[/nxref]`;
 
@@ -39,7 +39,7 @@ test('nxref 未知、跨根、旧配对、循环和大小错误均拒绝，不�
   await assert.rejects(broker.dispatch('ref.expand',{actor:cx,text:'nxref:agent:large nxref:agent:large'}),code('ref_too_large'));
   const count=store.messages().length;assert.throws(()=>broker.send({actor:cx,message:'nxref:msg:missing'}),code('ref_missing'));assert.equal(store.messages().length,count);
   const source=broker.send({actor:cc,message:'原配对'}) as any;
-  const other=store.register(registration('claude','other'));store.pair(other.id,x.id,true);
+  const other=store.register(registration('agy','other'));store.pair(other.id,x.id,true);
   await assert.rejects(broker.dispatch('ref.expand',{actor:cx,text:'nxref:msg:'+source.message_id}),code('ref_missing'));
 });
 
@@ -98,7 +98,7 @@ test('embedded 缓存保存展开正文，问题来源核验读取同一快照',
   const expanded=wrap('agent:child','原始任务');
   const result:any=broker.receive(cc);assert.equal(result.messages[0].message,expanded);assert.equal(result.messages[0].relationship,undefined);assert.equal(result.messages[0].in_reply_to,undefined);
   assert.equal((store.setting<any>(`receive:${c.id}:${cc.sessionId}:ref`)).messages[0].message,expanded);
-  assert.equal((await broker.dispatch('question.origin',{actor:cc,message_id:sent.message_id}) as any).body,expanded);
+  assert.equal(broker.references.message(store.message(sent.message_id)),expanded);
 });
 
 test('代理路径 ID 与 UUID 都能捕获和展开，边界计入字节上限',async t=>{

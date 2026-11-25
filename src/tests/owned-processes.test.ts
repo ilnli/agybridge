@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { Worker } from 'node:worker_threads';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { copyFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import net from 'node:net';
@@ -21,13 +21,12 @@ import { migrateLegacyOwnership } from '../process/legacy-owned.js';
 import {atomicJson} from '../shared/files.js';
 import { managedMarker } from '../install/installation.js';
 import {DEFAULT_CONFIG} from '../config/defaults.js';
-import { ClaudeAdapter } from '../hosts/claude/adapter.js';
 
 async function scope(t:TestContext){
-  const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),previous=process.env.NXBRIDGE_PROCESS_REGISTRY;
-  mkdirSync(home);process.env.NXBRIDGE_PROCESS_REGISTRY=path.join(temp.directory,'external-evidence');
-  const store=new Store(path.join(home,'nxbridge.db'));store.close();
-  t.after(async()=>{if(previous===undefined)delete process.env.NXBRIDGE_PROCESS_REGISTRY;else process.env.NXBRIDGE_PROCESS_REGISTRY=previous;await temp.cleanup();});
+  const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),previous=process.env.AGYBRIDGE_PROCESS_REGISTRY;
+  mkdirSync(home);process.env.AGYBRIDGE_PROCESS_REGISTRY=path.join(temp.directory,'external-evidence');
+  const store=new Store(path.join(home,'agybridge.db'));store.close();
+  t.after(async()=>{if(previous===undefined)delete process.env.AGYBRIDGE_PROCESS_REGISTRY;else process.env.AGYBRIDGE_PROCESS_REGISTRY=previous;await temp.cleanup();});
   const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{windowsHide:true,stdio:'ignore'}),closed=once(child,'close');
   await once(child,'spawn');
   t.after(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill();await closed;});
@@ -37,7 +36,7 @@ async function scope(t:TestContext){
 
 test('持久归属副本在 home 删除后仍能核验并释放本次启动进程',async t=>{
   const {home,child,identity,parent}=await scope(t);
-  const record=await recordOwnedProcess(home,{role:'claude-child',identity,parent,proof:{kind:'spawn'}});
+  const record=await recordOwnedProcess(home,{role:'agy-acp',identity,parent,proof:{kind:'spawn'}});
   assert.equal(ownedProcesses(home).records.length,1);
   rmSync(home,{recursive:true,force:true});
   assert.equal(ownedProcesses(home).records[0]?.identity.startedAt,identity.startedAt);
@@ -63,7 +62,7 @@ test('归属只读快照等待并发独占事务，不把短暂锁冲突报告�
     const db=new DatabaseSync(workerData);db.exec('PRAGMA journal_mode=DELETE; BEGIN EXCLUSIVE');
     parentPort.postMessage('locked');
     setTimeout(()=>{db.exec('COMMIT');db.close();},300);
-  `,{eval:true,workerData:path.join(home,'nxbridge.db')}),closed=once(worker,'exit');
+  `,{eval:true,workerData:path.join(home,'agybridge.db')}),closed=once(worker,'exit');
   t.after(async()=>{await worker.terminate();await closed;});
   assert.equal((await once(worker,'message'))[0],'locked');
   assert.deepEqual(ownedProcesses(home),{records:[record],notes:[]});
@@ -120,7 +119,7 @@ test('并发回收已经退休并清除完成凭据的 POSIX 容器时，旧快�
 
 test('PID 仍存活但代次改变时不发送终止信号；用户接管的记录也不释放',async t=>{
   const {home,identity,parent}=await scope(t);
-  const record=await recordOwnedProcess(home,{role:'claude-child',identity,parent,peerId:'测试搭档',proof:{kind:'spawn'}});
+  const record=await recordOwnedProcess(home,{role:'agy-acp',identity,parent,peerId:'测试搭档',proof:{kind:'spawn'}});
   await assert.rejects(releaseOwnedProcess({...record,identity:{...identity,startedAt:'失效代次'}}),{code:'process_record_changed'});
   await stopOwnedProcess({...identity,startedAt:'失效代次'});
   assert.equal(await ownedProcessState(identity),'alive');
@@ -133,7 +132,7 @@ test('PID 仍存活但代次改变时不发送终止信号；用户接管的记�
 test('当前调用进程不可被释放；没有启动父链的进程不能登记为自有',async t=>{
   const {home,identity,parent}=await scope(t);
   await assert.rejects(stopOwnedProcess(parent),{code:'process_is_caller'});
-  await assert.rejects(recordOwnedProcess(home,{role:'claude-child',identity,parent:{pid:parent.pid,startedAt:'其他代次'},proof:{kind:'spawn'}}),{code:'process_launch_unverified'});
+  await assert.rejects(recordOwnedProcess(home,{role:'agy-acp',identity,parent:{pid:parent.pid,startedAt:'其他代次'},proof:{kind:'spawn'}}),{code:'process_launch_unverified'});
   assert.equal(await ownedProcessState(identity),'alive');assert.equal(ownedProcesses(home).records.length,0);
 });
 
@@ -154,7 +153,7 @@ test('离线卸载同样释放已有启动证明的隔离 supervisor',async t=>{
 
 test('旧版本运行时证据冻结后迁移，后来的同名记录不会认领用户进程',async t=>{
   const {home,identity,parent}=await scope(t);mkdirSync(path.join(home,'run'));
-  const file=path.join(home,'run','runtime-legacy.json'),store=new Store(path.join(home,'nxbridge.db'));
+  const file=path.join(home,'run','runtime-legacy.json'),store=new Store(path.join(home,'agybridge.db'));
   try{
     atomicJson(file,{owner:managedMarker(home),pid:identity.pid,generation:identity.startedAt});
     assert.deepEqual(await migrateLegacyOwnership(home,store),[]);assert.equal(ownedProcesses(home).records[0]?.identity.startedAt,identity.startedAt);
@@ -167,27 +166,10 @@ test('旧版本运行时证据冻结后迁移，后来的同名记录不会认�
 test('主账本无法打开时仍核验外部归属并释放自有进程，保留损坏数据及诊断',async t=>{
   const {home,identity,parent}=await scope(t);
   await recordOwnedProcess(home,{role:'host-control',identity,parent,proof:{kind:'spawn'}});
-  const database=path.join(home,'nxbridge.db');rmSync(database);mkdirSync(database);
+  const database=path.join(home,'agybridge.db');rmSync(database);mkdirSync(database);
   const proof=ownedProcesses(home);assert.equal(proof.records.length,1);assert.deepEqual(proof.notes,[]);
   const notes=await releaseOwnedOffline(home,DEFAULT_CONFIG);
   assert.equal(await ownedProcessState(identity),'dead');assert.ok(existsSync(database));assert.match(notes.join('；'),/账本无法读取/);
-});
-
-for(const selector of ['--session-id','--resume'])test('Windows 旧 Claude 端点的同代专属 PTY 父链一并迁移，首次释放不遗留宿主：'+selector,{skip:process.platform!=='win32',timeout:30000},async t=>{
-                                                       
-  const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),configHome=path.join(temp.directory,'claude-home'),official=path.join(temp.directory,process.platform==='win32'?'claude.exe':'claude'),sessionId=randomUUID();
-  mkdirSync(home);copyFileSync(process.execPath,official);
-  const store=new Store(path.join(home,'nxbridge.db')),adapter=new ClaudeAdapter({...DEFAULT_CONFIG,claudeHome:configHome},home);
-  const launcher=spawn(official,['-e',"const{spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});console.log(c.pid);setInterval(()=>{},1000);",'--','--bg-pty-host',selector,sessionId],{stdio:['ignore','pipe','pipe'],windowsHide:true}),closed=once(launcher,'close');
-  let native:Awaited<ReturnType<typeof processIdentity>>|undefined,parent:Awaited<ReturnType<typeof processIdentity>>|undefined;
-  t.after(async()=>{adapter.close();try{if(native)await stopOwnedProcess(native);if(parent)await stopOwnedProcess(parent);else if(launcher.exitCode===null&&launcher.signalCode===null)launcher.kill();await closed;}finally{store.close();await temp.cleanup();}});
-  const pid=new Promise<number>((resolve,reject)=>{launcher.stdout!.once('data',value=>resolve(Number(value.toString().trim())));launcher.once('error',reject);});
-  await rememberOwnedChild(home,launcher,'host-control');native=await processIdentity(await pid);parent=await processIdentity(launcher.pid!);
-  const peer=store.register({host:'claude',sessionId,cwd:temp.directory,kind:'root',endpoint:{mode:'claude-inbox',address:'fixture',epoch:'legacy',pid:native.pid,procStart:native.startedAt,configHome}});store.updatePeer(peer.id,{owner:'nxbridge'});
-  assert.deepEqual(await migrateLegacyOwnership(home,store),[]);
-  const migrated=ownedProcesses(home).records.filter(value=>value.peerId===peer.id);assert.equal(migrated.length,2);
-  await adapter.release(store.peer(peer.id));
-  assert.equal(await ownedProcessState(native),'dead');assert.equal(await ownedProcessState(parent),'dead');
 });
 
 test('短命控制进程在采集归属期间正常退出，不误报身份核验失败',async t=>{

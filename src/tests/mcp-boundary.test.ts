@@ -11,8 +11,8 @@ import type { Peer } from '../types.js';
 import { temporary } from './support/temporary.js';
 
 async function mcp(t:TestContext,kind:Peer['kind'],options:{disabled?:boolean;enabled?:boolean;hookReceipt?:boolean}={}){
-  const home=temporary(t),before={NXBRIDGE_HOME:process.env.NXBRIDGE_HOME,CODEX_HOME:process.env.CODEX_HOME};
-  process.env.NXBRIDGE_HOME=home;process.env.CODEX_HOME=path.join(home,'codex');
+  const home=temporary(t),before={AGYBRIDGE_HOME:process.env.AGYBRIDGE_HOME,CODEX_HOME:process.env.CODEX_HOME};
+  process.env.AGYBRIDGE_HOME=home;process.env.CODEX_HOME=path.join(home,'codex');
   t.after(()=>{for(const [key,value]of Object.entries(before))if(value===undefined)delete process.env[key];else process.env[key]=value;});
   const runtime={pid:process.pid,procStart:'boundary-native',appServer:true,managedDaemon:false};
   if(options.disabled)atomicJson(path.join(home,'member-control.json'),{members:[{peerId:'root-member',host:'codex',sessionId:'root',windows:[{pid:runtime.pid,procStart:runtime.procStart,threadScoped:false}]}]});
@@ -60,8 +60,8 @@ test('已核验独立 fork 的 MCP 业务仍使用自己的成员且剔除 via �
 
 test('隐藏 hook 不出现在模型清单，输出写出后才确认回执且不走模型身份注册',async t=>{
   const {client,calls}=await mcp(t,'root',{hookReceipt:true});
-  assert.equal((await client.listTools()).tools.some(tool=>tool.name==='nxbridge_hook'),false);
-  const result=await client.callTool({name:'nxbridge_hook',arguments:{session_id:'root',hook_event_name:'PostToolUse'},_meta:{threadId:'root'}}) as {isError?:boolean;content:{text:string}[]};
+  assert.equal((await client.listTools()).tools.some(tool=>tool.name==='agybridge_hook'),false);
+  const result=await client.callTool({name:'agybridge_hook',arguments:{session_id:'root',hook_event_name:'PostToolUse'},_meta:{threadId:'root'}}) as {isError?:boolean;content:{text:string}[]};
   assert.notEqual(result.isError,true);assert.equal(JSON.parse(result.content[0]!.text).hookSpecificOutput.additionalContext,'隐藏 hook 输出');
   await new Promise(resolve=>setImmediate(resolve));
   assert.deepEqual(calls.map(call=>call.method),['hook.client.mcp','hook.client.ack']);

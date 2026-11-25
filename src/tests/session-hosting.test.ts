@@ -60,7 +60,7 @@ test('恢复在第一条原生请求中限制权限，并核验新落盘的完�
 
 test('窗口关闭保留原配对和 accepted；发送只保存一次，等待后不重复弹选择',async t=>{
   const {store,broker,c,x,codex}=fixture(t),pair=store.pair(c.id,x.id);
-  closeHostedWindow(store,x);const actor={host:'claude' as const,sessionId:c.sessionId!,callId:'closed-send'};
+  closeHostedWindow(store,x);const actor={host:'agy' as const,sessionId:c.sessionId!,callId:'closed-send'};
   const first=await broker.dispatch('send',{actor,message:'原会话任务'}) as any;
   assert.equal(first.status,'selection_required');assert.equal(first.reason,'hosting');assert.equal(first.persisted,true);assert.equal(store.messages().length,1);
   assert.equal(store.message(first.message_id).state,'accepted');await broker.pump();assert.equal(codex.delivered.length,0);
@@ -72,7 +72,7 @@ test('窗口关闭保留原配对和 accepted；发送只保存一次，等待�
 
 for(const mode of ['embedded','app-server'] as const)test('释放后通过 '+mode+' 重入接续同一成员、配对和未确认状态',async t=>{
   const store=new Store(':memory:');t.after(()=>store.close());const home=temporary(t),cwd=home;
-  const c=store.register(registration('claude','c',{cwd})),x=store.register(registration('codex','original',{cwd,endpoint:{mode:'app-server',address:'old',epoch:'old',pid:10,procStart:'old',configHome:home}})),pair=store.pair(c.id,x.id);
+  const c=store.register(registration('agy','c',{cwd})),x=store.register(registration('codex','original',{cwd,endpoint:{mode:'app-server',address:'old',epoch:'old',pid:10,procStart:'old',configHome:home}})),pair=store.pair(c.id,x.id);
   writeHosting(store,x,{background:false,released:true,phase:'awaiting_window'},home);closeHostedWindow(store,x);
   const pending=store.accept(pair,c,'待发','pending'),unknown=store.accept(pair,c,'未知','unknown');store.claim(unknown.id);store.transition(unknown.id,'unknown');
   const recovery=new WindowRecovery(store,async()=>['alive'],undefined,async()=> 'dead');
@@ -90,7 +90,7 @@ test('Codex 同线程但不同 home 不按 session ID 合并',async t=>{
 });
 
 test('打开中的 adopt 只记录意愿，未知持有者不启动后台',async t=>{
-  const store=new Store(':memory:');t.after(()=>store.close());const home=temporary(t),c=store.register(registration('claude','c')),x=store.register(registration('codex','x',{endpoint:{...registration('codex','x').endpoint,configHome:home}}));store.pair(c.id,x.id);
+  const store=new Store(':memory:');t.after(()=>store.close());const home=temporary(t),c=store.register(registration('agy','c')),x=store.register(registration('codex','x',{endpoint:{...registration('codex','x').endpoint,configHome:home}}));store.pair(c.id,x.id);
   let state:'alive'|'unknown'='alive',starts=0;
   const transfers=new SessionTransfers(store,DEFAULT_CONFIG,home,{holder:async()=>state,prepare:async()=>{starts++;},stop:async()=>{},enabled:()=>{}});
   await transfers.adopt(x);assert.equal(starts,0);assert.equal(store.peer(x.id).owner,'user');assert.equal(hostingRecord(store,x)?.background,true);assert.equal(hostingGate(store,x),false);
@@ -98,7 +98,7 @@ test('打开中的 adopt 只记录意愿，未知持有者不启动后台',async
 });
 
 test('专用后台 MCP 在端点激活前登记仍使用 starting 启动证明，不能成为用户窗口',async t=>{
-  const store=new Store(':memory:');t.after(()=>store.close());const home=temporary(t),c=store.register(registration('claude','c')),x=store.register(registration('codex','same'));store.pair(c.id,x.id);store.updatePeer(x.id,{owner:'nxbridge'});store.deactivate(x.id);
+  const store=new Store(':memory:');t.after(()=>store.close());const home=temporary(t),c=store.register(registration('agy','c')),x=store.register(registration('codex','same'));store.pair(c.id,x.id);store.updatePeer(x.id,{owner:'nxbridge'});store.deactivate(x.id);
   saveManagedRuntime(home,{id:randomUUID(),owner:managedMarker(home),kind:'owned',state:'starting',endpoint:'ws://127.0.0.1:1234',createdAt:Date.now(),peerId:x.id,sessionId:'same',pid:123,procStart:'generation',configHome:home});
   const input=registration('codex','same',{endpoint:{mode:'embedded',address:'',epoch:'mcp',pid:123,procStart:'generation',configHome:home}});
   store.updatePeer(x.id,{state:'busy'});
@@ -109,13 +109,13 @@ test('专用后台 MCP 在端点激活前登记仍使用 starting 启动证明�
 
 test('托管参数拒绝歧义，版本比较处理正式版和预发布数字',()=>{
   assert.deepEqual(hostingArguments(['codex','--session','same']),{session_id:'same'});
-  for(const args of [['claude'],['codex','--home'],['codex','--pair','a','--member','b'],['codex','--session','a','--session','b']])assert.throws(()=>hostingArguments(args),{code:'invalid_arguments'});
+  for(const args of [['agy'],['codex','--home'],['codex','--pair','a','--member','b'],['codex','--session','a','--session','b']])assert.throws(()=>hostingArguments(args),{code:'invalid_arguments'});
   assert.equal(profileVersionSupported('0.166.0','0.166.0'),true);assert.equal(profileVersionSupported('0.166.0','0.167.0-alpha.1'),false);assert.equal(profileVersionSupported('0.167.0-alpha.10','0.167.0-alpha.2'),true);
 });
 
 test('关闭托管表单只取消选择，下一次发送仍询问，消息不丢失',async t=>{
   const {store,broker,c,x}=fixture(t);store.pair(c.id,x.id);closeHostedWindow(store,x);
-  const actor={host:'claude' as const,sessionId:c.sessionId!,callId:'cancel-hosting'};
+  const actor={host:'agy' as const,sessionId:c.sessionId!,callId:'cancel-hosting'};
   const first=await broker.dispatch('send',{actor,message:'第一条'}) as any;
   assert.ok(first.allowed_actions.includes('cancel'));
   const cancelled=await broker.dispatch('pair.selection.commit',{actor,selection_id:first.selection_id,action:'cancel'}) as any;
@@ -140,7 +140,7 @@ for(const owner of ['user','nxbridge'] as const)test(owner+' 的已加载会话�
 
 test('接手核验期间持有者变化或用户选择等待，均不能启动第二个运行时',async t=>{
   for(const action of ['reopen','wait'] as const){
-    const store=new Store(':memory:');t.after(()=>store.close());const home=temporary(t),c=store.register(registration('claude','c')),x=store.register(registration('codex','x',{endpoint:{...registration('codex','x').endpoint,configHome:home}}));store.pair(c.id,x.id);
+    const store=new Store(':memory:');t.after(()=>store.close());const home=temporary(t),c=store.register(registration('agy','c')),x=store.register(registration('codex','x',{endpoint:{...registration('codex','x').endpoint,configHome:home}}));store.pair(c.id,x.id);
     let finish!:(state:'dead')=>void,starts=0;const holder=new Promise<'dead'>(resolve=>finish=resolve);
     const transfers=new SessionTransfers(store,DEFAULT_CONFIG,home,{holder:()=>holder,prepare:async()=>{starts++;},stop:async()=>{},enabled:()=>{}});
     const adopting=assert.rejects(transfers.adopt(x),{code:'session_changed'});
@@ -153,7 +153,7 @@ test('接手核验期间持有者变化或用户选择等待，均不能启动�
 });
 
 test('释放尚未就绪的启动预约先完成账本清理，再报告等待用户窗口',async t=>{
-  const store=new Store(':memory:');t.after(()=>store.close());const home=temporary(t),c=store.register(registration('claude','c')),x=store.register(registration('codex','x'));store.pair(c.id,x.id);store.updatePeer(x.id,{owner:'nxbridge'});
+  const store=new Store(':memory:');t.after(()=>store.close());const home=temporary(t),c=store.register(registration('agy','c')),x=store.register(registration('codex','x'));store.pair(c.id,x.id);store.updatePeer(x.id,{owner:'nxbridge'});
   saveManagedRuntime(home,{id:randomUUID(),peerId:x.id,owner:managedMarker(home),kind:'owned',state:'starting',endpoint:'ws://127.0.0.1:1234',createdAt:Date.now()});
   let cleaned=0;const transfers=new SessionTransfers(store,DEFAULT_CONFIG,home,{holder:async()=> 'dead',prepare:async()=>{},stop:async()=>assert.fail('不能严格停止无原生 PID 的预约'),enabled:()=>{},cleanup:async()=>{assert.equal(hostingStatus(store,store.peer(x.id))?.phase,'releasing');removeManagedRuntime(runtimeFor(home,{peerId:x.id})!);cleaned++;}});
   const result=await transfers.release(store.peer(x.id)) as any;assert.equal(cleaned,1);assert.equal(result.hosting.phase,'awaiting_window');assert.equal(runtimeFor(home,{peerId:x.id}),undefined);
@@ -219,11 +219,11 @@ test('失败核验显示阻塞，用户重新打开或释放后不继承后台�
 });
 
 test('已登记为托管的非独占旧运行时冷恢复核验原线程，不影响其他会话',async t=>{
-  const home=temporary(t),file=path.join(home,'legacy.jsonl'),store=new Store(':memory:'),adapter=new CodexAdapter(DEFAULT_CONFIG,home),broker=new Broker(store,DEFAULT_CONFIG,{codex:adapter,claude:new FakeAdapter()} as unknown as Adapters,home);t.after(async()=>{await broker.stop();store.close();});
+  const home=temporary(t),file=path.join(home,'legacy.jsonl'),store=new Store(':memory:'),adapter=new CodexAdapter(DEFAULT_CONFIG,home),broker=new Broker(store,DEFAULT_CONFIG,{codex:adapter,agy:new FakeAdapter()} as unknown as Adapters,home);t.after(async()=>{await broker.stop();store.close();});
   writeFileSync(file,row('session_meta',{id:'legacy'})+row('turn_context',{permission_profile:profile,approval_policy:'on-request',approvals_reviewer:'user'}),'utf8');
   const initial=registration('codex','legacy');initial.endpoint.epoch=initial.endpoint.address;
   const peer=store.register(initial);store.updatePeer(peer.id,{owner:'nxbridge'});const endpoint=store.endpoint(peer.id)!;
-  const partner=store.register(registration('claude','legacy-partner')),pair=store.pair(partner.id,peer.id);
+  const partner=store.register(registration('agy','legacy-partner')),pair=store.pair(partner.id,peer.id);
   saveManagedRuntime(home,{id:randomUUID(),peerId:peer.id,sessionId:'legacy',owner:managedMarker(home),kind:'owned',state:'ready',dedicated:false,endpoint:endpoint.address,createdAt:Date.now()});
   let loaded=false;const calls:string[]=[],rpc=new RpcClient(message=>{
     calls.push(message.method!);if(message.method==='thread/resume')loaded=true;

@@ -9,14 +9,13 @@ import {type Endpoint,type SessionBinding} from '../types.js';
 
 export interface KnownNativeProcess {pid:number;startedAt:string;configHome?:string}
 
-                                        
-export async function knownNativeProcesses(home:string,host:'codex'|'claude',configHome?:string):Promise<KnownNativeProcess[]>{
-  const candidates:KnownNativeProcess[]=[],database=path.join(home,'nxbridge.db');
+export async function knownNativeProcesses(home:string,host:'codex'|'agy',configHome?:string):Promise<KnownNativeProcess[]>{
+  const candidates:KnownNativeProcess[]=[],database=path.join(home,'agybridge.db');
   const add=(pid:number|null|undefined,startedAt:string|null|undefined,observedHome?:string)=>{
     if(pid&&startedAt&&(!configHome||!observedHome||normalizedHome(configHome)===normalizedHome(observedHome)))candidates.push({pid,startedAt,...(observedHome?{configHome:observedHome}:{})});
   };
   const ownership=ownedProcesses(home);
-  for(const record of ownership.records)if((host==='codex'?['codex-runtime']:['claude-native','claude-child','claude-worker']).includes(record.role))add(record.identity.pid,record.identity.startedAt,record.configHome);
+  for(const record of ownership.records)if((host==='codex'?['codex-runtime']:['agy-acp']).includes(record.role))add(record.identity.pid,record.identity.startedAt,record.configHome);
   if(existsSync(database)){
     const {DatabaseSync}=createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite'),db=new DatabaseSync(database,{readOnly:true});
     try{

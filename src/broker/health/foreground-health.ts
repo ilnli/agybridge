@@ -11,7 +11,7 @@ export const nativeHealthSchema=z.object({
   state:z.enum(['running','networkRetrying','silent','waitingTool','needsHuman','ready','failed']),tools:z.array(z.string().max(256)).max(64),
   observedProgressAt:z.number().finite().nonnegative().optional(),completion:z.string().max(256).optional(),error:z.string().max(1200).optional(),
   retry:z.object({message:z.string().max(1200),since:z.number().finite().nonnegative(),attempt:z.number().optional(),max:z.number().optional()}).optional(),
-  source:z.enum(['native-hook','native-mod']).optional(),
+  source:z.enum(['native-hook','agy-acp']).optional(),
   humanRequests:z.array(z.object({id:z.string().max(256),method:z.string().max(256),itemId:z.string().max(256).optional()})).max(64).optional(),
   nativeIssue:z.object({kind:z.enum(['tool_failed','approval_denied','sandbox_denied']),turn_id:z.string().max(256),item_id:z.string().max(256).optional(),tool:z.string().max(256).optional(),exit_code:z.number().optional(),message:z.string().max(800).optional(),at:z.number().finite().nonnegative()}).optional(),
 });

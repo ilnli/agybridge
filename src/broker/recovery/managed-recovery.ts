@@ -27,40 +27,37 @@ export interface ManagedIncident {
 }
 export const managedRecoveryKey=(peerId:string)=>'managedRecovery:'+peerId;
 const delays=[0,30000,120000];
-const preconditions=new Set(['launch_proxy_unavailable','launch_probe_unavailable','bootstrap_required','claude_background_unavailable','claude_bypass_consent_required','claude_bypass_disabled','claude_inbound_restricted','claude_policy_unverified','claude_native_recovery_waiting','foreground_active','session_changed']);
+const preconditions=new Set(['launch_proxy_unavailable','launch_probe_unavailable','bootstrap_required','foreground_active','session_changed']);
 export function recoveryPrecondition(error:unknown):boolean{
   if(deterministicLaunchFailure(error))return true;
   if(preconditions.has((error as {code?:string})?.code??''))return true;
-                                   
   return /(?:workspace|directory|project).{0,60}(?:not trusted|untrusted)|no rollout found|session.{0,30}not found|failed to (?:load|parse).{0,30}config/i.test(describeError(error));
 }
-                                                                        
+
 export function recoveryUserStep(peer:Pick<Peer,'host'|'cwd'>,incident:ManagedIncident):string|undefined{
   if(incident.state!=='blocked'&&incident.state!=='unknown')return;
   const sid=incident.sessionId,home=incident.configHome?'配置目录 '+incident.configHome:'原来的配置目录',
     entry=incident.proof.executable?`原来的 ${peer.host} 入口（${incident.proof.executable}）`:`原来的 ${peer.host} 启动方式`;
-                                   
-  if(incident.state==='unknown')return `运行 nxbridge status 核对上次启动结果；确认之前不要再次启动或恢复会话 ${sid}`;
+  if(incident.state==='unknown')return `运行 agybridge status 核对上次启动结果；确认之前不要再次启动或恢复会话 ${sid}`;
   switch(incident.preconditionCode){
-                                                              
     case 'bootstrap_required':
-      return(peer.host==='codex'?'Claude 会先试着运行一次；不行的话，':'')+'在 Claude/Codex 之外的普通 PowerShell 里运行 nxbridge bootstrap';
+      return(peer.host==='codex'?'AGY 会先试着运行一次；不行的话，':'')+'在 AGY/Codex 之外的普通 PowerShell 里运行 agybridge bootstrap';
     case 'bootstrap_policy_unsupported':
-      return `更新${entry}，或用 nxbridge setup --codex-command 指定支持严格启动的 Codex`;
+      return `更新${entry}，或用 agybridge setup --codex-command 指定支持严格启动的 Codex`;
     case 'workspace_untrusted':case 'trust_required':
       return `用${entry}在 ${peer.cwd} 打开一次 ${peer.host}（${home}），接受目录信任提示`;
     case 'launch_proxy_unavailable':
       return '恢复原会话启动时用的本机代理';
     case 'launch_profile_missing':
-      return `重新安装或更新${entry}后会自动重试；要换用别的程序，在系统终端运行 nxbridge config set hosts.${peer.host}.binary <程序完整路径>`;
+      return `重新安装或更新${entry}后会自动重试；要换用别的程序，在系统终端运行 agybridge config set hosts.${peer.host}.binary <程序完整路径>`;
     case 'launch_command_missing':case 'launch_command_invalid':
-      return `改正你设置的 hosts.${peer.host}.command（运行 nxbridge config get hosts.${peer.host}.command 查看）`;
+      return `改正你设置的 hosts.${peer.host}.command（运行 agybridge config get hosts.${peer.host}.command 查看）`;
     case 'launch_probe_unavailable':
-      return `暂时没能核验${entry}的版本，会自动重试；一直不行的话运行 nxbridge doctor 查看`;
+      return `暂时没能核验${entry}的版本，会自动重试；一直不行的话运行 agybridge doctor 查看`;
     case 'launch_provenance_missing':
-      return `在系统终端运行 nxbridge config set hosts.${peer.host}.binary <程序完整路径>，指定原安装渠道的程序；或在 ${peer.cwd} 里按会话 ID ${sid} 打开一次，让 nxbridge 记下程序`;
+      return `在系统终端运行 agybridge config set hosts.${peer.host}.binary <程序完整路径>，指定原安装渠道的程序；或在 ${peer.cwd} 里按会话 ID ${sid} 打开一次，让 agybridge 记下程序`;
     case 'launch_image_ambiguous':
-      return `等 Claude 桌面端更新完成（必要时完全退出再打开一次），会自动重试；或在系统终端运行 nxbridge config set hosts.${peer.host}.binary <程序完整路径>，指定要用的那一份`;
+      return `等程序更新完成后会自动重试；或在系统终端运行 agybridge config set hosts.${peer.host}.binary <程序完整路径>，指定要用的那一份`;
     case 'profile_version_unsupported':case 'dedicated_mode_unsupported':
       return `把${entry}更新到支持这个会话的版本，再重新打开会话 ${sid}`;
     case 'original_home_changed':case 'cwd_mismatch':
@@ -69,20 +66,10 @@ export function recoveryUserStep(peer:Pick<Peer,'host'|'cwd'>,incident:ManagedIn
       return `找回会话 ${sid} 的历史记录（${home}）；确实找不回的话，可以另选搭档`;
     case 'invalid_config':
       return `修复${home}里的 ${peer.host} 配置文件`;
-    case 'foreground_active':case 'claude_foreground_active':
+    case 'foreground_active':
       return '回到正在接手这个会话的窗口继续；那个窗口结束接手后，后台会自动恢复';
-    case 'claude_background_unavailable':case 'claude_bypass_consent_required':case 'claude_bypass_disabled':case 'claude_inbound_restricted':case 'claude_policy_unverified':
-      return `在 ${peer.host} 里确认后台运行、审批和收信设置（${home}）`;
-    case 'claude_native_recovery_waiting':
-      return `后台 Claude 的原会话卡在 Claude 的后台列表里，超过一分钟没有恢复。请用平时启动 Claude 的方式（${home}）在终端运行 claude agents，找到会话 ${sid} 那一行，再运行 claude stop <那一行的 ID>。这只是停掉卡住的后台进程，对话不会删除；nxbridge 随后会自动接着原会话运行，消息都还在`;
-    case 'claude_inbox_idle_unverified':
-      return '无法证明当前后台可以安全重启，已保留原会话；下一次正常恢复会改用持久目录中的消息连接。运行 nxbridge status 查看';
-    case 'claude_inbox_scheduled_work':
-      return '等原会话的后台任务和定时任务结束；核验空闲后会自动接着同一会话，消息已保留';
-    case 'claude_inbox_delivery_unsettled':
-      return '运行 nxbridge status 核对原消息的接收情况；结果不明的发送不会自动重放';
     default:
-      return '运行 nxbridge status 查看原因';
+      return '运行 agybridge status 查看原因';
   }
 }
 export const recoverPartnerSchema=z.object({action:z.enum(['preview','retry','result']).default('preview'),incident_id:z.string().min(1).max(128).optional(),reason:z.string().trim().min(1).max(800).optional()}).strict();

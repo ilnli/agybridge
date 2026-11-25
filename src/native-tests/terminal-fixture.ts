@@ -93,7 +93,7 @@ export class NativeTerminal {
   identity!:ProcessIdentity;
   private exited:Promise<void>;
   private launch?:{home:string;wrapper:ProcessIdentity;id:string;record:OwnedProcessRecord};
-  private constructor(private child:ChildProcessWithoutNullStreams,private host:'codex'|'claude'){
+  private constructor(private child:ChildProcessWithoutNullStreams,private host:'codex'|'agy'){
     child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
     child.stdout.on('data',(value:string)=>{
       this.output=(this.output+value).slice(-400000);
@@ -105,9 +105,9 @@ export class NativeTerminal {
     void this.exited.catch(()=>{});
   }
   static async start(root:string,home:string,exe:string,args:string[],cwd:string,env:NodeJS.ProcessEnv):Promise<NativeTerminal>{
-    const host=path.basename(exe).toLowerCase().includes('claude')?'claude':'codex';
+    const host=path.basename(exe).toLowerCase().includes('agy')?'agy':'codex';
                                                   
-    const terminalArgs=host==='claude'&&!args.includes('--permission-mode')?[...args,'--permission-mode','default']:args;
+    const terminalArgs=host==='agy'&&!args.includes('--permission-mode')?[...args,'--permission-mode','default']:args;
     const directory=path.join(root,'terminal-'+randomUUID()),compiler=path.join(directory,'compiler'),ready=path.join(directory,'ready');mkdirSync(compiler,{recursive:true});
                                                          
     const launcher=windowsPowerShell(),nativeReady=path.join(directory,'native-ready'),nativeCommand=[exe,...terminalArgs].map(windowsArgument).join(' '),startedAt=Date.now();
@@ -143,8 +143,8 @@ export class NativeTerminal {
   async prompt(value:string):Promise<void>{
                                                    
     const offset=this.output.length;this.send(value);
-    if(this.host==='claude'&&value)await this.wait(()=>stripVTControlCharacters(this.output.slice(offset)).replace(/\s+/gu,'').includes(value.replace(/\s+/gu,'')),'原生输入未回显',15000);
-    await delay(this.host==='claude'?600:150);
+    if(this.host==='agy'&&value)await this.wait(()=>stripVTControlCharacters(this.output.slice(offset)).replace(/\s+/gu,'').includes(value.replace(/\s+/gu,'')),'原生输入未回显',15000);
+    await delay(this.host==='agy'?600:150);
                                                    
     this.send((this.host==='codex'&&value?'\x1b[F':'')+'\r');
   }

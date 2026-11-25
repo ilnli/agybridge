@@ -36,7 +36,7 @@ export function cooperationTipText(facts:CooperationTipFacts):string{
                                                                                                    
   if(facts.silence||facts.context||facts.unpaired){
     const ordinal=facts.silence&&facts.silence.ordinal>1?`tip ${facts.silence.ordinal}/3${facts.silence.ordinal===3?', last this stretch':''}: `:'';
-    asks.push(`${ordinal}recheck split per nxbridge routing + any extra user rules: hand off partner-fit work or brief sync; solo ok if right`);
+    asks.push(`${ordinal}recheck split per agybridge routing + any extra user rules: hand off partner-fit work or brief sync; solo ok if right`);
   }
-  return `nxbridge tip: ${observed.join(', ')}; ${asks.join('; ')}`;
+  return `agybridge tip: ${observed.join(', ')}; ${asks.join('; ')}`;
 }

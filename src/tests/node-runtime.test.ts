@@ -25,7 +25,7 @@ test('Node 记录失效后从持久基线选择兼容版本，拒绝无兼容版
 test('稳定入口在旧 Node 被移除后复用当前兼容 Node，完整保留 argv 与退出码',async t=>{
   const directory=temporary(t),entry=path.join(directory,'entry.cjs');writeFileSync(entry,'console.log(JSON.stringify(process.argv.slice(2)));process.exitCode=23;','utf8');
   installShim(planShim(directory,{directories:[],pathValue:'',entry,node:path.join(directory,'old-node.exe')}));
-  await assert.rejects(execute(process.execPath,[path.join(directory,'bin','nxbridge.cjs'),'中文 参数','',"a\"b"],{windowsHide:true}),error=>{const value=error as {code?:number;stdout?:string};assert.equal(value.code,23);assert.deepEqual(JSON.parse(value.stdout!),['中文 参数','',"a\"b"]);return true;});
+  await assert.rejects(execute(process.execPath,[path.join(directory,'bin','agybridge.cjs'),'中文 参数','',"a\"b"],{windowsHide:true}),error=>{const value=error as {code?:number;stdout?:string};assert.equal(value.code,23);assert.deepEqual(JSON.parse(value.stdout!),['中文 参数','',"a\"b"]);return true;});
 });
 
 test('Windows 持久 PATH 回退不使用受污染的调用方 PATH，包装器与命令仍可启动', {skip:process.platform!=='win32'},async t=>{

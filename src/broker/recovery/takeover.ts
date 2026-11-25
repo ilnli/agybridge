@@ -12,7 +12,7 @@ const key=(peerId:string)=>'takeover:'+peerId;
 export function foregroundMatchesTakeover(value:Takeover,host:Peer['host'],args:string[]):boolean{
   if(codexAppServerArguments(args))return false;
   if(host==='codex'&&value.kind==='remote')return !!value.endpoint&&args.some((arg,index)=>arg==='--remote='+value.endpoint!.address||arg==='--remote'&&args[index+1]===value.endpoint!.address);
-  return value.handle?args.includes('attach')&&args.includes(value.handle):args.includes(value.sessionId)&&args.some(arg=>['--resume','--session-id'].includes(arg));
+  return value.handle?args.includes('attach')&&args.includes(value.handle):args.includes(value.sessionId)&&args.some(arg=>['--conversation','--resume','--session-id'].includes(arg));
 }
 async function observeForeground(store:Store,value:Takeover,host:Peer['host']):Promise<Takeover['foreground'][]|undefined>{
   const rows=[...new Map([

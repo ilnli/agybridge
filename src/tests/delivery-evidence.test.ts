@@ -13,7 +13,7 @@ import { FakeAdapter } from './support/fake-adapter.js';
 import { fixture } from './support/broker-fixture.js';
 import { temporary } from './support/temporary.js';
 
-const item=(messageId:string,id='native-output')=>({type:'functionCallOutput',id,namespace:'claude',name:'receive_messages',output:JSON.stringify({messages:[{message_id:messageId,message:'正文'}]})});
+const item=(messageId:string,id='native-output')=>({type:'functionCallOutput',id,namespace:'agy',name:'receive_messages',output:JSON.stringify({messages:[{message_id:messageId,message:'正文'}]})});
 
 test('上下文证据只解析原生取件输出中的精确 ID，不匹配正文、错误命名空间或坏 JSON',()=>{
   const valid=item('actual');valid.output=JSON.stringify({messages:[{message_id:'actual',message:'正文引用 quoted-id'},null,{message_id:'actual'},{message_id:12}]});
@@ -29,17 +29,17 @@ test('真实 RPC 的原生输出回执先于 ACK 或断连错误，也不会降�
     const request=JSON.parse(raw.toString());methods.push(request.method);if(request.id===undefined)return;
     if(request.method==='turn/start'){
       const result=broker.receive({host:'codex',sessionId:'x',callId:fail?'uncertain-pickup':'ack-pickup'});
-      socket.send(JSON.stringify({method:'item/completed',params:{threadId:'x',turnId:'native-turn',item:{type:'mcpToolCall',id:'native-output',server:'claude',tool:'receive_messages',status:'completed',result:{content:[{type:'text',text:JSON.stringify(result)}]}}}}));
+      socket.send(JSON.stringify({method:'item/completed',params:{threadId:'x',turnId:'native-turn',item:{type:'mcpToolCall',id:'native-output',server:'agy',tool:'receive_messages',status:'completed',result:{content:[{type:'text',text:JSON.stringify(result)}]}}}}));
       socket.send(JSON.stringify({id:request.id,...(fail?{error:{code:'lost_ack',message:'提交后丢失回执',data:{uncertain:true}}}:{result:{turn:{id:'native-turn'}}})}));return;
     }
     const result=request.method==='initialize'?codexInitializeResult:request.method==='thread/loaded/list'?{data:[]}:request.method==='thread/resume'?{thread:{id:'x',cwd:process.cwd(),status:{type:'idle'}}}:{};
     socket.send(JSON.stringify({id:request.id,result}));
   }));
-  const home=temporary(t),config={...DEFAULT_CONFIG,implicit:'never' as const},store=new Store(':memory:'),codex=new CodexAdapter(config,home);broker=new Broker(store,config,{codex,claude:new FakeAdapter()} as unknown as Adapters,home);
+  const home=temporary(t),config={...DEFAULT_CONFIG,implicit:'never' as const},store=new Store(':memory:'),codex=new CodexAdapter(config,home);broker=new Broker(store,config,{codex,agy:new FakeAdapter()} as unknown as Adapters,home);
   t.after(async()=>{await broker.stop();store.close();for(const socket of server.clients)socket.terminate();await new Promise<void>(resolve=>server.close(()=>resolve()));});
-  const c=store.register(registration('claude','c')),x=store.register(registration('codex','x',{endpoint:{mode:'app-server',address,epoch:address,pid:null,procStart:null}}));store.pair(c.id,x.id);
+  const c=store.register(registration('agy','c')),x=store.register(registration('codex','x',{endpoint:{mode:'app-server',address,epoch:address,pid:null,procStart:null}}));store.pair(c.id,x.id);
   for(const callId of ['ack','uncertain']){
-    fail=callId==='uncertain';const result=broker.send({actor:{host:'claude',sessionId:'c',callId},message:'实际投递'} ) as any;await broker.pump();
+    fail=callId==='uncertain';const result=broker.send({actor:{host:'agy',sessionId:'c',callId},message:'实际投递'} ) as any;await broker.pump();
     const message=store.message(result.message_id);assert.equal(message.state,'contextObserved');assert.equal(message.attempts,1);assert.match(message.evidence!,/item\/completed.*turn=native-turn.*item=native-output/);
     await broker.pump();
   }
@@ -59,7 +59,7 @@ test('上下文回执核验线程、端点及收件人，迟到回执不降低 r
 
 test('历史核对合并并发且每线程只读一次，仅结算有原生输出证据的 queued/unknown',async t=>{
   const {store,broker,c,x,codex}=fixture(t);const pair=store.pair(c.id,x.id);
-  const queued=store.accept(pair,c,'已进入上下文','queued'),unknown=store.accept(pair,c,'回执丢失','unknown'),unproved=store.accept(pair,c,'只在正文引用，不能证明','unproved'),other=store.accept(pair,x,'另一方向','claude');
+  const queued=store.accept(pair,c,'已进入上下文','queued'),unknown=store.accept(pair,c,'回执丢失','unknown'),unproved=store.accept(pair,c,'只在正文引用，不能证明','unproved'),other=store.accept(pair,x,'另一方向','agy');
   for(const message of [queued,unknown,unproved,other]){store.claim(message.id);store.transition(message.id,message.id===unknown.id?'unknown':'runtimeQueued');}
   let reads=0;codex.reconcile=async()=>{reads++;await Promise.resolve();return[queued,unknown,other].map(message=>({messageId:message.id,turnId:'completed-turn',itemId:'output-'+message.id}));};
   await Promise.all([broker.reconcile(),broker.reconcile(x.id)]);
@@ -69,12 +69,12 @@ test('历史核对合并并发且每线程只读一次，仅结算有原生输�
 });
 
 test('归档线程只读已登记端点补证，不恢复线程、宿主或旧配对',async t=>{
-  const {store,broker,c,x,codex,claude}=fixture(t),old=store.register(registration('codex','archived'));
+  const {store,broker,c,x,codex,agy}=fixture(t),old=store.register(registration('codex','archived'));
   const oldPair=store.pair(c.id,old.id),message=store.accept(oldPair,c,'归档前已经进入上下文','archived');store.claim(message.id);store.transition(message.id,'runtimeQueued');
   const current=store.pair(c.id,x.id,true);store.deactivate(old.id);store.updatePeer(old.id,{state:'offline'});
   codex.reconcile=async(peer,endpoint)=>{assert.equal(peer.id,old.id);assert.equal(endpoint.active,false);return[{messageId:message.id,turnId:'old-completed',itemId:'old-output'}];};
   await broker.reconcile();assert.equal(store.message(message.id).state,'contextObserved');assert.equal(store.peer(old.id).state,'offline');assert.equal(store.endpoint(old.id),undefined);
-  assert.equal(store.currentPair()?.id,current.id);assert.equal(codex.attached.length,0);assert.equal(codex.created.length,0);assert.equal(codex.ensured,0);assert.equal(claude.woken.length,0);
+  assert.equal(store.currentPair()?.id,current.id);assert.equal(codex.attached.length,0);assert.equal(codex.created.length,0);assert.equal(codex.ensured,0);assert.equal(agy.woken.length,0);
 });
 
 for(const code of ['ERR_STREAM_PREMATURE_CLOSE','ECONNREFUSED'])test(`旧离线端点 ${code} 静默退避，重新登记立即恢复补证且未知消息不重放`,async t=>{

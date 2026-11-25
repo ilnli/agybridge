@@ -72,12 +72,12 @@ test('Windows 目录权限和进程查询不执行 PATH 中的同名程序', { s
 
 test('Windows 显式安装修复旧 H 子文件、长路径 socket 和本安装归属目录，保留子文件 DACL 与链接目标', {skip:process.platform!=='win32'},async t=>{
   if(!await isElevated()){t.skip('需要提权构造旧版高完整性标签');return;}
-  const previous=process.env.NXBRIDGE_PROCESS_REGISTRY;
-  t.after(()=>{if(previous===undefined)delete process.env.NXBRIDGE_PROCESS_REGISTRY;else process.env.NXBRIDGE_PROCESS_REGISTRY=previous;});
+  const previous=process.env.AGYBRIDGE_PROCESS_REGISTRY;
+  t.after(()=>{if(previous===undefined)delete process.env.AGYBRIDGE_PROCESS_REGISTRY;else process.env.AGYBRIDGE_PROCESS_REGISTRY=previous;});
   const root=temporary(t),home=path.join(root,'long-private-home-'+'x'.repeat(35)),registry=path.join(root,'processes'),socket=ownedSocketDirectory(home);
   assert.notEqual(socket,path.join(home,'run'));
   registerTestDirectory(socket);t.after(()=>{if(existsSync(socket))rmSync(socket,{recursive:true});});
-  process.env.NXBRIDGE_PROCESS_REGISTRY=registry;
+  process.env.AGYBRIDGE_PROCESS_REGISTRY=registry;
   const own=processRegistryDirectory(home),other=processRegistryDirectory(path.join(root,'other-home')),external=path.join(root,'linked-user-data');
   const files=[path.join(home,'state.db'),path.join(home,'run','token'),path.join(own,'old-record.json'),path.join(socket,'old-socket.txt'),path.join(other,'other-record.json'),path.join(external,'keep.txt')];
   for(const file of files){mkdirSync(path.dirname(file),{recursive:true});writeFileSync(file,'隔离的旧版文件','utf8');}

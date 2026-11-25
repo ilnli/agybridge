@@ -33,9 +33,9 @@ const execute=promisify(execFile);
                                                                 
 test('显式独立引导后重启托管会话，旧 MCP 竞争不改变协调器且完成结果明确',{skip:process.platform!=='win32',timeout:180000},async t=>{
   const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),codexhome=path.join(temp.directory,'codex');
-  const entry=path.join(PACKAGE_ROOT,'publish','nxbridge.mjs');
+  const entry=path.join(PACKAGE_ROOT,'publish','agybridge.mjs');
   mkdirSync(codexhome,{recursive:true});
-  const env={NXBRIDGE_HOME:home,CODEX_HOME:codexhome,CLAUDE_CONFIG_DIR:path.join(temp.directory,'claude'),OPENAI_API_KEY:'nxbridge-local-service-test'};
+  const env={AGYBRIDGE_HOME:home,CODEX_HOME:codexhome,AGY_HOME:path.join(temp.directory,'agy'),OPENAI_API_KEY:'agybridge-local-service-test'};
   const restoreEnvironment=overrideEnvironment(env);
   const config={...DEFAULT_CONFIG,codexHome:codexhome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};
   const adapter=new CodexAdapter(config,home),pids=new Set<number>(),addresses=new Set<string>();let count=0,modelError='';
@@ -75,16 +75,16 @@ test('显式独立引导后重启托管会话，旧 MCP 竞争不改变协调器
   const launch=selectHostLaunch('codex',config,{home,cwd:temp.directory}),child=spawnSelectedHost(launch,['--no-daemon','app-server','--listen',address],{stdio:'ignore'});assert.ok(child.pid);pids.add(child.pid);
   await rememberOwnedChild(home,child,'codex-runtime',{configHome:codexhome},runtimeId);
   await wait(async()=>{try{await adapter.connect(address);return true;}catch{return false;}});
-  const store=new Store(path.join(home,'nxbridge.db'));
+  const store=new Store(path.join(home,'agybridge.db'));
   let peer;
-  try{const placeholder=store.placeholder('codex',temp.directory);saveManagedRuntime(home,{id:runtimeId,peerId:placeholder.id,owner:managedMarker(home),kind:'owned',state:'ready',createdAt:Date.now(),endpoint:address,pid:child.pid,procStart:(await processIdentity(child.pid)).startedAt,configHome:codexhome,executable:launch.executable.command});peer=store.adopt(placeholder.id,await adapter.create(placeholder));const partner=store.register(registration('claude','service-fixture'));store.pair(partner.id,peer.id);}finally{store.close();}
+  try{const placeholder=store.placeholder('codex',temp.directory);saveManagedRuntime(home,{id:runtimeId,peerId:placeholder.id,owner:managedMarker(home),kind:'owned',state:'ready',createdAt:Date.now(),endpoint:address,pid:child.pid,procStart:(await processIdentity(child.pid)).startedAt,configHome:codexhome,executable:launch.executable.command});peer=store.adopt(placeholder.id,await adapter.create(placeholder));const partner=store.register(registration('agy','service-fixture'));store.pair(partner.id,peer.id);}finally{store.close();}
   const rpc=await adapter.connect(address);let complete=false;
   rpc.on('notification',message=>{if(message.method==='turn/completed')complete=true;});
   await rpc.request('turn/start',{threadId:peer.sessionId,input:[{type:'text',text:'启动隔离 broker 后结束。'}]},{mutation:true});
   await wait(()=>complete);
                                            
   const starter=path.join(temp.directory,'start-broker.mjs');
-  writeFileSync(starter,"import {spawn} from 'node:child_process';const child=spawn(process.execPath,['--no-warnings',"+JSON.stringify(entry)+",'service'],{detached:true,windowsHide:true,stdio:'ignore',env:{...process.env,NXBRIDGE_SERVICE_ORIGIN:'[]'}});child.unref();",'utf8');
+  writeFileSync(starter,"import {spawn} from 'node:child_process';const child=spawn(process.execPath,['--no-warnings',"+JSON.stringify(entry)+",'service'],{detached:true,windowsHide:true,stdio:'ignore',env:{...process.env,AGYBRIDGE_SERVICE_ORIGIN:'[]'}});child.unref();",'utf8');
   const terminal=await rpc.request('command/exec',{command:[process.execPath,'--no-warnings',starter],cwd:temp.directory,timeoutMs:20000,sandboxPolicy:{type:'dangerFullAccess'}},{timeout:25000,mutation:true});
   assert.equal(terminal.exitCode,0,JSON.stringify(terminal));
   await wait(async()=>{try{await brokerCall('ping',{}, {home,start:false});return true;}catch{return false;}});
@@ -106,7 +106,7 @@ test('显式独立引导后重启托管会话，旧 MCP 竞争不改变协调器
   const service=await brokerCall('ping',{}, {home,start:false});assert.equal(service.pid,independent.pid);assert.equal(service.origin.some((value:any)=>value.pid===child.pid),false);
   assert.ok(existsSync(attempts)&&readFileSync(attempts,'utf8').includes('attempt'),'旧客户端必须实际经历断连并尝试抢启服务');
   assert.equal(readdirSync(path.dirname(address.slice(7))).includes(path.basename(address.slice(7))),false,'确认旧进程退出后应清理自有 socket');
-  const verified=new Store(path.join(home,'nxbridge.db'));
+  const verified=new Store(path.join(home,'agybridge.db'));
   try{assert.ok(verified.events(0,10000).some(event=>event.type==='codex.restarted'));}finally{verified.close();}
   assert.equal(count,1,'冷恢复不能触发额外模型请求');assert.ok(before.pid);
 });

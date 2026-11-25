@@ -13,7 +13,6 @@ import {DEFAULT_CONFIG} from '../config/defaults.js';
 import {type Endpoint} from '../types.js';
 import { temporaryDirectory } from './support/temporary.js';
 import { unknownContainerFixture } from './unknown-container-fixture.js';
-import { saveNativeOwnership,forgetNativeOwnership,nativeOwnership,type NativeOwnership } from '../process/owned-native.js';
 
 test('自动离线清理保留未知容器；显式 purge 仅撤销归属且不伪造完成凭据',{skip:process.platform!=='win32'},async t=>{
   const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),peerId=randomUUID(),record=await unknownContainerFixture(home,peerId);
@@ -29,20 +28,18 @@ test('自动离线清理保留未知容器；显式 purge 仅撤销归属且不�
 
 test('已记录的原生代次、包装器或声明冲突仍未知时，显式退役保留接管门禁',{skip:process.platform!=='win32'},async t=>{
   const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge');t.after(temp.cleanup);
-  for(const unknown of ['native','runtime','binding','root','wrapper','ambiguous-native'] as const){
-    const peerId=randomUUID(),record=await unknownContainerFixture(home,peerId),identity={pid:process.pid,startedAt:''},binding:NativeOwnership={version:1,id:record.proof.launchId!,home,peerId,configHome:home,phase:'bound',createdAt:Date.now(),native:identity};
+  for(const unknown of ['native','runtime','root','wrapper','ambiguous-native'] as const){
+    const peerId=randomUUID(),record=await unknownContainerFixture(home,peerId),identity={pid:process.pid,startedAt:''};
     const runtime={id:record.proof.launchId!,peerId,owner:managedMarker(home),kind:'owned' as const,state:'starting' as const,endpoint:'unix://'+peerId,createdAt:Date.now(),...(unknown==='runtime'?{pid:identity.pid,procStart:identity.startedAt}:{}),...(unknown==='wrapper'?{wrapperPid:identity.pid,wrapperProcStart:identity.startedAt}:{})};
     const sibling={...record,id:randomUUID(),role:'host-control' as const,windowsJob:undefined,completionFile:undefined,native:{pid:2147483646,startedAt:'1'}};
     if(unknown==='native')record.native=identity;
     if(unknown==='root')record.identity={...record.identity,...identity};
-    if(unknown==='binding')saveNativeOwnership(binding);
     if(unknown==='ambiguous-native'){record.native={pid:2147483647,startedAt:'1'};atomicJson(path.join(processRegistryDirectory(home),sibling.id+'.json'),sibling);}
     atomicJson(path.join(processRegistryDirectory(home),record.id+'.json'),record);saveManagedRuntime(home,runtime);
     try{
       assert.deepEqual(await retireUnconfirmedContainers(home,{peerId}),{notes:[],peerIds:[]});
       assert.ok(ownedProcesses(home).records.some(value=>value.id===record.id));assert.equal(runtimeFor(home,{id:runtime.id})!.value.state,'starting');
-      if(unknown==='binding')assert.deepEqual(nativeOwnership(home,peerId),binding);
-    }finally{forgetOwnedProcess(record);if(unknown==='ambiguous-native')forgetOwnedProcess(sibling);if(unknown==='binding')forgetNativeOwnership(binding);removeManagedRuntime(runtimeFor(home,{id:runtime.id})!);}
+    }finally{forgetOwnedProcess(record);if(unknown==='ambiguous-native')forgetOwnedProcess(sibling);removeManagedRuntime(runtimeFor(home,{id:runtime.id})!);}
   }
 });
 
@@ -59,23 +56,20 @@ test('显式撤销未知容器仍保护已知活原生代次和用户窗口引�
   }
 });
 
-test('显式退役异步核验期间出现用户绑定、新进程或新运行时，保留新的归属证据',{skip:process.platform!=='win32'},async t=>{
+test('显式退役异步核验期间出现新进程或新运行时，保留新的归属证据',{skip:process.platform!=='win32'},async t=>{
   const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),identity=await processIdentity(process.pid);t.after(temp.cleanup);
-  for(const change of ['binding','process','runtime'] as const){
-    const peerId=randomUUID(),record=await unknownContainerFixture(home,peerId),binding:NativeOwnership={version:1,id:record.proof.launchId!,home,peerId,configHome:home,phase:'intent',createdAt:Date.now()};
-    if(change==='binding')saveNativeOwnership(binding);
+  for(const change of ['process','runtime'] as const){
+    const peerId=randomUUID(),record=await unknownContainerFixture(home,peerId);
     const added={...record,id:randomUUID(),role:'proxy' as const,identity,windowsJob:undefined,completionFile:undefined};
     try{
       const retiring=retireUnconfirmedContainers(home,{peerId});
       await Promise.resolve().then(()=>{
-        if(change==='binding')saveNativeOwnership({...binding,releasedToUser:true,native:identity});
-        else if(change==='process')atomicJson(path.join(processRegistryDirectory(home),added.id+'.json'),added);
+        if(change==='process')atomicJson(path.join(processRegistryDirectory(home),added.id+'.json'),added);
         else saveManagedRuntime(home,{id:randomUUID(),peerId,owner:managedMarker(home),kind:'owned',state:'ready',endpoint:'unix://new-holder',createdAt:Date.now(),pid:identity.pid,procStart:identity.startedAt});
       });
       assert.deepEqual(await retiring,{notes:[],peerIds:[]});assert.ok(ownedProcesses(home).records.some(value=>value.id===record.id));
-      if(change==='binding')assert.equal(nativeOwnership(home,peerId)!.releasedToUser,true);
-      else if(change==='process')assert.ok(ownedProcesses(home).records.some(value=>value.id===added.id));
+      if(change==='process')assert.ok(ownedProcesses(home).records.some(value=>value.id===added.id));
       else assert.ok(managedRuntimes(home).some(value=>value.value.peerId===peerId));
-    }finally{forgetOwnedProcess(record);if(change==='binding')forgetNativeOwnership(nativeOwnership(home,peerId)!);if(change==='process')forgetOwnedProcess(added);for(const runtime of managedRuntimes(home).filter(value=>value.value.peerId===peerId))removeManagedRuntime(runtime);}
+    }finally{forgetOwnedProcess(record);if(change==='process')forgetOwnedProcess(added);for(const runtime of managedRuntimes(home).filter(value=>value.value.peerId===peerId))removeManagedRuntime(runtime);}
   }
 });

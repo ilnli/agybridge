@@ -8,10 +8,11 @@ import {BridgeError} from '../shared/errors.js';
 import { persistentEnvironment, temporaryPath } from '../process/environment.js';
 import { windowsNodeDiscovery } from './node-runtime.js';
 import { atomicWriteText } from '../storage/atomic-file.js';
+import type { Host } from '../types.js';
 
 export interface ManagedFile {file:string;content:string}
 export interface ShimPlan {directory:string|null;files:ManagedFile[];launcher:ManagedFile[];command:string;reason:string;notice?:string}
-const MARKER='nxbridge-owned-v1';
+const MARKER='agybridge-owned-v1';
 const key=(value:string)=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value);
 const quoteSh=(value:string)=>"'"+value.replaceAll("'","'\\''")+"'";
 function writableParent(directory:string):boolean{
@@ -55,38 +56,36 @@ export function planShim(home:string,options:{directories?:string[];pathValue?:s
   const persistent=options.pathValue===undefined&&!options.directories?persistentEnvironment():undefined;
   const directories=[...new Set((options.pathValue??persistent?.PATH??process.env.PATH??'').split(delimiter).filter(Boolean).map(directory=>path.resolve(directory.replace(/^"|"$/g,''))))];
   const stable=directories.filter(directory=>!temporaryPath(directory,persistent??process.env));
-  const names=platform==='win32'?['nxbridge.exe','nxbridge.ps1','nxbridge.cmd','nxbridge','nxbridge.cjs']:['nxbridge'];
-                                                             
+  const names=platform==='win32'?['agybridge.exe','agybridge.ps1','agybridge.cmd','agybridge','agybridge.cjs']:['agybridge'];
   const existing=stable.filter(directory=>names.some(name=>ownsFile(path.join(directory,name),home)));
   const userHome=persistent?.USERPROFILE??persistent?.HOME??homedir();
-                                                   
   const node=options.node??process.execPath,nodeDirectory=path.dirname(node);
   const candidates=options.directories?.map(directory=>({directory,reason:'使用显式指定且已经在 PATH 中的目录'}))??[
-    ...existing.map(directory=>({directory,reason:'保留已有的 nxbridge 自有命令位置'})),
+    ...existing.map(directory=>({directory,reason:'保留已有的 agybridge 自有命令位置'})),
     ...preferredBinDirectories(userHome,{...process.env,...persistent},platform,nodeDirectory).filter(value=>stable.some(directory=>sameDirectory(directory,value.directory))),
     ...stable.filter(directory=>inside(userHome,directory)&&!toolSpecificBin(directory)&&!sameDirectory(directory,nodeDirectory)).map(directory=>({directory,reason:'使用其他已经在 PATH 中的可写用户目录；未选择工具专属目录'})),
   ];
-  const entry=options.entry??CLI_PATH,bin=path.join(home,'bin'),launcherPath=path.join(bin,'nxbridge.cjs');
+  const entry=options.entry??CLI_PATH,bin=path.join(home,'bin'),launcherPath=path.join(bin,'agybridge.cjs');
   const launcher=[
     {file:path.join(bin,'node-discovery.ps1'),content:`# ${managedMarker(home)}\n${windowsNodeDiscovery()}\n`},
     {file:launcherPath,content:                                 embeddedSource("javascript", `// ${managedMarker(home)}
 const fs=require('node:fs'),path=require('node:path'),{spawn}=require('node:child_process'),{pathToFileURL}=require('node:url');
-if(process.argv[2]==='hook'&&!process.env.NXBRIDGE_HOOK_STARTED_AT)process.env.NXBRIDGE_HOOK_STARTED_AT=String(performance.timeOrigin);
+if(process.argv[2]==='hook'&&!process.env.AGYBRIDGE_HOOK_STARTED_AT)process.env.AGYBRIDGE_HOOK_STARTED_AT=String(performance.timeOrigin);
 const runtime=JSON.parse(fs.readFileSync(path.join(__dirname,'runtime.json'),'utf8'));
 const node=fs.existsSync(runtime.node)?runtime.node:process.execPath;
 const native=file=>{const value=fs.realpathSync.native(file);return process.platform==='win32'?value.toLowerCase():value;};
 const sameNode=native(node)===native(process.execPath);
-if(sameNode&&!/^(24|25|26)\\./.test(process.versions.node))throw new Error('nxbridge 需要 Node.js 24～26；请安装兼容版本后运行 bin/nxbridge.cjs update。');
-const args=process.argv.slice(2),dedicated=path.join(path.dirname(runtime.entry),args[0]+'-entry.mjs'),entry=['mcp','mod','hook'].includes(args[0])&&fs.existsSync(dedicated)?dedicated:runtime.entry;
-const compileCache=['mcp','mod'].includes(args[0])?path.join(process.env.NXBRIDGE_HOME||runtime.home,'run','compile-cache'):undefined;
-if(sameNode){process.env.NXBRIDGE_HOME=process.env.NXBRIDGE_HOME||runtime.home;if(compileCache)require('node:module').enableCompileCache(compileCache);import(pathToFileURL(entry).href).catch(error=>{process.stderr.write('nxbridge：'+error.message+'\\n');process.exitCode=1;});}
-else{const child=spawn(node,[entry,...args],{stdio:'inherit',windowsHide:true,shell:false,env:{...process.env,NXBRIDGE_HOME:process.env.NXBRIDGE_HOME||runtime.home,...(compileCache&&!process.env.NODE_COMPILE_CACHE?{NODE_COMPILE_CACHE:compileCache}:{})}});
-child.on('error',error=>{process.stderr.write('nxbridge：'+error.message+'\\n');process.exitCode=1;});
+if(sameNode&&!/^(24|25|26)\\./.test(process.versions.node))throw new Error('agybridge 需要 Node.js 24～26；请安装兼容版本后运行 bin/agybridge.cjs update。');
+const args=process.argv.slice(2),dedicated=path.join(path.dirname(runtime.entry),args[0]+'-entry.mjs'),entry=['mcp','hook'].includes(args[0])&&fs.existsSync(dedicated)?dedicated:runtime.entry;
+const compileCache=args[0]==='mcp'?path.join(process.env.AGYBRIDGE_HOME||runtime.home,'run','compile-cache'):undefined;
+if(sameNode){process.env.AGYBRIDGE_HOME=process.env.AGYBRIDGE_HOME||runtime.home;if(compileCache)require('node:module').enableCompileCache(compileCache);import(pathToFileURL(entry).href).catch(error=>{process.stderr.write('agybridge：'+error.message+'\\n');process.exitCode=1;});}
+else{const child=spawn(node,[entry,...args],{stdio:'inherit',windowsHide:true,shell:false,env:{...process.env,AGYBRIDGE_HOME:process.env.AGYBRIDGE_HOME||runtime.home,...(compileCache&&!process.env.NODE_COMPILE_CACHE?{NODE_COMPILE_CACHE:compileCache}:{})}});
+child.on('error',error=>{process.stderr.write('agybridge：'+error.message+'\\n');process.exitCode=1;});
 child.on('exit',(code,signal)=>{process.exitCode=code??(signal?1:0);});}
 `)},
     {file:path.join(bin,'runtime.json'),content:JSON.stringify({...options.runtime,owner:managedMarker(home),node,entry,home},null,2)+'\n'},
   ];
-  for(const file of launcher)if(existsSync(file.file)&&!ownsFile(file.file,home))throw new BridgeError('launcher_conflict',`运行入口存在非 nxbridge 文件：${file.file}，未覆盖。`);
+  for(const file of launcher)if(existsSync(file.file)&&!ownsFile(file.file,home))throw new BridgeError('launcher_conflict',`运行入口存在非 agybridge 文件：${file.file}，未覆盖。`);
   let directory:string|null=null,reason='没有符合条件的可写 PATH 目录；不修改 PATH，也不自动安装到工具专属目录';
   for(const candidate of candidates){
     if(!directories.some(value=>key(value)===key(candidate.directory)))continue;
@@ -95,23 +94,23 @@ child.on('exit',(code,signal)=>{process.exitCode=code??(signal?1:0);});}
   const quotePs=(value:string)=>"'"+value.replaceAll("'","''")+"'";
   const discover=Buffer.from(`& ([scriptblock]::Create([IO.File]::ReadAllText(${quotePs(path.join(bin,'node-discovery.ps1'))})))`,'utf16le').toString('base64');
   const command=platform==='win32'?`& ${quotePs(node)} ${quotePs(launcherPath)}`:`${quoteSh(node)} ${quoteSh(launcherPath)}`;
-  if(!directory)return{directory,files:[],launcher,command,reason,notice:'没有找到既在 PATH 中又可写的通用用户目录，未安装 nxbridge 命令，也没有修改 PATH。请用下面的完整命令运行，或用 --bin-dir 指定一个已在 PATH 中的目录。'};
+  if(!directory)return{directory,files:[],launcher,command,reason,notice:'没有找到既在 PATH 中又可写的通用用户目录，未安装 agybridge 命令，也没有修改 PATH。请用下面的完整命令运行，或用 --bin-dir 指定一个已在 PATH 中的目录。'};
   for(const name of names){
     const filename=path.join(directory,name);
-    if(existsSync(filename)&&!ownsFile(filename,home))throw new BridgeError('shim_conflict',`${filename} 已有一个不属于本次安装的 nxbridge 命令，未覆盖。`);
+    if(existsSync(filename)&&!ownsFile(filename,home))throw new BridgeError('shim_conflict',`${filename} 已有一个不属于本次安装的 agybridge 命令，未覆盖。`);
   }
   const shadow=directories.slice(0,directories.findIndex(value=>key(value)===key(directory))).flatMap(value=>names.map(name=>path.join(value,name))).find(filename=>existsSync(filename)&&!ownsFile(filename,home));
   const notice=shadow?`PATH 中较早的 ${shadow} 会遮住本次安装的命令。请调整 PATH 顺序，或用完整命令 ${command} 运行。`:undefined;
   const content=platform==='win32'?                          embeddedSource("cmd", `@echo off
 :: ${managedMarker(home)}
 setlocal
-set "NXBRIDGE_NODE=${node}"
-if exist "%NXBRIDGE_NODE%" goto launch
-set "NXBRIDGE_NODE="
-for /f "delims=" %%N in ('"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoLogo -NoProfile -NonInteractive -EncodedCommand ${discover}') do set "NXBRIDGE_NODE=%%N"
-if not defined NXBRIDGE_NODE exit /b 1
+set "AGYBRIDGE_NODE=${node}"
+if exist "%AGYBRIDGE_NODE%" goto launch
+set "AGYBRIDGE_NODE="
+for /f "delims=" %%N in ('"%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" -NoLogo -NoProfile -NonInteractive -EncodedCommand ${discover}') do set "AGYBRIDGE_NODE=%%N"
+if not defined AGYBRIDGE_NODE exit /b 1
 :launch
-"%NXBRIDGE_NODE%" "%~dp0nxbridge.cjs" %*
+"%AGYBRIDGE_NODE%" "%~dp0agybridge.cjs" %*
 exit /b %errorlevel%
 `)
     :                         embeddedSource("sh", `#!/bin/sh
@@ -120,22 +119,22 @@ node=${quoteSh(node)}
 [ -x "$node" ] || node=node
 exec "$node" ${quoteSh(launcherPath)} "$@"
 `);
-  return{directory,files:[{file:path.join(directory,platform==='win32'?'nxbridge.cmd':'nxbridge'),content},...(platform==='win32'&&!sameDirectory(path.join(directory,'nxbridge.cjs'),launcherPath)?[{file:path.join(directory,'nxbridge.cjs'),content:                                 embeddedSource("javascript", `// ${managedMarker(home)}
+  return{directory,files:[{file:path.join(directory,platform==='win32'?'agybridge.cmd':'agybridge'),content},...(platform==='win32'&&!sameDirectory(path.join(directory,'agybridge.cjs'),launcherPath)?[{file:path.join(directory,'agybridge.cjs'),content:                                 embeddedSource("javascript", `// ${managedMarker(home)}
 require(${JSON.stringify(launcherPath)});
-`)}]:[])],launcher,command:'nxbridge',reason,...(notice?{notice}:{})};
+`)}]:[])],launcher,command:'agybridge',reason,...(notice?{notice}:{})};
 }
 
 export function installShim(plan:ShimPlan):ManagedFile[]{
   for(const file of [...plan.launcher,...plan.files]){
     mkdirSync(path.dirname(file.file),{recursive:true});
     atomicWriteText(file.file,file.content);
-    if(process.platform!=='win32'&&path.basename(file.file)==='nxbridge')chmodSync(file.file,0o755);
+    if(process.platform!=='win32'&&path.basename(file.file)==='agybridge')chmodSync(file.file,0o755);
   }
   return[...plan.launcher,...plan.files];
 }
 
 export function recoverManagedFiles(home:string,pathValue=process.env.PATH??''):ManagedFile[]{
-  const filenames=[path.join(home,'bin','nxbridge.cjs'),path.join(home,'bin','runtime.json'),path.join(home,'bin','node-discovery.ps1'),...pathValue.split(path.delimiter).filter(Boolean).flatMap(directory=>['nxbridge','nxbridge.cmd','nxbridge.ps1','nxbridge.cjs'].map(name=>path.join(directory,name)))];
+  const filenames=[path.join(home,'bin','agybridge.cjs'),path.join(home,'bin','runtime.json'),path.join(home,'bin','node-discovery.ps1'),...pathValue.split(path.delimiter).filter(Boolean).flatMap(directory=>['agybridge','agybridge.cmd','agybridge.ps1','agybridge.cjs'].map(name=>path.join(directory,name)))];
   return[...new Set(filenames)].filter(filename=>ownsFile(filename,home)).map(file=>({file,content:readFileSync(file,'utf8')}));
 }
 
@@ -151,17 +150,34 @@ export function removeManagedFiles(files:ManagedFile[],home:string,dryRun=false)
   return{removed,notes,remaining};
 }
 
-export function markMarketplace(root:string,home:string):void{atomicJson(path.join(root,'.nxbridge-owned.json'),{owner:managedMarker(home)});}
+export function markMarketplace(root:string,home:string):void{atomicJson(path.join(root,'.agybridge-owned.json'),{owner:managedMarker(home)});}
 export function ownsMarketplace(root:string,home:string):boolean{
-  try{return inside(home,root)&&readJson<{owner:string}>(path.join(root,'.nxbridge-owned.json')).owner===managedMarker(home);}catch{return false;}
+  try{return inside(home,root)&&readJson<{owner:string}>(path.join(root,'.agybridge-owned.json')).owner===managedMarker(home);}catch{return false;}
 }
 
-function cacheDirectory(realRoot:string,directory:string,host:'claude'|'codex'):boolean{
-  return inside(realRoot,realpathSync.native(directory))&&readJson<{name:string}>(path.join(directory,host==='claude'?'.claude-plugin':'.codex-plugin','plugin.json')).name==='nxbridge';
+function cacheManifestPath(directory:string,host:Host):string{
+  return host==='codex'?path.join(directory,'.codex-plugin','plugin.json'):path.join(directory,'plugin.json');
 }
 
-export function installedCacheDirectories(hostHome:string,host:'claude'|'codex'):string[]{
-  const root=path.join(hostHome,'plugins','cache','nxbridge-local','nxbridge');
+function cacheDirectory(realRoot:string,directory:string,host:Host):boolean{
+  return (sameDirectory(realRoot,realpathSync.native(directory))||inside(realRoot,realpathSync.native(directory)))&&readJson<{name:string}>(cacheManifestPath(directory,host)).name==='agybridge';
+}
+
+export function cacheHostHome(directory:string,host:Host):string{
+  return host==='codex'?path.resolve(directory,'../../../../..'):path.resolve(directory,'../../..');
+}
+
+export function installedCacheDirectories(hostHome:string,host:Host):string[]{
+  if(host==='agy'){
+    const directory=path.join(hostHome,'config','plugins','agybridge');
+    if(!existsSync(directory))return[];
+    try{
+      const realDir=realpathSync.native(directory);
+      if(!inside(realpathSync.native(hostHome),realDir))return[];
+      return cacheDirectory(realDir,directory,'agy')?[directory]:[];
+    }catch{return[];}
+  }
+  const root=path.join(hostHome,'plugins','cache','agybridge-local','agybridge');
   if(!existsSync(root))return[];
   const realRoot=realpathSync.native(root);
   if(!inside(realpathSync.native(hostHome),realRoot))return[];
@@ -170,10 +186,16 @@ export function installedCacheDirectories(hostHome:string,host:'claude'|'codex')
   });
 }
 
-export function cacheBelongsTo(directory:string,host:'claude'|'codex',home:string):boolean{
-  const root=path.dirname(directory),hostHome=path.resolve(directory,'../../../../..');
+export function cacheBelongsTo(directory:string,host:Host,home:string):boolean{
+  const hostHome=cacheHostHome(directory,host);
   try{
-    if(!sameDirectory(root,path.join(hostHome,'plugins','cache','nxbridge-local','nxbridge')))return false;
+    if(host==='agy'){
+      if(!sameDirectory(directory,path.join(hostHome,'config','plugins','agybridge')))return false;
+      const realDir=realpathSync.native(directory);
+      return inside(realpathSync.native(hostHome),realDir)&&cacheDirectory(realDir,directory,'agy')&&sameDirectory(readJson<{home:string}>(path.join(directory,'runtime.json')).home,home);
+    }
+    const root=path.dirname(directory);
+    if(!sameDirectory(root,path.join(hostHome,'plugins','cache','agybridge-local','agybridge')))return false;
     const realRoot=realpathSync.native(root);
     return inside(realpathSync.native(hostHome),realRoot)&&cacheDirectory(realRoot,directory,host)&&sameDirectory(readJson<{home:string}>(path.join(directory,'runtime.json')).home,home);
   }catch{return false;}
@@ -184,26 +206,24 @@ export function inspectInstallation(home:string):Record<string,unknown>{
   if(!existsSync(filename))return{recorded:false};
   try{
     const state=readJson<{disabled?:boolean;managedFiles?:ManagedFile[]}>(filename);
-    return{recorded:true,disabled:state.disabled??false,managedFiles:(state.managedFiles??[]).map(file=>({file:file.file,state:!existsSync(file.file)?'missing':readFileSync(file.file,'utf8')===file.content?'current':'modified'})),runtime:'独立发布运行时位于 nxbridge 私有目录，由稳定入口读取当前版本指针',liveLoading:'文件已同步不等于已打开的窗口已加载：Claude 执行 /reload-plugins，MCP 备用入口到 /mcp 重连，Codex 空闲后执行 restart codex 或原生冷恢复。'};
+    return{recorded:true,disabled:state.disabled??false,managedFiles:(state.managedFiles??[]).map(file=>({file:file.file,state:!existsSync(file.file)?'missing':readFileSync(file.file,'utf8')===file.content?'current':'modified'})),runtime:'独立发布运行时位于 agybridge 私有目录，由稳定入口读取当前版本指针',liveLoading:'文件已同步不等于已打开的窗口已加载：AGY 重启会话或重新加载插件，Codex 空闲后执行 agybridge restart codex 或原生冷恢复。'};
   }catch(error){return{recorded:true,error:String(error)};}
 }
 
-                                        
-export function installedCacheStatus(home:string):{host:'claude'|'codex';directory:string;cacheVersion:string|null;nativeVersionAtUpdate:string|null;inventoryObservedAt:string|null;nativeInventoryLag:boolean;notice?:string}[]{
+export function installedCacheStatus(home:string):{host:Host;directory:string;cacheVersion:string|null;nativeVersionAtUpdate:string|null;inventoryObservedAt:string|null;nativeInventoryLag:boolean;notice?:string}[]{
   try{
-    const state=readJson<{cacheDirectories?:{host:'claude'|'codex';directory:string}[];cacheInventory?:{directory:string;nativeVersion:string|null;observedAt:string}[]}>(path.join(home,'setup-state.json'));
-                                           
+    const state=readJson<{cacheDirectories?:{host:Host;directory:string}[];cacheInventory?:{directory:string;nativeVersion:string|null;observedAt:string}[]}>(path.join(home,'setup-state.json'));
     const inventories=new Map<string,string[]>();
     return(state.cacheDirectories??[]).filter(value=>{
       try{
-        const hostHome=path.resolve(value.directory,'../../../../..'),key=value.host+':'+hostHome;
+        const hostHome=cacheHostHome(value.directory,value.host),key=value.host+':'+hostHome;
         let directories=inventories.get(key);if(!directories){directories=installedCacheDirectories(hostHome,value.host);inventories.set(key,directories);}
         return directories.some(directory=>sameDirectory(directory,value.directory))&&sameDirectory(readJson<{home:string}>(path.join(value.directory,'runtime.json')).home,home);
       }catch{return false;}
     }).map(value=>{
-      const version=readJson<{version:string}>(path.join(value.directory,value.host==='codex'?'.codex-plugin':'.claude-plugin','plugin.json')).version;
+      const version=readJson<{version:string}>(cacheManifestPath(value.directory,value.host)).version;
       const inventory=state.cacheInventory?.find(record=>sameDirectory(record.directory,value.directory)),native=inventory?.nativeVersion??null,lag=native!==null&&native!==version;
-      return{...value,cacheVersion:version??null,nativeVersionAtUpdate:native,inventoryObservedAt:inventory?.observedAt??null,nativeInventoryLag:lag,...(lag?{notice:`上次更新时原生插件清单显示 nxbridge ${native}，插件文件实际是 ${version}（只同步了文件）；不影响使用，想对齐时再执行一次 nxbridge update（需插件已启用，且本次安装已登记的 Codex 进程均已退出）。`}:{})};
+      return{...value,cacheVersion:version??null,nativeVersionAtUpdate:native,inventoryObservedAt:inventory?.observedAt??null,nativeInventoryLag:lag,...(lag?{notice:`上次更新时原生插件清单显示 agybridge ${native}，插件文件实际是 ${version}（只同步了文件）；不影响使用，想对齐时再执行一次 agybridge update。`}:{})};
     });
   }catch{return[];}
 }

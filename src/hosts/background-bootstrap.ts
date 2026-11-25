@@ -17,7 +17,7 @@ export async function bootstrapBackground(home=bridgeHome(),services:{preflight?
   catch(error){
     const code=(error as {code?:string}).code??'';
     if(code==='ipc_token_invalid'){
-      if(!installationEnabled(home))throw new BridgeError('uninstalled','nxbridge 已卸载；运行 setup 后重新启用。');
+      if(!installationEnabled(home))throw new BridgeError('uninstalled','agybridge 已卸载；运行 setup 后重新启用。');
       needsTokenRepair=await preflightIpcTokenRepair(home);
     }else if(!['ENOENT','ECONNREFUSED','ECONNRESET','EPIPE','broker_timeout','disconnected','starting'].includes(code))throw error;
   }
@@ -47,7 +47,7 @@ export async function bootstrapBackground(home=bridgeHome(),services:{preflight?
       const ready=await rpc.request<{pid:number;runtime?:{windowsIndependent?:boolean}}>('ping',{});
       if(process.platform==='win32'&&!ready.runtime?.windowsIndependent)throw new BridgeError('background_launch_unconfirmed','协调器入口未提供经过原生验证的独立运行证据。');
       recordBackgroundState(home);
-      return{text:`后台协调器已独立运行（进程 ${ready.pid}），关闭任何 Claude 或 Codex 窗口都不会影响它。`};
+      return{text:`后台协调器已独立运行（进程 ${ready.pid}），关闭任何 AGY 或 Codex 窗口都不会影响它。`};
     }finally{rpc.close();}
   }finally{await release();}
 }

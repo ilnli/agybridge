@@ -10,18 +10,18 @@ import { readCodexHookTrust } from '../hosts/codex/codex-hook-trust.js';
 import { setupPublish, uninstallPublish } from './publish-fixture.js';
 
 test('原生磁盘 hooks 信任核验区分人工批准前后，诊断全过程不修改配置',{timeout:170000},async t=>{
-  const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),codexHome=path.join(temp.directory,'codex'),claudeHome=path.join(temp.directory,'claude');
-  for(const dir of [home,codexHome,claudeHome])mkdirSync(dir,{recursive:true});
-  const config={...DEFAULT_CONFIG,codexHome,claudeHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};
+  const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),codexHome=path.join(temp.directory,'codex'),agyHome=path.join(temp.directory,'agy');
+  for(const dir of [home,codexHome,agyHome])mkdirSync(dir,{recursive:true});
+  const config={...DEFAULT_CONFIG,codexHome,agyHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};
   writeFileSync(path.join(home,'config.json'),JSON.stringify(config),'utf8');
-  const overrides={NXBRIDGE_HOME:home,CODEX_HOME:codexHome,CLAUDE_CONFIG_DIR:claudeHome},restoreEnvironment=overrideEnvironment(overrides);
+  const overrides={AGYBRIDGE_HOME:home,CODEX_HOME:codexHome,AGY_HOME:agyHome},restoreEnvironment=overrideEnvironment(overrides);
   t.after(async()=>{try{await uninstallPublish();}finally{restoreEnvironment();await temp.cleanup();}});
   await setupPublish();const file=path.join(codexHome,'config.toml');
   const check=async(expected:'required'|'trusted')=>{const before=readFileSync(file);assert.equal(await readCodexHookTrust(config,home,codexHome,temp.directory),expected);assert.deepEqual(readFileSync(file),before,'诊断不得修改人工信任记录或其他配置');};
   await check('required');
   const client=await configClient(config,home);let hooks:any[];
   try{
-    hooks=(await client.request('hooks/list',{cwds:[temp.directory]})).data.flatMap((row:any)=>row.hooks??[]).filter((hook:any)=>hook.pluginId==='nxbridge@nxbridge-local');assert.equal(hooks.length,9);
+    hooks=(await client.request('hooks/list',{cwds:[temp.directory]})).data.flatMap((row:any)=>row.hooks??[]).filter((hook:any)=>hook.pluginId==='agybridge@agybridge-local');assert.equal(hooks.length,9);
                                               
     await client.request('config/batchWrite',{edits:[{keyPath:'hooks.state',value:Object.fromEntries(hooks.map(hook=>[hook.key,{enabled:true,trusted_hash:hook.currentHash}])),mergeStrategy:'replace'}],filePath:file},{mutation:true});
   }finally{await client.close();}

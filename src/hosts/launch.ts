@@ -14,7 +14,6 @@ import { processIdentity, liveProcess } from '../process/process.js';
 import { externalTerminalOrigin } from './user-origin.js';
 import { randomUUID } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
-import { claudeProfileArgs, claudeProfileSettings } from '../broker/profiles/profile-arguments.js';
 
 interface LaunchSelection { mode:'native'|'remote';endpoint?:string;tokenEnv?:string }
 const commands=new Set(['agents','exec','e','review','app-server','remote-control','app','mcp','plugin','login','logout','features','queue','completion','sandbox','debug','apply','a','cloud','update','doctor','archive','delete','unarchive','migrate-rollouts','migrate-nfs-db','exec-server','help']);
@@ -40,7 +39,6 @@ export function launchMode(args:string[]):LaunchSelection{
       if(key==='--remote-auth-token-env')tokenEnv=value;
     }
   }
-                                        
   if(endpoint)return{mode:'remote',endpoint,...(tokenEnv?{tokenEnv}:{})};
   return{mode:'native'};
 }
@@ -58,8 +56,8 @@ export async function interactive(host:Host,args:string[],onStarted?:(child:Chil
     if(endpoint)try{if(runtimeFor(bridgeHome(),{endpoint})){
       const [server,current]=await Promise.all([connectAppServer(endpoint,loadConfig(),undefined,bridgeHome(),{readOnly:true}).then(async rpc=>{try{return codexServerVersion(rpc);}finally{await rpc.close();}}),runCli('codex',['--version'],{launch:selection,timeout:3000})]);
       const version=/\b(\d+\.\d+\.\d+(?:-[\w.-]+)?(?:\+[\w.-]+)?)\b/.exec(current)?.[1];
-      if(server&&version&&server!==version)process.stderr.write(`nxbridge：此会话仍在 Codex ${server} 后台中，当前窗口为 ${version}；本次继续接入原会话。请先结束原后台工作，再按原方式恢复会话以使用当前版本。\n`);}
-    }catch{                                  }
+      if(server&&version&&server!==version)process.stderr.write(`agybridge：此会话仍在 Codex ${server} 后台中，当前窗口为 ${version}；本次继续接入原会话。请先结束原后台工作，再按原方式恢复会话以使用当前版本。\n`);}
+    }catch{}
   }
   const child=spawnSelectedHost(selection,authentication.args,{stdio:'inherit',windowsHide:false});
   return new Promise((resolve,reject)=>{let started=Promise.resolve();child.once('error',reject);child.once('spawn',()=>{if(onStarted){started=onStarted(child);void started.catch(()=>{});}});child.once('exit',code=>{void started.then(()=>resolve(code??1),reject);});});
@@ -68,12 +66,11 @@ export async function interactive(host:Host,args:string[],onStarted?:(child:Chil
 export async function launchCodex(args:string[]):Promise<number>{
   const config=loadConfig(),home=bridgeHome(),selected=launchMode(args),sessionId=resumeThreadArgument(args),launchProfile=selectHostLaunch('codex',config,{foreground:true,...(process.env.CODEX_HOME?{configHome:process.env.CODEX_HOME}:{})});
   let endpoint=selected.endpoint;
-                                                 
   if(sessionId&&!endpoint){
     let target:any;
     try{if(managedRuntimes(home).some(({value})=>value.state==='ready'&&value.pid&&liveProcess(value.pid)&&value.configHome&&sameDirectory(value.configHome,launchProfile.configHome))){
       target=await brokerCall<any>('hosting.resolve',{session_id:sessionId,home:launchProfile.configHome,loaded_only:true});
-    }}catch(error){process.stderr.write('nxbridge：后台会话归属暂无法核验，使用官方恢复：'+String(error)+'\n');}
+    }}catch(error){process.stderr.write('agybridge：后台会话归属暂无法核验，使用官方恢复：'+String(error)+'\n');}
     if(target?.unavailable)throw new BridgeError('background_retiring',target.unavailable);
     if(target?.endpoint){if(target.member_id&&target.owner==='nxbridge')return openPartner('codex',{peer_id:target.member_id},args);endpoint=target.endpoint;}
   }
@@ -82,29 +79,32 @@ export async function launchCodex(args:string[]):Promise<number>{
   let foreground:{pid:number;procStart:string}|undefined;
   try{return await interactive('codex',launch,async child=>{
     const identity=await processIdentity(child.pid!);foreground={pid:identity.pid,procStart:identity.startedAt};
-                                      
     try{await brokerCall('codex.foreground.started',{endpoint,...(sessionId?{session_id:sessionId}:{}),foreground},{timeout:5000,mutation:true});await brokerCall('codex.connect',{endpoint,...(selected.endpoint?{bearerToken:tokenFromEnvironment(selected.tokenEnv)}:{})},{timeout:15000});if(sessionId)await brokerCall('codex.foreground.prepare',{endpoint,session_id:sessionId,cwd:launchProfile.cwd,home:launchProfile.configHome},{timeout:15000,mutation:true});}
-    catch(error){process.stderr.write('nxbridge：原生窗口已启动，通信观察暂未连接：'+String(error)+'\n');}
+    catch(error){process.stderr.write('agybridge：原生窗口已启动，通信观察暂未连接：'+String(error)+'\n');}
   },{launch:launchProfile});}
   finally{
-    if(foreground)try{await brokerCall('codex.foreground.end',{endpoint,...(sessionId?{session_id:sessionId}:{}),foreground},{mutation:true,timeout:15000});}catch(error){process.stderr.write('nxbridge：原窗口退出状态待核验：'+String(error)+'\n');}
-    if(sessionId&&!selected.endpoint)process.stderr.write(`nxbridge：再次恢复原会话请运行 codex resume ${sessionId}。\n`);
+    if(foreground)try{await brokerCall('codex.foreground.end',{endpoint,...(sessionId?{session_id:sessionId}:{}),foreground},{mutation:true,timeout:15000});}catch(error){process.stderr.write('agybridge：原窗口退出状态待核验：'+String(error)+'\n');}
+    if(sessionId&&!selected.endpoint)process.stderr.write(`agybridge：再次恢复原会话请运行 codex resume ${sessionId}。\n`);
   }
 }
 
 export async function openPartner(host:Host,options:TargetSelector&{interrupt?:boolean}={},codexArgs?:string[]):Promise<number>{
   const controller=await processIdentity(process.pid);
-  const {peer,endpoint,handle,mode,handoffId,leaseId,notice,resume,modelProfile}=await brokerCall<any>('open',{...options,host,interrupt:options.interrupt??false,request_id:randomUUID(),terminal_origin:await externalTerminalOrigin(),controller:{pid:controller.pid,procStart:controller.startedAt}},{timeout:40000});
+  const {peer,endpoint,handoffId,leaseId,notice,modelProfile,configHome}=await brokerCall<any>('open',{...options,host,interrupt:options.interrupt??false,request_id:randomUUID(),terminal_origin:await externalTerminalOrigin(),controller:{pid:controller.pid,procStart:controller.startedAt}},{timeout:40000});
   if(!peer.sessionId)throw new BridgeError('partner_starting','搭档尚未就绪。');
   const claim=async(child:ChildProcess)=>{const identity=await processIdentity(child.pid!);await brokerCall('open.claim',{peer_id:peer.id,session_id:peer.sessionId,handoff_id:handoffId,lease_id:leaseId,foreground:{pid:identity.pid,procStart:identity.startedAt}},{mutation:true});};
   try{
-  if(mode==='child'){
-    if(notice)process.stderr.write(notice+'\n');
-    const profile=modelProfile??{},settings=claudeProfileSettings(profile);
-    return await interactive('claude',[resume?'--resume':'--session-id',peer.sessionId,...(Object.keys(settings).length?['--settings',JSON.stringify(settings)]:[]),...claudeProfileArgs(profile)],claim,{cwd:peer.cwd,sessionId:peer.sessionId,configHome:endpoint?.configHome});
+    if(host==='agy'){
+      if(notice)process.stderr.write(notice+'\n');
+      const profile=modelProfile??{};
+      const args=['--conversation',peer.sessionId,...(profile.model?['--model',profile.model]:[]),...(profile.effort!==undefined?['--effort',String(profile.effort)]:[])];
+      return await interactive('agy',args,claim,{cwd:peer.cwd,sessionId:peer.sessionId,configHome:configHome??endpoint?.configHome});
+    }
+    const args=endpoint?.mode==='app-server'?['--remote',endpoint.address,'--cd',peer.cwd,...(codexArgs??['resume',peer.sessionId])]:null;
+    if(!args)throw new BridgeError('embedded_active','已有 embedded 窗口不能同时恢复成第二个运行时。请先释放原窗口，再用 agybridge codex resume <ID> 冷恢复。');
+    return await interactive('codex',args,claim,{cwd:peer.cwd,sessionId:peer.sessionId,configHome:endpoint?.configHome});
+  }finally{
+    if(leaseId)try{await brokerCall('open.return',{peer_id:peer.id,session_id:peer.sessionId,handoff_id:handoffId,lease_id:leaseId,foreground_ended:true},{mutation:true});}catch(error){process.stderr.write(`agybridge：接管归还待核对：${String(error)}\n`);}
+    process.stderr.write(`agybridge：再次打开此搭档请运行 agybridge open ${host} --member ${peer.id}。\n`);
   }
-  const args=host==='claude'?['attach',handle]:endpoint?.mode==='app-server'?['--remote',endpoint.address,'--cd',peer.cwd,...(codexArgs??['resume',peer.sessionId])]:null;
-  if(!args)throw new BridgeError('embedded_active','已有 embedded 窗口不能同时恢复成第二个运行时。请先释放原窗口，再用 nxbridge codex resume <ID> 冷恢复。');
-  return await interactive(host,args,claim,{cwd:peer.cwd,sessionId:peer.sessionId,configHome:endpoint?.configHome});
-  }finally{if(leaseId)try{await brokerCall('open.return',{peer_id:peer.id,session_id:peer.sessionId,handoff_id:handoffId,lease_id:leaseId,foreground_ended:true},{mutation:true});}catch(error){process.stderr.write(`nxbridge：接管归还待核对：${String(error)}\n`);}if(host==='codex')process.stderr.write(`nxbridge：再次打开此搭档请运行 nxbridge open codex --member ${peer.id}。\n`);}
 }

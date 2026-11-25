@@ -51,5 +51,5 @@ export function parseFileReferences(body:string,cwd=process.cwd()):FileReference
 export function fileHintFields(body:string,cwd=process.cwd()):{hint?:string}{
   const count=parseFileReferences(body,cwd).length;
                                              
-  return count<2?{}:{hint:`nxbridge: ${count} file refs; if reading: one parallel call, mind encoding`};
+  return count<2?{}:{hint:`agybridge: ${count} file refs; if reading: one parallel call, mind encoding`};
 }

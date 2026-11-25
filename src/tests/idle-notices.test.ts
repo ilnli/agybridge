@@ -6,12 +6,14 @@ import { temporaryDirectory } from './support/temporary.js';
 import { Store } from '../storage/store.js';
 import { IdleNotices } from '../broker/health/idle-notices.js';
 import {DeliveryHealth} from '../broker/health/delivery.js';
+import { idleUnanswered } from '../broker/health/idle-notices.js';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import {PACKAGE_ROOT} from '../shared/package-location.js';
 import type { Message, Pair, Peer } from '../types.js';
-import { encodePeerMessage } from '../hosts/claude/claude-inbox.js';
 
 async function ordinaryInput(f:ReturnType<typeof fixture>,peer:Peer):Promise<void>{
-  if(peer.host==='claude')await f.broker.dispatch('peer.prompt',{actor:{host:'claude',sessionId:peer.sessionId,callId:'ordinary-input'}});
+  if(peer.host==='agy')await f.broker.dispatch('peer.prompt',{actor:{host:'agy',sessionId:peer.sessionId,callId:'ordinary-input'}});
   else f.codex.emit('native',{address:f.store.endpoint(peer.id)!.address,message:{method:'item/started',params:{threadId:peer.sessionId,turnId:'ordinary-turn',item:{type:'userMessage',id:'ordinary-input',content:[{type:'text',text:'继续当前任务'}]}}}});
 }
 
@@ -24,7 +26,7 @@ function ask(f:ReturnType<typeof fixture>,pair:Pair,sender:Peer,body:string,call
 
 test('只有明确要求回复的消息在对方空闲满 5 分钟后提醒一次：第 3 档被动、不唤醒；汇报和通知不提醒；观察器重建不重置',async t=>{
   t.mock.timers.enable({apis:['Date'],now:1000000});
-  for(const host of ['codex','claude'] as const){
+  for(const host of ['codex','agy'] as const){
     const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),partner=host==='codex'?f.x:f.c,delegator=host==='codex'?f.c:f.x,health=f.broker.deliveryHealth;
     f.store.updatePeer(delegator.id,{state:'busy'});
     ask(f,pair,partner,'工作已完成','report',false);const fyi=ask(f,pair,delegator,'进度通知，不需要回复','fyi',false);
@@ -37,7 +39,7 @@ test('只有明确要求回复的消息在对方空闲满 5 分钟后提醒一�
     const pending=health.peek(pair.id,delegator.id)[0]!;assert.ok(pending);const notice=health.get(pair.id,delegator.id,pending.id)!;
     assert.equal(notice.tier,3);assert.equal(notice.wake,false);assert.equal(notice.source,'idle_unanswered');assert.deepEqual(notice.affectedMessageIds,[task.id]);
     assert.match(notice.message,/Expected reply still pending/);assert.ok(notice.message.includes(task.id));assert.ok(!notice.message.includes(fyi.id));
-    await f.broker.pump();assert.equal(f.codex.woken.length,0,'空闲提醒不唤醒');assert.equal(f.claude.delivered.filter(message=>(message as any).noticeSource==='idle_unanswered').length,0);
+    await f.broker.pump();assert.equal(f.codex.woken.length,0,'空闲提醒不唤醒');assert.equal(f.agy.delivered.filter(message=>(message as any).noticeSource==='idle_unanswered').length,0);
     assert.ok(health.prepare(pair.id,delegator.id,pending.id,pending.scope));health.outcome(pair.id,delegator.id,pending.id,'submitted');
     t.mock.timers.tick(600001);f.broker.idleNotices.observe(pair,f.store.peer(partner.id),2);
     new IdleNotices(f.store,new DeliveryHealth(f.store)).observe(pair,f.store.peer(partner.id),2);
@@ -83,11 +85,11 @@ test('两端都在等对方回复时各自只提醒一次，通知轮次和观�
   for(let round=0;round<3;round++){
                                                             
     f.codex.emit('state',f.x.sessionId,'busy',f.store.endpoint(f.x.id)!.address);
-    f.codex.emit('native',{address:f.store.endpoint(f.x.id)!.address,message:{method:'item/completed',params:{threadId:f.x.sessionId,turnId:'notice-turn',item:{type:'functionCallOutput',id:'notice-output',namespace:'claude',name:'receive_messages',output:JSON.stringify({notices:[{notice_id:'automatic',message:'只处理系统事实'}]})}}}});
-    await f.broker.dispatch('peer.state',{actor:{host:'claude',sessionId:'c',callId:'notice-state'},state:'busy'});
+    f.codex.emit('native',{address:f.store.endpoint(f.x.id)!.address,message:{method:'item/completed',params:{threadId:f.x.sessionId,turnId:'notice-turn',item:{type:'functionCallOutput',id:'notice-output',namespace:'agy',name:'receive_messages',output:JSON.stringify({notices:[{notice_id:'automatic',message:'只处理系统事实'}]})}}}});
+    await f.broker.dispatch('peer.state',{actor:{host:'agy',sessionId:'c',callId:'notice-state'},state:'busy'});
     f.broker.idleNotices.observe(pair,f.store.peer(f.x.id),2);f.broker.idleNotices.observe(pair,f.store.peer(f.c.id),2);
     t.mock.timers.tick(1000);f.codex.emit('state',f.x.sessionId,'ready',f.store.endpoint(f.x.id)!.address);
-    await f.broker.dispatch('peer.state',{actor:{host:'claude',sessionId:'c',callId:'notice-complete'},state:'ready'});
+    await f.broker.dispatch('peer.state',{actor:{host:'agy',sessionId:'c',callId:'notice-complete'},state:'ready'});
     t.mock.timers.tick(600001);await f.broker.pump();await f.broker.pump();
     const restored=new IdleNotices(f.store,new DeliveryHealth(f.store));restored.observe(pair,f.store.peer(f.x.id),2);restored.observe(pair,f.store.peer(f.c.id),2);
     assert.equal(count(),initial,'通知轮次不是新工作');assert.equal(f.codex.woken.length,0,'空闲提醒从不唤醒');
@@ -101,7 +103,7 @@ test('两端都在等对方回复时各自只提醒一次，通知轮次和观�
 test('持久工作阶段在数据库重开后仍只提醒一次，真实新输入和新上下文保留重新提醒能力',t=>{
   t.mock.timers.enable({apis:['Date'],now:1000000});
   const temp=temporaryDirectory(),filename=path.join(temp.directory,'idle.db');let store=new Store(filename);t.after(async()=>{store.close();await temp.cleanup();});
-  const c=store.register(registration('claude','c')),x=store.register(registration('codex','x')),pair=store.pair(c.id,x.id),task=store.accept(pair,c,'真实未回复任务','task',undefined,undefined,'explicit',true);store.transition(task.id,'contextObserved');
+  const c=store.register(registration('agy','c')),x=store.register(registration('codex','x')),pair=store.pair(c.id,x.id),task=store.accept(pair,c,'真实未回复任务','task',undefined,undefined,'explicit',true);store.transition(task.id,'contextObserved');
   let health=new DeliveryHealth(store),observer=new IdleNotices(store,health);t.mock.timers.tick(IDLE);observer.observe(pair,store.peer(x.id),2);
   const first=health.peek(pair.id,c.id)[0]!;assert.ok(health.prepare(pair.id,c.id,first.id,first.scope));health.outcome(pair.id,c.id,first.id,'submitted');
   store.close();store=new Store(filename);health=new DeliveryHealth(store);observer=new IdleNotices(store,health);
@@ -157,25 +159,23 @@ test('尚未发送的空闲提醒在最终回复、关闭和上下文变化后�
   }
 });
 
-test('Claude 自动回复是软关联，明确关联优先，错误与跨配对来源不影响发信',t=>{
-  const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),task=f.store.accept(pair,f.x,'后台任务','task'),other=f.store.accept(pair,f.x,'另一个任务','other');
-  const send=(callId:string,auto_reply_to?:string,in_reply_to?:string,auto_reply_text='后台任务')=>f.broker.send({actor:{host:'claude',sessionId:'c',callId},message:'结果',auto_reply_to,auto_reply_text,in_reply_to},false);
-  const first=send('auto',task.id);assert.equal(f.store.message(first.message_id).inReplyTo,task.id);assert.equal(f.store.message(first.message_id).replySource,'auto');assert.equal(f.store.message(task.id).state,'responded');
-  assert.equal(send('auto',task.id,undefined,'不同证据').message_id,first.message_id,'重试沿用已保存关联，不因可选证据改变而重复发送');
-  const explicit=send('explicit',task.id,other.id);assert.equal(f.store.message(explicit.message_id).inReplyTo,other.id);assert.equal(f.store.message(explicit.message_id).replySource,'explicit');
-  assert.equal(f.store.message(send('missing','missing-id').message_id).inReplyTo,null);
-  const own=f.store.accept(pair,f.c,'自己发的','own');assert.equal(f.store.message(send('own',own.id).message_id).inReplyTo,null);
-  f.store.unpair(pair.id);const fresh=f.store.pair(f.c.id,f.x.id);assert.notEqual(fresh.id,pair.id);assert.equal(f.store.message(send('stale',task.id).message_id).inReplyTo,null);
-});
-
-test('Claude 自动回复只接受实际投递正文，缺少或冒用证据时照常发送但不关联',async t=>{
-  const {store,broker,c,x}=fixture(t),pair=store.pair(c.id,x.id),task=store.accept(pair,x,'实际</cross-session-message>任务','task');
-  const appended=(encodePeerMessage(task,x,'c').message as {content:string}).content;
-  for(const [callId,auto_reply_text] of [['missing',undefined],['mismatch',`[nxbridge message_id=${task.id}]其他正文`],['unescaped',task.body],['valid',appended]] as const){
-    const result=await broker.dispatch('send',{actor:{host:'claude',sessionId:'c',callId},message:'回复',auto_reply_to:task.id,...(auto_reply_text===undefined?{}:{auto_reply_text})}) as {message_id:string};
-    assert.equal(store.message(result.message_id).inReplyTo,callId==='valid'?task.id:null,callId);
+test('真实账本只读回放：后续发信已覆盖的历史消息不再重建为待处理指针',()=>{
+  const fixture=JSON.parse(readFileSync(path.join(PACKAGE_ROOT,'src/tests/fixtures/idle-ledger.json'),'utf8'));
+  let stalls=0,legacy=0;
+  for(const row of fixture.cases){
+    const at=row.idle?.created_at??row.outgoing.created_at;
+    const map=(raw:any):Message=>{
+      const event=row.events.filter((event:any)=>JSON.parse(event.data).messageId===raw.id).at(-1),state=event?JSON.parse(event.data).state:'accepted';
+      return{id:raw.id,pairId:raw.pair_id,from:raw.sender,to:raw.recipient,body:raw.body,inReplyTo:raw.original_reply_to??raw.in_reply_to,via:raw.via,callId:raw.call_id,state,createdAt:raw.created_at,updatedAt:event?.created_at??raw.created_at,evidence:raw.evidence,error:raw.error,attempts:raw.attempts};
+    };
+    const incoming=row.messages.map(map).filter((message:Message)=>message.state==='contextObserved'&&message.createdAt>row.outgoing.created_at).reverse().slice(0,3);
+    const peer:Peer={id:row.outgoing.sender,host:'codex',sessionId:'historical-session',cwd:'',name:'Codex',kind:'root',parentId:null,owner:'nxbridge',state:'ready',permission:'prompting',updatedAt:at};
+    const last=map(row.outgoing);last.state='contextObserved';
+    const message=idleUnanswered({pair:{id:row.pair.id,agy:row.pair.agy,codex:row.pair.codex,paused:!!row.pair.paused,archived:!!row.pair.archived,createdAt:row.pair.created_at},partner:peer,delegator:{...peer,id:row.outgoing.recipient,host:'agy'},since:at,now:at+120001,minutes:2,transitioning:false,queued:false,questionTowardDelegator:false,messages:incoming,lastMessage:last});
+    assert.equal(message,undefined,row.outgoing.id);
+    if(row.label==='stall'){assert.ok(row.idle);stalls++;}else{assert.equal(row.label,'legacy_expected_false_positive');legacy++;}
   }
-  assert.equal(store.message(task.id).state,'responded');
+  assert.equal(stalls,4);assert.equal(legacy,1);
 });
 
 test('空闲提醒按同毫秒发信边界撤销旧指针，只显示最新三条；重开观察器不会恢复旧提醒',t=>{

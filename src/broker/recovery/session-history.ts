@@ -21,7 +21,7 @@ const scans=new WeakMap<Store,Map<string,HistoryCache>>();
 const verifications=new WeakMap<Store,Map<string,Promise<SessionHistoryState>>>();
 const pathKey=(value:string)=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value);
 const missing=(error:unknown)=>(error as NodeJS.ErrnoException)?.code==='ENOENT';
-const storesFor=(host:Host)=>host==='codex'?['sessions','archived_sessions']:['projects'];
+const storesFor=(host:Host)=>host==='codex'?['sessions','archived_sessions']:[path.join('antigravity-cli','brain')];
 const nativeFile=(endpoint:Endpoint)=>(endpoint as NativeEndpoint).nativeSession?.transcriptPath;
 const within=(root:string,file:string)=>{const relative=path.relative(root,file);return !!relative&&!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith('..'+path.sep);};
 
@@ -32,7 +32,6 @@ function context(peer:Peer,endpoint:Endpoint):{configHome:string;realHome:string
   return{configHome,realHome};
 }
 
-                                     
 function readIdentity(file:string,host:Host,budget?:{bytes:number}):NativeIdentity{
   const fd=fs.openSync(file,'r');
   try{
@@ -44,10 +43,16 @@ function readIdentity(file:string,host:Host,budget?:{bytes:number}):NativeIdenti
     const text=buffer.toString('utf8',0,size),lines=text.split('\n');
     if(size<stat.size)lines.pop();
     const ids=new Set<string>();
+    let validRows=0;
     for(const line of lines.filter(line=>line.trim()).slice(0,HEAD_LINES)){
       let row:any;try{row=JSON.parse(line);}catch{return{ids:[...ids],unknown:true};}
+      validRows++;
       if(host==='codex')return row?.type==='session_meta'&&typeof row.payload?.id==='string'&&row.payload.id?{ids:[row.payload.id],unknown:false}:{ids:[],unknown:true};
       if(typeof row?.sessionId==='string'&&row.sessionId)ids.add(row.sessionId);
+    }
+    if(host==='agy'&&ids.size===0&&validRows>0){
+      const match=/[/\\]brain[/\\]([a-zA-Z0-9_-]+)[/\\]\.system_generated[/\\]logs[/\\]transcript(?:_full)?\.jsonl$/i.exec(file);
+      if(match)ids.add(match[1]!);
     }
     return{ids:[...ids],unknown:ids.size===0};
   }finally{fs.closeSync(fd);}
@@ -112,11 +117,8 @@ export function recordSessionHistory(store:Store,peer:Peer,endpoint:Endpoint,fil
   else if(invalid&&same)store.setSetting(key,null);
 }
 
-function auxiliaryDirectory(proof:HistoryProof,file:string):boolean{
-  if(proof.host!=='claude'||!['memory','tool-results'].includes(path.basename(file)))return false;
-                                          
-  const depth=path.relative(path.join(proof.realHome,'projects'),file).split(path.sep).length;
-  return depth===2||depth===3&&path.basename(file)==='tool-results';
+function auxiliaryDirectory(_proof:HistoryProof,_file:string):boolean{
+  return false;
 }
 
 const yieldScan=()=>new Promise<void>(resolve=>setImmediate(resolve));

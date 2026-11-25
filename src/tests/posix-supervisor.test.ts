@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdirSync, readFileSync, existsSync, lstatSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnPosixSupervisor, posixSupervisorExit, watchPosixNative } from '../process/posix/posix-supervisor.js';
 import { processIdentity } from '../process/process.js';
@@ -22,19 +22,18 @@ test('POSIX 原生命令启动失败仍提供原始系统错误',options,async t
 });
 
 for(const waitForNative of [false,true])for(const code of [0,23])test('POSIX 原生退出码 '+code+' 经组长清理后仍完整传给调用者，等待交接：'+waitForNative,options,async t=>{
-  const fixture=temporaryDirectory(),home=fixture.directory,child=spawnPosixSupervisor(process.execPath,['-e',`process.stdout.write('原生输出');process.stderr.write('原生诊断');process.exitCode=${code};`],{stdio:['ignore','pipe','pipe'],waitForNative,home}),closed=once(child,'close');
+  const fixture=temporaryDirectory(),home=fixture.directory,child=spawnPosixSupervisor(process.execPath,['-e',`process.stdout.write('原生输出');process.stderr.write('原生诊断');process.exitCode=${code};`],{stdio:['ignore','pipe','pipe'],waitForNative}),closed=once(child,'close');
   const proof=await rememberOwnedChild(home,child,'host-control',{posixGroup:true});let stdout='',stderr='';child.stdout!.on('data',chunk=>stdout+=chunk);child.stderr!.on('data',chunk=>stderr+=chunk);
   t.after(async()=>{if(proof)await releaseOwnedProcess(proof);await fixture.cleanup();});await closed;
   assert.deepEqual(posixSupervisorExit(child),{code,signal:null});assert.equal(stdout,'原生输出');assert.equal(stderr,'原生诊断');
   assert.equal(existsSync(proof!.completionFile!),true,'监督进程在组排空后自行发布完成凭据');
-  assert.equal(!!proof!.posixControl,waitForNative);
   assert.equal(await ownedRecordState(proof!),'dead');
 });
 
 test('POSIX 启动归属尚未提交时丢失所有者，监督进程主动回收已启动的子进程',options,async t=>{
   const fixture=temporaryDirectory(),home=fixture.directory,ready=path.join(home,'started.json');
   const script="require('node:fs').writeFileSync(process.argv[1],JSON.stringify({pid:process.pid}));setInterval(()=>{},1000);";
-  const supervisor=spawnPosixSupervisor(process.execPath,['-e',script,ready],{stdio:'ignore',waitForNative:true,home}),closed=once(supervisor,'close');
+  const supervisor=spawnPosixSupervisor(process.execPath,['-e',script,ready],{stdio:'ignore',waitForNative:true}),closed=once(supervisor,'close');
                                                       
   const proof=await recordOwnedProcess(home,{role:'host-control',identity:await processIdentity(supervisor.pid!),parent:await processIdentity(process.pid),posixGroup:true,proof:{kind:'spawn'}});
   t.after(async()=>{await releaseOwnedProcess(proof);await fixture.cleanup();});
@@ -48,7 +47,7 @@ test('POSIX 包装器先退出时保留已声明宿主，宿主退出后回收�
   const fixture=temporaryDirectory(),home=fixture.directory,ready=path.join(home,'native.json'),stop=path.join(home,'native-exit');
   const native="const{spawn}=require('node:child_process'),fs=require('node:fs');const child=spawn(process.execPath,['-e',\"process.on('SIGTERM',()=>{});setInterval(()=>{},1000);\"],{stdio:'ignore'});child.once('spawn',()=>fs.writeFileSync(process.argv[1],JSON.stringify({native:process.pid,child:child.pid})));setInterval(()=>{if(fs.existsSync(process.argv[2]))process.exit(0);},25);";
   const wrapper="const{spawn}=require('node:child_process');const child=spawn(process.execPath,['-e',"+JSON.stringify(native)+",...process.argv.slice(1)],{stdio:'ignore'});child.unref();";
-  const supervisor=spawnPosixSupervisor(process.execPath,['-e',wrapper,ready,stop],{stdio:'ignore',waitForNative:true,home}),closed=once(supervisor,'close'),proof=await rememberOwnedChild(home,supervisor,'host-control',{posixGroup:true});
+  const supervisor=spawnPosixSupervisor(process.execPath,['-e',wrapper,ready,stop],{stdio:'ignore',waitForNative:true}),closed=once(supervisor,'close'),proof=await rememberOwnedChild(home,supervisor,'host-control',{posixGroup:true});
   t.after(async()=>{if(proof)await releaseOwnedProcess(proof);await fixture.cleanup();});
   for(let i=0;!existsSync(ready)&&i<100;i++)await delay(20);
   const pids=JSON.parse(readFileSync(ready,'utf8')),identity=await processIdentity(pids.native),descendant=await processIdentity(pids.child);await watchPosixNative(supervisor,identity);
@@ -64,13 +63,12 @@ test('POSIX 启动通道断开后其他进程可重复交接，错误代次或�
   const fixture=temporaryDirectory(),home=fixture.directory,ready=path.join(home,'native.json'),stop=path.join(home,'native-exit');
   const native="const fs=require('node:fs');fs.writeFileSync(process.argv[1],JSON.stringify({pid:process.pid}));setInterval(()=>{if(fs.existsSync(process.argv[2]))process.exit(0);},25);";
   const wrapper="const{spawn}=require('node:child_process');const child=spawn(process.execPath,['-e',"+JSON.stringify(native)+",...process.argv.slice(1)],{stdio:'ignore'});child.unref();";
-  const supervisor=spawnPosixSupervisor(process.execPath,['-e',wrapper,ready,stop],{stdio:'ignore',waitForNative:true,home}),closed=once(supervisor,'close'),proof=await rememberOwnedChild(home,supervisor,'codex-runtime',{posixGroup:true});assert.ok(proof);
+  const supervisor=spawnPosixSupervisor(process.execPath,['-e',wrapper,ready,stop],{stdio:'ignore',waitForNative:true}),closed=once(supervisor,'close'),proof=await rememberOwnedChild(home,supervisor,'codex-runtime',{posixGroup:true});assert.ok(proof);
   t.after(async()=>{await releaseOwnedProcess(proof);await fixture.cleanup();});
   for(let i=0;!existsSync(ready)&&i<100;i++)await delay(20);
   const identity=await processIdentity(JSON.parse(readFileSync(ready,'utf8')).pid);
   assert.equal(path.dirname(proof.completionFile!),processRegistryDirectory(home),'完成凭据保存在持久归属目录');
-  assert.equal(path.dirname(path.dirname(proof.posixControl!)),path.join(home,'run'),'控制 socket 随启动归属保存在持久目录');
-  assert.equal(lstatSync(path.dirname(proof.posixControl!)).mode&0o777,0o700);
+  assert.notEqual(path.dirname(proof.completionFile!),path.dirname(proof.posixControl!),'临时目录仅保存控制 socket');
   assert.ok(proof.posixControl);(supervisor.stdio[3] as import('node:net').Socket).destroy();
   for(const invalid of [{pid:2147483647,startedAt:identity.startedAt},{...identity,startedAt:identity.startedAt+'0'},await processIdentity(process.pid)]){
     await assert.rejects(declareOwnedNative(proof,invalid),{code:'process_launch_unverified'});assert.equal(await ownedProcessState(identity),'alive');

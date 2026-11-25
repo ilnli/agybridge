@@ -31,8 +31,8 @@ test('Windows 前台及普通环境的 Path 均能解析独立安装目录和裸
 test('Codex 终端仅继承请求方 Claude 的真实检测值，多配对不借用其他窗口或认证',t=>{
   const directory=temporary(t),codex=profile(directory,{env:{TERM:'codex-term',TERM_PROGRAM:'旧终端',WT_SESSION:'旧标记'}});
   saveUserProfile(directory,codex);
-  saveUserProfile(directory,profile(directory,{id:'claude-a',host:'claude',sourceSession:'claude-a',env:{TERM:'真实终端甲',WT_SESSION:'真实窗口甲',ANTHROPIC_API_KEY:'不准复制'},capturedAt:2}));
-  saveUserProfile(directory,profile(directory,{id:'claude-b',host:'claude',sourceSession:'claude-b',configHome:directory,env:{TERM:'真实终端乙'},capturedAt:3}));
+  saveUserProfile(directory,profile(directory,{id:'claude-a',host:'agy',sourceSession:'claude-a',env:{TERM:'真实终端甲',WT_SESSION:'真实窗口甲',ANTHROPIC_API_KEY:'不准复制'},capturedAt:2}));
+  saveUserProfile(directory,profile(directory,{id:'claude-b',host:'agy',sourceSession:'claude-b',configHome:directory,env:{TERM:'真实终端乙'},capturedAt:3}));
   const options={home:directory,cwd:directory,baseline:{PATH:'',TERM_PROGRAM:'broker 终端'},current:{}};
   let chosen=selectHostLaunch('codex',{...DEFAULT_CONFIG,codexBinary:process.execPath,codexHome:directory},{...options,requesterSession:'claude-a'});
   assert.equal(chosen.env.TERM,'真实终端甲');assert.equal(chosen.env.WT_SESSION,'真实窗口甲');assert.equal(chosen.env.TERM_PROGRAM,undefined);assert.equal(chosen.env.ANTHROPIC_API_KEY,undefined);
@@ -44,26 +44,26 @@ test('Claude-first 没有 Codex 模板也传递终端；没有窗口记录时不
   const directory=temporary(t),config={...DEFAULT_CONFIG,codexBinary:process.execPath,codexHome:directory};
   const options={home:directory,cwd:directory,baseline:{PATH:'',TERM:'broker 环境'},current:{}};
   assert.equal(selectHostLaunch('codex',config,options).env.TERM,undefined);
-  saveUserProfile(directory,profile(directory,{host:'claude',sourceSession:'requester',env:{TERM:'实际终端',WT_SESSION:'实际窗口'}}));
+  saveUserProfile(directory,profile(directory,{host:'agy',sourceSession:'requester',env:{TERM:'实际终端',WT_SESSION:'实际窗口'}}));
   const chosen=selectHostLaunch('codex',config,{...options,requesterSession:'requester'});
   assert.equal(chosen.env.TERM,'实际终端');assert.equal(chosen.env.WT_SESSION,'实际窗口');assert.equal(chosen.profile,undefined);assert.equal(chosen.method,'pin');
 });
 
 
 test('空环境覆盖项在写入 process.env 前移除，不变成字面量 undefined',()=>{
-  const {env}=neutralEnvironment({NXBRIDGE_SERVICE_ORIGIN:undefined,NXBRIDGE_HOME:'隔离目录'});
-  assert.equal(Object.hasOwn(env,'NXBRIDGE_SERVICE_ORIGIN'),false);assert.equal(env.NXBRIDGE_HOME,'隔离目录');
+  const {env}=neutralEnvironment({AGYBRIDGE_SERVICE_ORIGIN:undefined,AGYBRIDGE_HOME:'隔离目录'});
+  assert.equal(Object.hasOwn(env,'AGYBRIDGE_SERVICE_ORIGIN'),false);assert.equal(env.AGYBRIDGE_HOME,'隔离目录');
 });
 
 test('隔离验收的禁用自更新设置经过中性环境后仍传给宿主',t=>{
-  const directory=temporary(t),keys=['NXBRIDGE_TEST_SCOPE','DISABLE_AUTOUPDATER'] as const;
+  const directory=temporary(t),keys=['AGYBRIDGE_TEST_SCOPE','DISABLE_AUTOUPDATER'] as const;
   const previous=Object.fromEntries(keys.map(key=>[key,process.env[key]]));
   try{
-    process.env.NXBRIDGE_TEST_SCOPE='隔离验收';process.env.DISABLE_AUTOUPDATER='1';
+    process.env.AGYBRIDGE_TEST_SCOPE='隔离验收';process.env.DISABLE_AUTOUPDATER='1';
     assert.equal(neutralEnvironment({DISABLE_AUTOUPDATER:undefined}).env.DISABLE_AUTOUPDATER,'1');
-    const launch=selectHostLaunch('claude',{...DEFAULT_CONFIG,claudeBinary:process.execPath,claudeHome:directory},{home:directory});
+    const launch=selectHostLaunch('agy',{...DEFAULT_CONFIG,agyBinary:process.execPath,agyHome:directory},{home:directory});
     assert.equal(launch.env.DISABLE_AUTOUPDATER,'1');
-    delete process.env.NXBRIDGE_TEST_SCOPE;
+    delete process.env.AGYBRIDGE_TEST_SCOPE;
     assert.equal(Object.hasOwn(neutralEnvironment({DISABLE_AUTOUPDATER:undefined}).env,'DISABLE_AUTOUPDATER'),false);
   }finally{
     for(const key of keys){if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key];}
@@ -93,7 +93,7 @@ test('恢复选择已核验版本时，启动准备复用结果而不再运行�
   const directory=temporary(t),launch=selectHostLaunch('codex',{...DEFAULT_CONFIG,codexBinary:process.execPath,codexHome:directory},{home:directory,cwd:directory,baseline:{PATH:''},current:{}});
   launch.updatedFrom=path.join(directory,'old-codex');launch.version='codex-cli 0.167.1';
   const prepared=await prepareOwnedLaunch(launch);
-  assert.equal(prepared.version,launch.version);assert.match(prepared.env.NXBRIDGE_OWNED_LAUNCH!,/^codex:/);
+  assert.equal(prepared.version,launch.version);assert.match(prepared.env.AGYBRIDGE_OWNED_LAUNCH!,/^codex:/);
 });
 
 test('已消失项目不作为跨项目默认模板，明确配对仍保留原窗口环境',t=>{
@@ -133,17 +133,17 @@ test('命令 pin 优先且按 argv 追加参数，子进程使用干净环境并
 });
 
 test('同会话原生观测不能绕过显式启动包装器或固定的配置目录',t=>{
-  const directory=temporary(t),observed=profile(directory,{host:'claude',sourceSession:'same-session'});
+  const directory=temporary(t),observed=profile(directory,{host:'agy',sourceSession:'same-session'});
   writeFileSync(path.join(directory,'launch-profiles.json'),JSON.stringify({version:1,profiles:[],observations:[{...observed,owned:true}],preferred:{}}));
-  const chosen=selectHostLaunch('claude',{...DEFAULT_CONFIG,claudeCommand:[process.execPath,'wrapper.mjs'],claudeHome:directory},{home:directory,sessionId:'same-session',baseline:{PATH:''}});
+  const chosen=selectHostLaunch('agy',{...DEFAULT_CONFIG,agyCommand:[process.execPath,'wrapper.mjs'],agyHome:directory},{home:directory,sessionId:'same-session',baseline:{PATH:''}});
   assert.equal(chosen.method,'command');assert.equal(chosen.profile,undefined);assert.ok(chosen.executable.prefix.includes('wrapper.mjs'));assert.equal(chosen.configHome,directory);
 });
 
 test('自定义包装器的并发控制命令串行执行，失败后继续后续命令',async t=>{
   const directory=temporary(t),script=path.join(directory,'exclusive.mjs'),lock=path.join(directory,'active.lock');
   writeFileSync(script,`import{openSync,closeSync,unlinkSync}from'node:fs';const file=${JSON.stringify(lock)};closeSync(openSync(file,'wx'));setTimeout(()=>{unlinkSync(file);console.log(process.argv.at(-1));process.exitCode=process.argv.at(-1)==='fail'?23:0;},80);`,'utf8');
-  const config={...DEFAULT_CONFIG,claudeCommand:[process.execPath,script],claudeHome:directory};
-  const outcomes=await Promise.allSettled(['first','fail','last'].map(arg=>runCli('claude',[arg],{config,home:directory})));
+  const config={...DEFAULT_CONFIG,agyCommand:[process.execPath,script],agyHome:directory};
+  const outcomes=await Promise.allSettled(['first','fail','last'].map(arg=>runCli('agy',[arg],{config,home:directory})));
   assert.equal(outcomes[0]!.status,'fulfilled');assert.equal(outcomes[1]!.status,'rejected');assert.equal(outcomes[2]!.status,'fulfilled');
   assert.equal((outcomes[0] as PromiseFulfilledResult<string>).value.trim(),'first');assert.equal((outcomes[1] as PromiseRejectedResult).reason.code,23);assert.equal((outcomes[2] as PromiseFulfilledResult<string>).value.trim(),'last');
 });
@@ -151,29 +151,29 @@ test('自定义包装器的并发控制命令串行执行，失败后继续后�
 test('自有会话只更新独立观测，不覆盖用户启动记录；间接 shell 不能冒充原生捕获',async t=>{
   const directory=temporary(t),user=profile(directory);saveUserProfile(directory,user);
   const store=new Store(':memory:');t.after(()=>store.close());const peer=store.register(registration('codex','owned',{cwd:directory}));
-  const capture={host:'codex' as const,sessionId:'owned',nativePid:2,nativeGeneration:'2',sourcePid:3,sourceGeneration:'3',env:{CODEX_HOME:user.configHome,NXBRIDGE_OWNED_LAUNCH:'codex:test',HTTPS_PROXY:'http://poisoned'}};
+  const capture={host:'codex' as const,sessionId:'owned',nativePid:2,nativeGeneration:'2',sourcePid:3,sourceGeneration:'3',env:{CODEX_HOME:user.configHome,AGYBRIDGE_OWNED_LAUNCH:'codex:test',HTTPS_PROXY:'http://poisoned'}};
   const native={pid:2,parentPid:1,name:'codex.exe',image:process.execPath,startedAt:'2'},source={pid:3,parentPid:2,name:'node.exe',startedAt:'3'};
   const dependencies={ancestors:async()=>[source,native],version:async()=> 'codex-cli 0.166.0'};
-  assert.equal((await captureUserLaunch(directory,capture,peer,2,dependencies)).owned,true);assert.equal(profileState(directory).profiles[0]?.env.HTTPS_PROXY,user.env.HTTPS_PROXY);assert.equal(profileState(directory).observations?.[0]?.env.NXBRIDGE_OWNED_LAUNCH,undefined);
+  assert.equal((await captureUserLaunch(directory,capture,peer,2,dependencies)).owned,true);assert.equal(profileState(directory).profiles[0]?.env.HTTPS_PROXY,user.env.HTTPS_PROXY);assert.equal(profileState(directory).observations?.[0]?.env.AGYBRIDGE_OWNED_LAUNCH,undefined);
   await assert.rejects(captureUserLaunch(directory,{...capture,force:true,env:{CODEX_HOME:user.configHome}},peer,2,{...dependencies,ancestors:async()=>[source,{pid:4,parentPid:2,name:'powershell.exe',startedAt:'2.5'},native]}),{code:'launch_capture_unverified'});
   assert.equal(readFileSync(path.join(directory,'launch-profiles.json'),'utf8').includes('codex:test'),false);
 });
 
 test('实例变量与临时 PATH 被剥离，代理和用户认证保留',()=>{
   const nativeBin=process.platform==='win32'?'C:\\native-bin':'/opt/native-bin';
-  const env={PATH:[path.join(os.tmpdir(),'codex-arg0-test'),nativeBin].join(path.delimiter),ANTHROPIC_API_KEY:'user-key',HTTPS_PROXY:'http://proxy',CLAUDE_CODE_MESSAGING_SOCKET:'old',CLAUDECODE:'1',NXBRIDGE_SERVICE_ORIGIN:'old',CODEX_HOME:'native-home'};
-  const clean=cleanInstanceEnvironment(env);assert.equal(clean.env.PATH,nativeBin);assert.equal(clean.env.HTTPS_PROXY,env.HTTPS_PROXY);assert.equal(clean.env.ANTHROPIC_API_KEY,env.ANTHROPIC_API_KEY);assert.equal(clean.env.CLAUDECODE,undefined);assert.equal(clean.env.NXBRIDGE_SERVICE_ORIGIN,undefined);assert.equal(clean.env.CODEX_HOME,'native-home');
+  const env={PATH:[path.join(os.tmpdir(),'codex-arg0-test'),nativeBin].join(path.delimiter),ANTHROPIC_API_KEY:'user-key',HTTPS_PROXY:'http://proxy',ANTIGRAVITY_CONVERSATION_ID:'1',AGYBRIDGE_SERVICE_ORIGIN:'old',CODEX_HOME:'native-home'};
+  const clean=cleanInstanceEnvironment(env);assert.equal(clean.env.PATH,nativeBin);assert.equal(clean.env.HTTPS_PROXY,env.HTTPS_PROXY);assert.equal(clean.env.ANTHROPIC_API_KEY,env.ANTHROPIC_API_KEY);assert.equal(clean.env.ANTIGRAVITY_CONVERSATION_ID,undefined);assert.equal(clean.env.AGYBRIDGE_SERVICE_ORIGIN,undefined);assert.equal(clean.env.CODEX_HOME,'native-home');
 });
 
-for(const host of ['codex','claude'] as const)test('前台沿用实时终端、语言及命令环境，后台仍使用原有隔离记录：'+host,async t=>{
+for(const host of ['codex','agy'] as const)test('前台沿用实时终端、语言及命令环境，后台仍使用原有隔离记录：'+host,async t=>{
   const directory=temporary(t),nativeHome=path.join(directory,'live-home');mkdirSync(nativeHome);
   saveUserProfile(directory,profile(directory,{host,env:{TERM:'旧终端',COLORTERM:'旧颜色',LANG:'旧语言',HTTPS_PROXY:'http://old-proxy',PATH:'old-path'}}));
   const script=path.join(directory,'foreground.mjs');writeFileSync(script,'console.log(JSON.stringify({args:process.argv.slice(2),env:process.env}));','utf8');
-  const current={PATH:path.join(directory,'temporary-bin'),TERM:'xterm-256color',COLORTERM:'truecolor',WT_SESSION:'当前窗口',LANG:'zh_CN.UTF-8',LC_ALL:'C.UTF-8',HTTPS_PROXY:'http://127.0.0.1:7891',OPENAI_API_KEY:'当前临时凭据',NODE_OPTIONS:'--no-warnings',npm_config_user_agent:'当前 Node 环境',CODEX_THREAD_ID:'旧线程',NXBRIDGE_ACTOR:'旧路由',[host==='codex'?'CODEX_HOME':'CLAUDE_CONFIG_DIR']:nativeHome};
-  const config={...DEFAULT_CONFIG,[host==='codex'?'codexCommand':'claudeCommand']:[process.execPath,script]};
+  const current={PATH:path.join(directory,'temporary-bin'),TERM:'xterm-256color',COLORTERM:'truecolor',WT_SESSION:'当前窗口',LANG:'zh_CN.UTF-8',LC_ALL:'C.UTF-8',HTTPS_PROXY:'http://127.0.0.1:7891',OPENAI_API_KEY:'当前临时凭据',NODE_OPTIONS:'--no-warnings',npm_config_user_agent:'当前 Node 环境',CODEX_THREAD_ID:'旧线程',AGYBRIDGE_ACTOR:'旧路由',[host==='codex'?'CODEX_HOME':'AGY_HOME']:nativeHome};
+  const config={...DEFAULT_CONFIG,[host==='codex'?'codexCommand':'agyCommand']:[process.execPath,script]};
   const chosen=selectHostLaunch(host,config,{home:directory,cwd:directory,current,foreground:true});
   for(const key of ['PATH','TERM','COLORTERM','WT_SESSION','LANG','LC_ALL','HTTPS_PROXY','OPENAI_API_KEY','NODE_OPTIONS','npm_config_user_agent'])assert.equal(chosen.env[key],current[key as keyof typeof current],key);
-  assert.equal(chosen.env.CODEX_THREAD_ID,undefined);assert.equal(chosen.env.NXBRIDGE_ACTOR,undefined);assert.equal(chosen.configHome,nativeHome);assert.equal(chosen.environment.source,'foreground-terminal');
+  assert.equal(chosen.env.CODEX_THREAD_ID,undefined);assert.equal(chosen.env.AGYBRIDGE_ACTOR,undefined);assert.equal(chosen.configHome,nativeHome);assert.equal(chosen.environment.source,'foreground-terminal');
   const child=spawnSelectedHost(chosen,['resume','原会话'],{stdio:['ignore','pipe','pipe']});let output='';child.stdout!.setEncoding('utf8').on('data',value=>output+=value);const[code]=await once(child,'exit');assert.equal(code,0);
   const observed=JSON.parse(output);assert.deepEqual(observed.args,['resume','原会话']);assert.equal(observed.env.LANG,current.LANG);assert.equal(observed.env.COLORTERM,current.COLORTERM);assert.equal(observed.env.HTTPS_PROXY,current.HTTPS_PROXY);assert.equal(observed.env.PWD,directory);
   const background=selectHostLaunch(host,DEFAULT_CONFIG,{home:directory,cwd:directory,current,baseline:{PATH:''}});assert.equal(background.env.LANG,'旧语言');assert.equal(background.env.NODE_OPTIONS,undefined);assert.equal(background.env.HTTPS_PROXY,'http://old-proxy');
@@ -181,9 +181,9 @@ for(const host of ['codex','claude'] as const)test('前台沿用实时终端、�
 
 test('普通调用只首次采集，重新登记刷新；后台注册先于接管仍不成为用户模板',async t=>{
   const directory=temporary(t),user=profile(directory),store=new Store(':memory:');t.after(()=>store.close());
-  const peer=store.register(registration('claude','user',{cwd:directory}));
-  const capture={host:'claude' as const,sessionId:'user',nativePid:2,nativeGeneration:'2',sourcePid:3,sourceGeneration:'3',env:{CLAUDE_CONFIG_DIR:user.configHome,HTTPS_PROXY:'http://original'}};
-  let checks=0;const dependencies={ancestors:async()=>{checks++;return[{pid:3,parentPid:2,name:'node.exe',startedAt:'3'},{pid:2,parentPid:1,name:'claude.exe',image:process.execPath,startedAt:'2'}];},version:async()=> '2.1.316 (Claude Code)'};
+  const peer=store.register(registration('agy','user',{cwd:directory}));
+  const capture={host:'agy' as const,sessionId:'user',nativePid:2,nativeGeneration:'2',sourcePid:3,sourceGeneration:'3',env:{AGY_HOME:user.configHome,HTTPS_PROXY:'http://original'}};
+  let checks=0;const dependencies={ancestors:async()=>{checks++;return[{pid:3,parentPid:2,name:'node.exe',startedAt:'3'},{pid:2,parentPid:1,name:'agy.exe',image:process.execPath,startedAt:'2'}];},version:async()=> '1.5.14'};
   await captureUserLaunch(directory,capture,peer,2,dependencies);
   assert.equal((await captureUserLaunch(directory,{...capture,env:{...capture.env,HTTPS_PROXY:'http://changed'}},peer,2,dependencies)).cached,true);assert.equal(checks,1);assert.equal(profileState(directory).profiles[0]!.env.HTTPS_PROXY,'http://original');
   await captureUserLaunch(directory,{...capture,force:true,env:{...capture.env,HTTPS_PROXY:'http://changed'}},peer,2,dependencies);assert.equal(checks,2);assert.equal(profileState(directory).profiles[0]!.env.HTTPS_PROXY,'http://changed');
@@ -192,13 +192,13 @@ test('普通调用只首次采集，重新登记刷新；后台注册先于接�
 });
 
 test('捕获在异步核验后合并其他窗口的新记录，观测与模板共用最终记录 ID',async t=>{
-  const directory=temporary(t),original=profile(directory,{host:'claude'});saveUserProfile(directory,original);
-  const store=new Store(':memory:');t.after(()=>store.close());const peer=store.register(registration('claude','new-session',{cwd:directory}));
-  const capture={host:'claude' as const,sessionId:'new-session',nativePid:2,nativeGeneration:'native',sourcePid:3,sourceGeneration:'source',env:{CLAUDE_CONFIG_DIR:original.configHome}};
+  const directory=temporary(t),original=profile(directory,{host:'agy'});saveUserProfile(directory,original);
+  const store=new Store(':memory:');t.after(()=>store.close());const peer=store.register(registration('agy','new-session',{cwd:directory}));
+  const capture={host:'agy' as const,sessionId:'new-session',nativePid:2,nativeGeneration:'native',sourcePid:3,sourceGeneration:'source',env:{AGY_HOME:original.configHome}};
   const other=profile(directory,{id:'other-window',host:'codex'});
   const result=await captureUserLaunch(directory,capture,peer,2,{
-    ancestors:async()=>[{pid:3,parentPid:2,name:'node',startedAt:'source'},{pid:2,parentPid:1,name:'claude',image:process.execPath,startedAt:'native'}],
-    version:async()=>{saveUserProfile(directory,other);return'2.1.316 (Claude Code)';}
+    ancestors:async()=>[{pid:3,parentPid:2,name:'node',startedAt:'source'},{pid:2,parentPid:1,name:'agy',image:process.execPath,startedAt:'native'}],
+    version:async()=>{saveUserProfile(directory,other);return'1.5.14';}
   });
   const state=profileState(directory);
   assert.equal(result.profile?.id,original.id);assert.equal(state.profiles.length,2);

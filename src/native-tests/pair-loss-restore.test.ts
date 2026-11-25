@@ -23,10 +23,10 @@ test('发布入口恢复被关闭归档的托管搭档：原配对和原会话�
   t.diagnostic('阶段：发布 CLI 显式恢复原配对');
   const fact=lost.lostPairs.find((value:any)=>value.member_id===f.sources[0].id);
   assert.equal(fact.pair_id,pair.id);assert.equal(fact.restore_state,'resumable');assert.equal(fact.reason,'external_release');
-  const {stdout}=await execute(process.execPath,[path.join(f.home,'bin','nxbridge.cjs'),'pair','--restore',pair.id],{cwd:f.root,env:process.env,windowsHide:true,timeout:90000,maxBuffer:4*1024*1024});
+  const {stdout}=await execute(process.execPath,[path.join(f.home,'bin','agybridge.cjs'),'pair','--restore',pair.id],{cwd:f.root,env:process.env,windowsHide:true,timeout:90000,maxBuffer:4*1024*1024});
   assert.ok(stdout.includes(pair.id));assert.match(stdout,/已恢复原配对/);
   const restored=await f.status(),current=restored.pairs.find((value:any)=>value.id===pair.id),member=restored.peers.find((value:any)=>value.id===target.id);
-  assert.equal(current.codex,target.id);assert.equal(current.claude,f.sources[0].id);assert.equal(member.sessionId,target.sessionId);
+  assert.equal(current.codex,target.id);assert.equal(current.agy,f.sources[0].id);assert.equal(member.sessionId,target.sessionId);
   assert.equal(restored.pairs.length,1);assert.equal(restored.lostPairs.some((value:any)=>value.pair_id===pair.id),false);
   assert.ok(restored.lostPairs.some((value:any)=>value.pair_id===f.pairs[1].id),'未选择的另一组仍保留原事故事实');
   const endpoint=restored.endpoints.find((value:any)=>value.peerId===target.id&&value.active&&value.mode==='app-server');

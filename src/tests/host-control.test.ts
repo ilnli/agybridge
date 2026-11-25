@@ -25,8 +25,8 @@ test('等待控制客户端关闭会等到容器内原生进程退出，无需�
 test('固定原生入口的控制命令同样串行，非零退出只执行一次且不阻塞后续命令',async t=>{
   const home=temporary(t),script=path.join(home,'native.mjs'),lock=path.join(home,'exclusive'),calls=path.join(home,'calls');
   writeFileSync(script,`import{openSync,closeSync,unlinkSync,appendFileSync}from'node:fs';closeSync(openSync(${JSON.stringify(lock)},'wx'));appendFileSync(${JSON.stringify(calls)},process.argv.at(-1)+'\\n');setTimeout(()=>{unlinkSync(${JSON.stringify(lock)});console.log(process.argv.at(-1));process.exitCode=process.argv.at(-1)==='fail'?23:0;},60);`,'utf8');
-  const config={...DEFAULT_CONFIG,claudeBinary:script,claudeHome:home};
-  const outcomes=await Promise.allSettled(['first','fail','last'].map(arg=>runCli('claude',[arg],{config,home})));
+  const config={...DEFAULT_CONFIG,agyBinary:script,agyHome:home};
+  const outcomes=await Promise.allSettled(['first','fail','last'].map(arg=>runCli('agy',[arg],{config,home})));
   for(const outcome of [outcomes[0]!,outcomes[2]!])assert.equal(outcome.status,'fulfilled',outcome.status==='rejected'?outcome.reason:undefined);
   assert.equal(outcomes[1]!.status,'rejected');const error=(outcomes[1] as PromiseRejectedResult).reason;
   assert.equal(error.exitCode,23);assert.match(error.message,/退出码=23/);assert.match(error.message,/标准错误末尾：.*空/);assert.match(error.message,/标准输出末尾：fail/);
@@ -68,6 +68,6 @@ test('控制进程在初始化前退出时保留退出码和标准错误，不�
 
 test('失败诊断保留边界输出并脱敏参数',()=>{
   const empty=hostControlFailure('codex',['plugin','list','--json'],{code:9});assert.match(empty.message,/退出码=9/);assert.match(empty.message,/标准输出末尾：.*空/);
-  const detail=hostControlFailure('claude',['agents','--api-key','不能泄漏'],{code:'ENOENT',stdout:'开头不应保留'+'x'.repeat(5000)+'结尾',stderr:'原生错误'});
+  const detail=hostControlFailure('agy',['agents','--api-key','不能泄漏'],{code:'ENOENT',stdout:'开头不应保留'+'x'.repeat(5000)+'结尾',stderr:'原生错误'});
   assert.match(detail.message,/ENOENT/);assert.match(detail.message,/结尾/);assert.match(detail.message,/原生错误/);assert.doesNotMatch(detail.message,/不能泄漏|开头不应保留/);
 });

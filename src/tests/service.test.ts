@@ -22,7 +22,7 @@ import { requireIndependentWindows } from './support/windows-job.js';
 
 test('交接关闭校验预约令牌与协调器代次，旧调用不能关闭新协调器',async t=>{
   const temporary=temporaryDirectory(),home=temporary.directory;let lease:StartupReservation|undefined,logs='';
-  const child=spawn(process.execPath,['--no-warnings',CLI_PATH,'service'],{env:{...process.env,NXBRIDGE_HOME:home},stdio:['ignore','pipe','pipe'],windowsHide:true}),closed=once(child,'close');
+  const child=spawn(process.execPath,['--no-warnings',CLI_PATH,'service'],{env:{...process.env,AGYBRIDGE_HOME:home},stdio:['ignore','pipe','pipe'],windowsHide:true}),closed=once(child,'close');
   child.stdout!.resume();child.stderr!.on('data',chunk=>logs+=chunk.toString());
   t.after(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill();await closed;await lease?.();await temporary.cleanup();});
   let current:{pid:number;runtime?:{generation:string}}|undefined;const deadline=performance.now()+10000;
@@ -33,12 +33,12 @@ test('交接关闭校验预约令牌与协调器代次，旧调用不能关闭�
   assert.equal((await brokerCall('ping',{}, {home,start:false})).pid,current.pid);
   await brokerCall('shutdown',{releaseOwned:false,startupToken:lease.token,expectedBroker:{pid:current.pid,generation:current.runtime?.generation}},{home,start:false,mutation:true});
   await within(closed,4000,()=> '交接后隔离协调器未退出');assert.equal(child.exitCode,0,logs);
-  const store=new Store(path.join(home,'nxbridge.db'));try{assert.ok(store.events().some(event=>event.type==='shutdown.requested'));assert.equal(JSON.stringify(store.events()).includes(lease.token),false);}finally{store.close();}
+  const store=new Store(path.join(home,'agybridge.db'));try{assert.ok(store.events().some(event=>event.type==='shutdown.requested'));assert.equal(JSON.stringify(store.events()).includes(lease.token),false);}finally{store.close();}
 });
 
 test('卸载先禁用安装后可越过旧启动预约，启用期间仍必须校验预约',async t=>{
   const temp=temporaryDirectory(),home=temp.directory;let lease:StartupReservation|undefined;
-  const child=spawn(process.execPath,['--no-warnings',CLI_PATH,'service'],{env:{...process.env,NXBRIDGE_HOME:home},stdio:'ignore',windowsHide:true}),closed=once(child,'close');
+  const child=spawn(process.execPath,['--no-warnings',CLI_PATH,'service'],{env:{...process.env,AGYBRIDGE_HOME:home},stdio:'ignore',windowsHide:true}),closed=once(child,'close');
   t.after(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill();await closed;await lease?.();await temp.cleanup();});
   let identity:{pid:number;runtime?:{generation:string}}|undefined;const end=performance.now()+10000;
   while(!identity){try{identity=await brokerCall('ping',{}, {home,start:false,timeout:500});}catch(error){if(performance.now()>=end)throw error;await delay(50);}}
@@ -53,7 +53,7 @@ test('卸载会拦住已开始但尚未启动服务的旧心跳，显式 service
   const temporary=temporaryDirectory(),home=temporary.directory;t.after(temporary.cleanup);
   const starting=ensureBroker(home);await delay(30);atomicJson(path.join(home,'setup-state.json'),{version:1,disabled:true});
   await assert.rejects(starting,{code:'uninstalled'});
-  const child=spawn(process.execPath,['--no-warnings',CLI_PATH,'service'],{env:{...process.env,NXBRIDGE_HOME:home},stdio:['ignore','pipe','pipe'],windowsHide:true});let logs='';child.stderr!.on('data',chunk=>logs+=chunk);
+  const child=spawn(process.execPath,['--no-warnings',CLI_PATH,'service'],{env:{...process.env,AGYBRIDGE_HOME:home},stdio:['ignore','pipe','pipe'],windowsHide:true});let logs='';child.stderr!.on('data',chunk=>logs+=chunk);
   await within(once(child,'exit'),15000,()=> '被禁用的服务未退出');assert.equal(child.exitCode,0,logs);assert.equal(logs,'');
 });
 
@@ -115,7 +115,7 @@ test('已存在的协调器首次探测断线后仍被识别，竞争者安静�
   });
   await new Promise<void>(resolve=>owner.listen(ipcAddress(home),resolve));
   t.after(async()=>{await new Promise<void>(resolve=>owner.close(()=>resolve()));await temporary.cleanup();});
-  const child=spawn(process.execPath,['--no-warnings',CLI_PATH,'service'],{env:{...process.env,NXBRIDGE_HOME:home},stdio:['ignore','pipe','pipe'],windowsHide:true});let logs='';child.stdout!.on('data',chunk=>logs+=chunk);child.stderr!.on('data',chunk=>logs+=chunk);
+  const child=spawn(process.execPath,['--no-warnings',CLI_PATH,'service'],{env:{...process.env,AGYBRIDGE_HOME:home},stdio:['ignore','pipe','pipe'],windowsHide:true});let logs='';child.stdout!.on('data',chunk=>logs+=chunk);child.stderr!.on('data',chunk=>logs+=chunk);
   await within(once(child,'exit'),15000,()=> '竞争者未退出');assert.equal(child.exitCode,0,logs);assert.equal(logs,'');assert.ok(connections>=2);
 });
 
@@ -163,16 +163,16 @@ for (const scenario of ['正常', '无关闭回执', '启动尚未完成'] as co
         if (scenario === '无关闭回执' && request.method === 'thread/read') socket.pause();
       });
     });
-    writeFileSync(path.join(home, 'config.json'), JSON.stringify({ ...DEFAULT_CONFIG, implicit: 'never', codexBinary: process.execPath, claudeBinary: process.execPath }), 'utf8');
-    const store = new Store(path.join(home, 'nxbridge.db'));
+    writeFileSync(path.join(home, 'config.json'), JSON.stringify({ ...DEFAULT_CONFIG, implicit: 'never', codexBinary: process.execPath, agyBinary: process.execPath }), 'utf8');
+    const store = new Store(path.join(home, 'agybridge.db'));
     const codex = store.register({ host: 'codex', sessionId: 'codex-fixture', cwd: home, kind: 'root', endpoint: { mode: 'app-server', address: endpoint, epoch: endpoint, pid: null, procStart: null } });
-    const claude = store.register({ host: 'claude', sessionId: 'claude-fixture', cwd: home, kind: 'root', endpoint: { mode: 'claude-inbox', address: 'fixture-inbox', epoch: 'fixture', pid: host.pid!, procStart: 'fixture' } });
+    const claude = store.register({ host: 'agy', sessionId: 'claude-fixture', cwd: home, kind: 'root', endpoint: { mode: 'agy-acp', address: 'fixture-inbox', epoch: 'fixture', pid: host.pid!, procStart: 'fixture' } });
     store.updatePeer(codex.id, { owner: 'nxbridge' });
     store.updatePeer(claude.id, { owner: 'nxbridge' });
     const pair = store.pair(claude.id, codex.id);
     store.close();
     service = spawn(process.execPath, [CLI_PATH, 'service'], {
-      env: { ...process.env, NXBRIDGE_HOME: home, CODEX_HOME: path.join(home, 'codex'), CLAUDE_CONFIG_DIR: path.join(home, 'claude') },
+      env: { ...process.env, AGYBRIDGE_HOME: home, CODEX_HOME: path.join(home, 'codex'), AGY_HOME: path.join(home, 'agy') },
       stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
     });
     service.stderr!.on('data', chunk => { logs += chunk.toString(); });
@@ -199,7 +199,7 @@ for (const scenario of ['正常', '无关闭回执', '启动尚未完成'] as co
     assert.equal(host.signalCode, null);
     assert.equal(appServer.address() !== null, true, 'App Server 必须继续监听');
     assert.equal(methods.includes('thread/unsubscribe'), false, '不能卸载宿主线程');
-    const persisted = new Store(path.join(home, 'nxbridge.db'));
+    const persisted = new Store(path.join(home, 'agybridge.db'));
     try {
       assert.deepEqual(persisted.currentPair(), pair);
       assert.equal(persisted.peer(codex.id).sessionId, codex.sessionId);

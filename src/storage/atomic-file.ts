@@ -21,20 +21,20 @@ export function retryWindowsFileOperation<T>(operation:()=>T,filename:string,opt
 
 export interface AtomicWriteOptions {exclusive?:boolean;durability?:'durable'|'buffered'}
 
-                                            
-export function atomicWriteText(filename:string,text:string,options:AtomicWriteOptions={}):void{
+export function atomicWriteText(filename:string,text:string,options:boolean|AtomicWriteOptions={}):void{
   atomicWriteFile(filename,text,options);
 }
 
-export function atomicWriteFile(filename:string,content:string|Buffer,options:AtomicWriteOptions={}):void{
-  const exclusive=options.exclusive??false,durable=options.durability!=='buffered';
+export function atomicWriteFile(filename:string,content:string|Buffer,options:boolean|AtomicWriteOptions={}):void{
+  const {exclusive=false,durability='durable'}=typeof options==='boolean'?{exclusive:options}:options;
+  const durable=durability==='durable';
   const temporary=filename+'.'+randomUUID()+'.tmp';
   let failure:unknown,temporaryPresent=true;
   try{
     writeFileSync(temporary,content,{encoding:'utf8',mode:0o600,flag:'wx',flush:durable});
     retryWindowsFileOperation(()=>exclusive?linkSync(temporary,filename):renameSync(temporary,filename),filename);
     if(!exclusive)temporaryPresent=false;
-                                       
+
     if(durable)syncDirectory(path.dirname(filename));
   }catch(error){failure=error;throw error;}
   finally{

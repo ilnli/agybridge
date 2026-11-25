@@ -12,7 +12,7 @@ import {homedir} from 'node:os';
 const {workspace,directory:root,wakeProbeOnly=false}=JSON.parse(readFileSync(process.argv[2],'utf8'));
 const load=name=>import(pathToFileURL(path.join(workspace,'dist',name+'.js'))),require=createRequire(path.join(workspace,'package.json')),{stringify}=require('smol-toml');
 const {preparePlugins}=await load('install/setup'),{DEFAULT_CONFIG}=await load('config/defaults'),{brokerCall,ensureBroker}=await load('ipc/ipc'),{configClient}=await load('hosts/codex/stdio-codex'),{startTerminal,codexComposerReady}=await load('native-tests/portable-terminal-fixture'),{resolveCli,runCli}=await load('process/host-command'),{delay}=await load('shared/time'),{processIdentity,codexArguments,codexAppServerArguments}=await load('process/process'),{recordOwnedProcess}=await load('process/owned-processes');
-const home=path.join(root,'bridge'),codexhome=path.join(root,'codex'),claudehome=path.join(root,'claude'),eventsFile=path.join(root,'hooks.jsonl'),hookOutputFile=path.join(root,'hook-output.jsonl'),resultFile=path.join(root,'result.json');
+const home=path.join(root,'bridge'),codexhome=path.join(root,'codex'),agyhome=path.join(root,'agy'),eventsFile=path.join(root,'hooks.jsonl'),hookOutputFile=path.join(root,'hook-output.jsonl'),resultFile=path.join(root,'result.json');
 const stage=value=>appendFileSync(path.join(root,'stages.jsonl'),JSON.stringify({at:new Date().toISOString(),...value})+'\n','utf8');
 let terminal,secondTerminal,client,model,daemonIdentity,modelFailure,daemonLaunchAttempted=false;const result={},requests=[],requestHeaders=[],acceptance=true;
 const rememberDaemon=async pid=>{
@@ -22,10 +22,10 @@ const rememberDaemon=async pid=>{
   daemonIdentity=identity;return command;
 };
 try{
-  for(const dir of [home,codexhome,claudehome])mkdirSync(dir,{recursive:true});
-  Object.assign(process.env,{NXBRIDGE_HOME:home,CODEX_HOME:codexhome,CLAUDE_CONFIG_DIR:claudehome,OPENAI_API_KEY:'isolated-local-only'});
+  for(const dir of [home,codexhome,agyhome])mkdirSync(dir,{recursive:true});
+  Object.assign(process.env,{AGYBRIDGE_HOME:home,CODEX_HOME:codexhome,AGY_HOME:agyhome,OPENAI_API_KEY:'isolated-local-only'});
   stage({phase:'原生 daemon 隔离验收',platform:process.platform,root});
-  writeFileSync(path.join(home,'config.json'),JSON.stringify({...DEFAULT_CONFIG,codexHome:codexhome,claudeHome:claudehome,implicit:'never',compatibilityWake:'strict'}),'utf8');
+  writeFileSync(path.join(home,'config.json'),JSON.stringify({...DEFAULT_CONFIG,codexHome:codexhome,agyHome:agyhome,implicit:'never',compatibilityWake:'strict'}),'utf8');
                                 
   const sourceCatalog=path.join(homedir(),'.codex','.tmp');
   for(const name of ['plugins','plugins.sha','app-server-remote-plugin-sync-v1'])if(existsSync(path.join(sourceCatalog,name))){mkdirSync(path.join(codexhome,'.tmp'),{recursive:true});cpSync(path.join(sourceCatalog,name),path.join(codexhome,'.tmp',name),{recursive:true});}
@@ -43,8 +43,8 @@ try{
     const id='daemon-repro-'+requests.length,probe=body.tools?.length?/MCP_(?:PROBE|PULL)_\d+/.exec(JSON.stringify(body.input.findLast(i=>i.role==='user'))??'')?.[0]:undefined,callId='call-'+probe,toolName=probe?.includes('PULL')?'receive_messages':'status';
     let spec;
     for(const tool of body.tools??[]){
-      if(tool.type==='namespace'&&/^(?:mcp__)?claude$/.test(tool.name)){const found=tool.tools.find(v=>v.name===toolName);if(found)spec={...found,namespace:tool.name};}
-      else if(tool.name===toolName||new RegExp('^(?:mcp__)?claude(?:__|[._])'+toolName+'$').test(tool.name))spec=tool;
+      if(tool.type==='namespace'&&/^(?:mcp__)?agy$/.test(tool.name)){const found=tool.tools.find(v=>v.name===toolName);if(found)spec={...found,namespace:tool.name};}
+      else if(tool.name===toolName||new RegExp('^(?:mcp__)?agy(?:__|[._])'+toolName+'$').test(tool.name))spec=tool;
     }
     if(probe&&!spec){
       stage({phase:'隔离模型缺少 MCP 工具',probe,tools:body.tools.map(tool=>({name:tool.name,type:tool.type,keys:Object.keys(tool),description:tool.description?.slice(0,180),parameters:Object.keys(tool.parameters?.properties??{}),tools:tool.tools?.map(inner=>({name:inner.name,type:inner.type}))}))});
@@ -68,9 +68,9 @@ try{
   const marketplace=await preparePlugins(home);stage({phase:'插件已准备'});
                                                
   const tracedBridge=path.join(marketplace,'plugins','codex','bridge.cjs');
-  if(process.env.NXBRIDGE_DAEMON_HOOK_TRACE!=='0')writeFileSync(tracedBridge,`if(process.argv[2]==='hook'){const trace={at:Date.now(),pid:process.pid,ppid:process.ppid,input:'',stdout:'',stderr:''},read=process.stdin.read;process.stdin.read=function(...args){const value=read.apply(this,args);if(value)trace.input+=String(value);return value;};for(const key of ['stdout','stderr']){const stream=process[key],write=stream.write;stream.write=function(chunk,...args){trace[key]+=String(chunk);return write.call(this,chunk,...args);};}process.once('exit',code=>require('node:fs').appendFileSync(${JSON.stringify(hookOutputFile)},JSON.stringify({...trace,code,endedAt:Date.now()})+'\\n'));}\n`+readFileSync(tracedBridge,'utf8'),'utf8');
-  await runCli('codex',['plugin','marketplace','add',marketplace,'--json']);await runCli('codex',['plugin','add','nxbridge@nxbridge-local','--json']);
-  const config={...DEFAULT_CONFIG,codexHome:codexhome,claudeHome:claudehome};
+  if(process.env.AGYBRIDGE_DAEMON_HOOK_TRACE!=='0')writeFileSync(tracedBridge,`if(process.argv[2]==='hook'){const trace={at:Date.now(),pid:process.pid,ppid:process.ppid,input:'',stdout:'',stderr:''},read=process.stdin.read;process.stdin.read=function(...args){const value=read.apply(this,args);if(value)trace.input+=String(value);return value;};for(const key of ['stdout','stderr']){const stream=process[key],write=stream.write;stream.write=function(chunk,...args){trace[key]+=String(chunk);return write.call(this,chunk,...args);};}process.once('exit',code=>require('node:fs').appendFileSync(${JSON.stringify(hookOutputFile)},JSON.stringify({...trace,code,endedAt:Date.now()})+'\\n'));}\n`+readFileSync(tracedBridge,'utf8'),'utf8');
+  await runCli('codex',['plugin','marketplace','add',marketplace,'--json']);await runCli('codex',['plugin','add','agybridge@agybridge-local','--json']);
+  const config={...DEFAULT_CONFIG,codexHome:codexhome,agyHome:agyhome};
   const control=await configClient(config,home);try{const hooks=(await control.request('hooks/list',{cwds:[root]})).data.flatMap(row=>row.hooks??[]);await control.request('config/batchWrite',{edits:[{keyPath:'hooks.state',value:Object.fromEntries(hooks.map(h=>[h.key,{enabled:true,trusted_hash:h.currentHash}])),mergeStrategy:'replace'}],filePath:path.join(codexhome,'config.toml')},{mutation:true});stage({phase:'隔离 hook 已信任',hooks:hooks.length});}finally{await control.close();}
   (await ensureBroker(home)).close();const exe=resolveCli('codex'),events=()=>existsSync(eventsFile)?readFileSync(eventsFile,'utf8').trim().split('\n').filter(Boolean).map(JSON.parse):[],status=()=>brokerCall('status',{}, {home,start:false});
   const start=async(noDaemon,cwd=root,resume)=>{
@@ -89,7 +89,7 @@ try{
   const hostPid=result.daemonPidfile?.pid??events()[0]?.ppid;
   if(hostPid)result.daemonCommand=await rememberDaemon(hostPid);
   result.daemonStatus=await status();result.daemonHooks=events();result.daemonTui=terminal.identity;result.daemonTerminal=stripVTControlCharacters(terminal.output).slice(-3500);stage({phase:'默认模式完成',daemon:result.daemonPidfile,peers:result.daemonStatus.peers.map(p=>({id:p.id,sessionId:p.sessionId})),hooks:result.daemonHooks.map(e=>({event:e.input.hook_event_name,session:e.input.session_id,ppid:e.ppid}))});
-  const {DatabaseSync}=await import('node:sqlite'),contextDb=new DatabaseSync(path.join(home,'nxbridge.db'),{readOnly:true});
+  const {DatabaseSync}=await import('node:sqlite'),contextDb=new DatabaseSync(path.join(home,'agybridge.db'),{readOnly:true});
   try{const first=events().find(e=>e.input.hook_event_name==='SessionStart').input,contexts=contextDb.prepare("SELECT key,value FROM settings WHERE key LIKE 'hookContext:%'").all();assert.ok(contexts.some(row=>JSON.parse(row.value)===first.session_id),'首次原生轮次后必须已经持久化 hook 上下文');stage({phase:'首次轮次 hook 上下文已持久化',sessionId:first.session_id,contexts:contexts.length});}finally{contextDb.close();}
   stage({phase:'daemon 官方控制信息',info:result.daemonInfo,command:result.daemonCommand});assert.ok(daemonIdentity,'未取得 daemon 身份，不能据 embedded 结果宣称 daemon 已验收');assert.notEqual(daemonIdentity.pid,terminal.identity.pid);
   if(wakeProbeOnly){
@@ -113,7 +113,7 @@ try{
     }
     result.wakeProbe={threadKeys:Object.keys(before),status:before.status,canAcceptDirectInput:before.canAcceptDirectInput,tui};
     try{
-      await client.request('thread/inject_items',{threadId:firstId,items:[{type:'function_call',call_id:callId,name:'receive_messages',namespace:'claude',arguments:'{}'},{type:'function_call_output',call_id:callId,name:'receive_messages',namespace:'claude',output:JSON.stringify({messages:[{message_id:messageId,from:'隔离测试搭档',message:'DAEMON_INJECTED_WAKE_PROBE'}],status:'received'})}]},{mutation:true});
+      await client.request('thread/inject_items',{threadId:firstId,items:[{type:'function_call',call_id:callId,name:'receive_messages',namespace:'agy',arguments:'{}'},{type:'function_call_output',call_id:callId,name:'receive_messages',namespace:'agy',output:JSON.stringify({messages:[{message_id:messageId,from:'隔离测试搭档',message:'DAEMON_INJECTED_WAKE_PROBE'}],status:'received'})}]},{mutation:true});
       result.wakeProbe.injected=true;
       const started=await client.request('turn/start',{threadId:firstId,input:[]},{mutation:true});result.wakeProbe.turn=started.turn;
       await terminal.wait(()=>requests.length>count&&stripVTControlCharacters(terminal.output.slice(offset)).includes('DAEMON_LOCAL_DONE_'),'外部启动轮次未在附着 TUI 显示',15000);
@@ -137,7 +137,7 @@ try{
       const approvalCall='nxbridge-daemon-approval-probe';
       try{
         const approvals=[];client.on('request',message=>approvals.push({method:message.method,threadId:message.params?.threadId}));
-        await client.request('thread/inject_items',{threadId:firstId,items:[{type:'function_call',call_id:approvalCall,name:'receive_messages',namespace:'claude',arguments:'{}'},{type:'function_call_output',call_id:approvalCall,name:'receive_messages',namespace:'claude',output:JSON.stringify({messages:[{message_id:'daemon-approval-task',from:'隔离测试搭档',message:'DAEMON_APPROVAL_PROBE'}],status:'received'})}]},{mutation:true});
+        await client.request('thread/inject_items',{threadId:firstId,items:[{type:'function_call',call_id:approvalCall,name:'receive_messages',namespace:'agy',arguments:'{}'},{type:'function_call_output',call_id:approvalCall,name:'receive_messages',namespace:'agy',output:JSON.stringify({messages:[{message_id:'daemon-approval-task',from:'隔离测试搭档',message:'DAEMON_APPROVAL_PROBE'}],status:'received'})}]},{mutation:true});
         const approval=await client.request('turn/start',{threadId:firstId,input:[],approvalPolicy:'on-request'},{mutation:true});
         await delay(2000);const pending=(await client.request('thread/read',{threadId:firstId,includeTurns:false})).thread;
         result.wakeProbe.noTuiApproval={requests:approvals,status:pending.status};
@@ -156,7 +156,7 @@ try{
                                                       
     await wait(async()=>(await client.request('thread/read',{threadId:firstId,includeTurns:false})).thread.status.type==='idle');
                                                      
-    const {Store}=await load('storage/store'),{Broker}=await load('broker/coordinator'),{FakeAdapter}=await load('tests/support/fake-adapter'),idleStore=new Store(':memory:'),idleBroker=new Broker(idleStore,config,{codex:new FakeAdapter(),claude:new FakeAdapter()},home);
+    const {Store}=await load('storage/store'),{Broker}=await load('broker/coordinator'),{FakeAdapter}=await load('tests/support/fake-adapter'),idleStore=new Store(':memory:'),idleBroker=new Broker(idleStore,config,{codex:new FakeAdapter(),agy:new FakeAdapter()},home);
     try{
       await idleBroker.daemons.scan(codexhome);
       const total=()=>Number(idleStore.db.prepare('SELECT total_changes() AS n').get().n),before=total(),cpu=process.cpuUsage(),began=performance.now();
@@ -166,16 +166,16 @@ try{
     }finally{await idleBroker.stop();idleStore.close();}
     const readOnlyCalls=requests.length;await turn('DAEMON_IDENTITY_AFTER_READ_ONLY');assert.ok(requests.length>readOnlyCalls);assert.deepEqual(requestHeaders.at(-1),beforeReadOnly,'只读发现连接不得改写用户 daemon 的实际出站 UA');result.daemonIdentity={before:beforeReadOnly,after:requestHeaders.at(-1),unchanged:true};stage({phase:'共享 daemon 用户 UA 在只读连接前后逐字不变',...result.daemonIdentity});
     await wait(async()=>(await client.request('thread/read',{threadId:firstId,includeTurns:false})).thread.status.type==='idle');
-    const c=await brokerCall('register',{host:'claude',sessionId:'fixture-claude',cwd:root,kind:'root',permission:'prompting',endpoint:{mode:'claude-inbox',address:path.join(root,'fixture-inbox.sock'),epoch:'fixture-claude',pid:process.pid,procStart:(await processIdentity(process.pid)).startedAt,configHome:claudehome}},{home,start:false});
-    const pair=await brokerCall('pair',{claude:c.id,codex:rootPeer.id},{home,start:false}),actor={host:'claude',memberId:c.id,sessionId:c.sessionId,callId:'acceptance-send',binding:c.binding};
-    const {DeliveryHealth}=await load('broker/health/delivery'),noticeStore=new Store(path.join(home,'nxbridge.db')),passiveMarker='DAEMON_PASSIVE_HEALTH_FACT';
+    const c=await brokerCall('register',{host:'agy',sessionId:'fixture-agy',cwd:root,kind:'root',permission:'prompting',endpoint:{mode:'agy-tui',address:path.join(root,'fixture-inbox.sock'),epoch:'fixture-agy',pid:process.pid,procStart:(await processIdentity(process.pid)).startedAt,configHome:agyhome}},{home,start:false});
+    const pair=await brokerCall('pair',{agy:c.id,codex:rootPeer.id},{home,start:false}),actor={host:'agy',memberId:c.id,sessionId:c.sessionId,callId:'acceptance-send',binding:c.binding};
+    const {DeliveryHealth}=await load('broker/health/delivery'),noticeStore=new Store(path.join(home,'agybridge.db')),passiveMarker='DAEMON_PASSIVE_HEALTH_FACT';
                                                                
     try{new DeliveryHealth(noticeStore).enqueue(pair.id,rootPeer.id,{id:'native-passive-health',state:'pending',tier:3,kind:'native-passive-information',message:passiveMarker});}finally{noticeStore.close();}
     const passiveRequests=requests.length;await delay(6500);assert.equal(requests.length,passiveRequests,'信息类通知不能启动真实 daemon 模型轮次');
     await turn('DAEMON_PASSIVE_NEXT_NATURAL');
     const passiveVisible=requests.slice(passiveRequests).some(value=>JSON.stringify(value).includes(passiveMarker));
     stage({phase:'被动通知 hook 回执',visible:passiveVisible,hookOutput:existsSync(hookOutputFile)?readFileSync(hookOutputFile,'utf8').trim().split('\n').map(JSON.parse):[]});
-    if(!passiveVisible){const debugStore=new Store(path.join(home,'nxbridge.db'));try{stage({phase:'被动通知诊断',record:debugStore.setting('turnHealthDelivery:'+pair.id+':'+rootPeer.id),admission:debugStore.setting('healthNoticeAdmission:'+rootPeer.id),lastHook:debugStore.setting('lastHook'),peers:debugStore.peers(),endpoints:debugStore.endpoints(),bindings:debugStore.db.prepare('SELECT * FROM window_bindings').all(),contexts:debugStore.db.prepare("SELECT key,value FROM settings WHERE key LIKE 'hookContext:%'").all(),recentEvents:debugStore.events(0,1000).slice(-15),hooks:events(),hookOutput:existsSync(hookOutputFile)?readFileSync(hookOutputFile,'utf8').trim().split('\n').map(JSON.parse):[],inputKeys:requests.slice(passiveRequests).map(value=>Object.keys(value))});}finally{debugStore.close();}}
+    if(!passiveVisible){const debugStore=new Store(path.join(home,'agybridge.db'));try{stage({phase:'被动通知诊断',record:debugStore.setting('turnHealthDelivery:'+pair.id+':'+rootPeer.id),admission:debugStore.setting('healthNoticeAdmission:'+rootPeer.id),lastHook:debugStore.setting('lastHook'),peers:debugStore.peers(),endpoints:debugStore.endpoints(),bindings:debugStore.db.prepare('SELECT * FROM window_bindings').all(),contexts:debugStore.db.prepare("SELECT key,value FROM settings WHERE key LIKE 'hookContext:%'").all(),recentEvents:debugStore.events(0,1000).slice(-15),hooks:events(),hookOutput:existsSync(hookOutputFile)?readFileSync(hookOutputFile,'utf8').trim().split('\n').map(JSON.parse):[],inputKeys:requests.slice(passiveRequests).map(value=>Object.keys(value))});}finally{debugStore.close();}}
     assert.ok(passiveVisible,'下一次正常原生输入必须看到被动通知');
     await wait(async()=>(await client.request('thread/read',{threadId:firstId,includeTurns:false})).thread.status.type==='idle');
     stage({phase:'真实 daemon 信息通知零自动轮次，正常下一轮可见'});

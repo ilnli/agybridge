@@ -109,8 +109,8 @@ export async function brokerOutageNotice(home:string,actor:OutageClaimant,option
     if(!value.claim&&!cooldown&&options.eligible!==false&&!(excluded===true||typeof excluded==='number'&&excluded>now))value.claim={...actor,state:'reserved',at:now};
     const claimant=same(value.claim,actor),wake=claimant&&value.claim!.state!=='admitted'&&(options.admit!==false||value.claim!.state==='reserved');
     if(claimant&&!wake||!claimant&&value.passive?.[scope(actor)])return{value,result:undefined};
-    const message=wake?'nxbridge coordinator unreachable since '+new Date(value.since).toISOString()+'. You own this outage recovery task. Run nxbridge doctor once (diagnosis only); if it confirms the coordinator is offline, run nxbridge bootstrap once (proof-first recovery). Still down or crashing: read the broker log tail, report the cause and exact next step to the user. Do not edit the database, kill processes, replay messages, or retry in a loop.':
-      'nxbridge coordinator unreachable since '+new Date(value.since).toISOString()+'. Outage recovery '+(value.claim?'assigned to '+value.claim.host+' session '+value.claim.sessionId:cooldown?'automatic wake cooling down':'awaits an eligible root window')+'. This window has no additional recovery task.';
+    const message=wake?'agybridge coordinator unreachable since '+new Date(value.since).toISOString()+'. You own this outage recovery task. Run agybridge doctor once (diagnosis only); if it confirms the coordinator is offline, run agybridge bootstrap once (proof-first recovery). Still down or crashing: read the broker log tail, report the cause and exact next step to the user. Do not edit the database, kill processes, replay messages, or retry in a loop.':
+      'agybridge coordinator unreachable since '+new Date(value.since).toISOString()+'. Outage recovery '+(value.claim?'assigned to '+value.claim.host+' session '+value.claim.sessionId:cooldown?'automatic wake cooling down':'awaits an eligible root window')+'. This window has no additional recovery task.';
     const notice:RuntimeNotice={id,epoch:value.epoch,since:value.since,...(value.claim?{claimedBy:value.claim}:{}),incidentId:value.epoch,message,state:'pending',source:'broker_outage',kind:'broker_outage',wake};
     if(options.admit!==false){if(wake){value.claim!.state='admitted';value.lastWakeAt=now;}else (value.passive??={})[scope(actor)]=true;}
     return{value,result:notice};
@@ -124,7 +124,7 @@ export function brokerRecoveryNotice(home:string,actor:OutageClaimant,options:{a
     if(!current)return{result:undefined};reachable(current,now,options.healthy);
     const id='broker-recovered:'+current.epoch;
     if(current.closedAt===undefined||!current.claim&&!Object.values(current.passive??{}).some(Boolean)||current.recoveryAdmitted||current.recovery?.[scope(actor)]||now-current.closedAt>300000||options.noticeId&&options.noticeId!==id)return{value:current,result:undefined};
-    const notice:RuntimeNotice={id,epoch:current.epoch,since:current.since,message:'nxbridge coordinator is stably reachable again; outage '+current.epoch+' closed.',state:'pending',source:'broker_outage',kind:'broker_outage',phase:'recovery',wake:false};
+    const notice:RuntimeNotice={id,epoch:current.epoch,since:current.since,message:'agybridge coordinator is stably reachable again; outage '+current.epoch+' closed.',state:'pending',source:'broker_outage',kind:'broker_outage',phase:'recovery',wake:false};
     if(options.admit!==false)(current.recovery??={})[scope(actor)]=true;
     return{value:current,result:notice};
   });

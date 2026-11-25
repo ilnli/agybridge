@@ -1,7 +1,7 @@
 {
-  "name": "nxbridge",
+  "name": "agybridge",
   "version": "0.1.1",
-  "description": "与 Claude Code 平等搭档进行异步通信",
+  "description": "与 Antigravity CLI (AGY) 平等搭档进行异步通信",
   "mcpServers": "./.mcp.json",
   "hooks": "./hooks/hooks.json",
   "skills": "./skills"

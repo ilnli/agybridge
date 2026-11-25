@@ -9,7 +9,7 @@ export function clearRpcFaults(endpoint:string):void{for(const key of circuits.k
                                        
 export class RpcClient extends EventEmitter {
   private sequence=0;
-  private pending=new Map<string|number,{resolve:(v:any)=>void;reject:(e:unknown)=>void;timer:NodeJS.Timeout;mutation:boolean;method:string;key?:string;maxBytes:number}>();
+  private pending=new Map<string|number,{resolve:(v:any)=>void;reject:(e:unknown)=>void;timer?:NodeJS.Timeout;cleanup?:()=>void;mutation:boolean;method:string;key?:string;maxBytes:number}>();
   readonly metrics={responses:0,bytes:0,parseMs:0,largestBytes:0,timeouts:0,rejected:0};
   closed=false;
   constructor(private sendWire:(message:RpcMessage)=>void,private closeWire:()=>void,readonly endpoint?:string) { super(); }
@@ -17,7 +17,7 @@ export class RpcClient extends EventEmitter {
     if(measurement){this.metrics.responses++;this.metrics.bytes+=measurement.bytes;this.metrics.parseMs+=measurement.parseMs;this.metrics.largestBytes=Math.max(this.metrics.largestBytes,measurement.bytes);}
     if(message.id!==undefined&&!message.method){
       const pending=this.pending.get(message.id);if(!pending)return;
-      this.pending.delete(message.id);clearTimeout(pending.timer);
+      this.pending.delete(message.id);if(pending.timer)clearTimeout(pending.timer);pending.cleanup?.();
       if(measurement&&measurement.bytes>pending.maxBytes){
         const fault={code:'response_too_large',message:pending.method+' 响应超过读取预算，已停止同类重试。',until:Date.now()+900000};if(pending.key)circuits.set(pending.key,fault);pending.reject(new DeliveryError(fault.code,fault.message,pending.mutation));return;
       }
@@ -28,25 +28,29 @@ export class RpcClient extends EventEmitter {
       }else pending.resolve(message.result);
     }else if(message.method)this.emit(message.id===undefined?'notification':'request',message);
   }
-  request<T=any>(method:string,params:unknown={},options:{timeout?:number;mutation?:boolean;maxBytes?:number}={}):Promise<T>{
+  request<T=any>(method:string,params:unknown={},options:{timeout?:number;mutation?:boolean;maxBytes?:number;signal?:AbortSignal}={}):Promise<T>{
     if(this.closed)return Promise.reject(new DeliveryError('disconnected','连接已关闭。'));
+    if(options.signal?.aborted)return Promise.reject(new DeliveryError('aborted',`${method} 请求已取消。`,false));
     const key=this.endpoint&&!options.mutation?circuitKey(this.endpoint,method,params):undefined;let blocked=key?circuits.get(key):undefined;
     if(blocked&&blocked.until<=Date.now()){circuits.delete(key!);blocked=undefined;}
     if(blocked){this.metrics.rejected++;return Promise.reject(new DeliveryError(blocked.code,blocked.message));}
     if(this.endpoint&&this.pending.size>=16){this.metrics.rejected++;return Promise.reject(new DeliveryError('rpc_backpressure','原生请求队列已满，稍后自动重试。'));}
     const id=++this.sequence;
     return new Promise((resolve,reject)=>{
-      const timer=setTimeout(()=>{this.pending.delete(id);this.metrics.timeouts++;reject(new DeliveryError('timeout',`${method} 等待确认超时。`,options.mutation??false));},options.timeout??15000);
-      this.pending.set(id,{resolve,reject,timer,mutation:options.mutation??false,method,key,maxBytes:options.maxBytes??4*1024*1024});
-      try{this.sendWire({jsonrpc:'2.0',id,method,params});}catch(error){clearTimeout(timer);this.pending.delete(id);reject(new DeliveryError('disconnected',error instanceof Error?error.message:String(error),options.mutation??false));}
+      const ms=options.timeout??15000;
+      const onAbort=()=>{const p=this.pending.get(id);if(!p)return;this.pending.delete(id);if(p.timer)clearTimeout(p.timer);reject(new DeliveryError('aborted',`${method} 请求已取消。`,options.mutation??false));};
+      const cleanup=options.signal?()=>options.signal!.removeEventListener('abort',onAbort):undefined;
+      if(options.signal)options.signal.addEventListener('abort',onAbort,{once:true});
+      const timer=ms>0?setTimeout(()=>{this.pending.delete(id);cleanup?.();this.metrics.timeouts++;reject(new DeliveryError('timeout',`${method} 等待确认超时。`,options.mutation??false));},ms):undefined;
+      this.pending.set(id,{resolve,reject,timer,cleanup,mutation:options.mutation??false,method,key,maxBytes:options.maxBytes??4*1024*1024});
+      try{this.sendWire({jsonrpc:'2.0',id,method,params});}catch(error){if(timer)clearTimeout(timer);cleanup?.();this.pending.delete(id);reject(new DeliveryError('disconnected',error instanceof Error?error.message:String(error),options.mutation??false));}
     });
   }
   notify(method:string,params:unknown={}):void {if(!this.closed)this.sendWire({jsonrpc:'2.0',method,params});}
   respond(id:string|number,result:unknown):void {if(!this.closed)this.sendWire({jsonrpc:'2.0',id,result});}
   disconnected(reason='连接已断开。',code='disconnected'):void {
     if(this.closed)return;this.closed=true;
-                                            
-    for(const p of this.pending.values()){clearTimeout(p.timer);p.reject(Object.assign(new DeliveryError(code,reason,p.mutation),{operation:p.method}));}
+    for(const p of this.pending.values()){if(p.timer)clearTimeout(p.timer);p.cleanup?.();p.reject(Object.assign(new DeliveryError(code,reason,p.mutation),{operation:p.method}));}
     while(circuits.size>256)circuits.delete(circuits.keys().next().value!);
     this.pending.clear();this.emit('disconnected');
   }

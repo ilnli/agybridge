@@ -16,12 +16,12 @@ export interface ConfigurationDocument {
   document:Record<string,unknown>;userDocument:Record<string,unknown>;config:BridgeConfig;warnings:string[];
 }
 export interface ConfigurationEdit {key:string;value?:unknown}
-export type ConfigurationOrigin='terminal'|'migration'|'setup'|'claude-user'|'codex-user'|'claude-model'|'codex-model';
+export type ConfigurationOrigin='terminal'|'migration'|'setup'|'agy-user'|'codex-user'|'agy-model'|'codex-model';
 export interface PreparedConfiguration {current:ConfigurationDocument;document:Record<string,unknown>;keys:string[];changed:boolean}
 const optionalText=(filename:string):string|undefined=>{
   try{return readFileSync(filename,'utf8');}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw error;}
 };
-const MANAGED_HEADER='# 此文件由 nxbridge 管理，保存时会重新生成格式。\n# 手写配置请放在 config.toml；其中的配置优先，自动工具不会改写该文件。\n# 凭据值放在原生宿主配置或环境中，不要写入这里。\n';
+const MANAGED_HEADER='# 此文件由 agybridge 管理，保存时会重新生成格式。\n# 手写配置请放在 config.toml；其中的配置优先，自动工具不会改写该文件。\n# 凭据值放在原生宿主配置或环境中，不要写入这里。\n';
 export function readConfiguration(home:string):ConfigurationDocument{
   const filename=path.join(home,'config.managed.toml'),userFile=path.join(home,'config.toml'),legacy=path.join(home,'config.json');
   const managed=optionalText(filename),user=optionalText(userFile),warnings:string[]=[];
@@ -90,7 +90,7 @@ export function configurationStatus(home:string){
   const current=readConfiguration(home),frozen=frozenProfileStatus(home,current.config),captured=frozen.profiles,last=path.join(home,'config-last-change.json');let lastChange:unknown=null;
   if(existsSync(last))try{
     const raw=JSON.parse(readFileSync(last,'utf8'));
-    if(raw&&typeof raw==='object')lastChange={at:typeof raw.at==='number'?raw.at:null,origin:['terminal','migration','setup','claude-user','codex-user','claude-model','codex-model'].includes(raw.origin)?raw.origin:null,keys:Array.isArray(raw.keys)?raw.keys.filter((key:unknown)=>typeof key==='string'&&CONFIG_FIELDS.some(field=>field.key===key)):[],migrated:raw.migrated===true};
+    if(raw&&typeof raw==='object')lastChange={at:typeof raw.at==='number'?raw.at:null,origin:['terminal','migration','setup','agy-user','codex-user','agy-model','codex-model'].includes(raw.origin)?raw.origin:null,keys:Array.isArray(raw.keys)?raw.keys.filter((key:unknown)=>typeof key==='string'&&CONFIG_FIELDS.some(field=>field.key===key)):[],migrated:raw.migrated===true};
   }catch{                             }
   return{file:current.filename,userFile:current.userFile,source:current.source,warnings:[...current.warnings,...frozen.warnings],lastChange,frozen_profiles:captured,entries:CONFIG_FIELDS.map(field=>{
     const user=configValue(current.userDocument,field.key)!==undefined,managed=configValue(current.document,field.key);

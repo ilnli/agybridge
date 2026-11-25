@@ -25,7 +25,7 @@ import { listenBroker } from '../ipc/ipc.js';
 const actor=(host:Host,sessionId:string):Actor=>({host,sessionId,callId:'control'});
 const change=(broker:Broker,who:Actor,target:'self'|'partner',enabled:boolean,human=false)=>broker.dispatch('member.switch',{actor:who,target,enabled,user_requested:true,...(human?{origin:'composer'}:{})});
 
-for(const host of ['codex','claude'] as const)test(host+' 关闭后保留配对和消息，拒绝新发送、窗口退出不恢复，自己开启后继续原消息',async t=>{
+for(const host of ['codex','agy'] as const)test(host+' 关闭后保留配对和消息，拒绝新发送、窗口退出不恢复，自己开启后继续原消息',async t=>{
   const f=fixture(t),target=host==='codex'?f.x:f.c,source=host==='codex'?f.c:f.x,pair=f.store.pair(f.c.id,f.x.id),message=f.store.accept(pair,source,'关闭前的原消息','before');
   const original=f.store.message(message.id),who=actor(source.host,source.sessionId!);
   const outgoing=f.store.accept(pair,target,'关闭侧已有的发出消息','outgoing');
@@ -33,15 +33,15 @@ for(const host of ['codex','claude'] as const)test(host+' 关闭后保留配对�
   assert.equal(f.store.message(outgoing.id).state,'accepted');
   assert.equal(f.store.pairFor(target.id)?.id,pair.id);assert.deepEqual(f.store.message(message.id),original);
   await assert.rejects(f.broker.dispatch('send',{actor:who,message:'关闭后禁止入队'}),error=>{
-    assert.equal((error as any).code,'member_disabled');assert.equal((error as any).enable_command,`nxbridge on ${target.host} --member ${target.id}`);return true;
+    assert.equal((error as any).code,'member_disabled');assert.equal((error as any).enable_command,`agybridge on ${target.host} --member ${target.id}`);return true;
   });
   const status=await f.broker.dispatch('status',{actor:who,model_view:true}) as any;
   assert.equal(status.self.enabled,true);assert.equal(status.partner.enabled,false);
   f.store.deactivate(target.id);f.store.updatePeer(target.id,{owner:'nxbridge',state:'offline'});
   recordFixtureLaunch(f.store,f.broker.home,target);
   f.store.unpair(pair.id,{reason:'window_exit'});await f.broker.pump();
-  assert.equal(f.store.pairFor(target.id)?.id,pair.id);assert.equal(f.codex.created.length+f.claude.created.length,0);
-  assert.equal(f.codex.delivered.length+f.claude.delivered.length,0);
+  assert.equal(f.store.pairFor(target.id)?.id,pair.id);assert.equal(f.codex.created.length+f.agy.created.length,0);
+  assert.equal(f.codex.delivered.length+f.agy.delivered.length,0);
   assert.deepEqual(await f.broker.dispatch('receive',{actor:actor(target.host,target.sessionId!)}),{...memberOffResultFor(target),messages:[]});
   await change(f.broker,who,'partner',true,true);await f.broker.pump();
   assert.equal(f.store.peer(target.id).sessionId,target.sessionId);assert.equal(f.store.pairFor(target.id)?.id,pair.id);
@@ -49,7 +49,7 @@ for(const host of ['codex','claude'] as const)test(host+' 关闭后保留配对�
 });
 
 test('开关只接受明确要求的根窗口，搭档不能开启另一侧；独立终端可开启未配对成员',async t=>{
-  const f=fixture(t);f.store.pair(f.c.id,f.x.id);const who=actor('claude','c');
+  const f=fixture(t);f.store.pair(f.c.id,f.x.id);const who=actor('agy','c');
   await assert.rejects(f.broker.dispatch('member.switch',{actor:who,target:'partner',enabled:false,user_requested:false}));
   await assert.rejects(change(f.broker,{...who,via:'child'},'partner',false),{code:'subagent_denied'});
   await change(f.broker,who,'partner',false);
@@ -79,13 +79,13 @@ test('开关只接受明确要求的根窗口，搭档不能开启另一侧；�
 
 test('关闭状态持久化，broker 重启不改待发和提交中消息、不访问或替换关闭侧',async t=>{
   const temp=temporaryDirectory(),home=temp.directory,file=path.join(home,'state.db');await ensureHome(home);
-  let store=new Store(file),codex=new FakeAdapter(),claude=new FakeAdapter(),broker=new Broker(store,DEFAULT_CONFIG,{codex,claude} as any,home);
-  const c=store.register(registration('claude','persist-c')),x=store.register(registration('codex','persist-x',{state:'offline'})),pair=store.pair(c.id,x.id);
+  let store=new Store(file),codex=new FakeAdapter(),agy=new FakeAdapter(),broker=new Broker(store,DEFAULT_CONFIG,{codex,agy} as any,home);
+  const c=store.register(registration('agy','persist-c')),x=store.register(registration('codex','persist-x',{state:'offline'})),pair=store.pair(c.id,x.id);
   store.updatePeer(x.id,{owner:'nxbridge'});
   const pending=store.accept(pair,c,'已排队','pending'),sending=store.accept(pair,c,'提交中','sending');store.claim(sending.id);
-  await change(broker,actor('claude','persist-c'),'partner',false);
+  await change(broker,actor('agy','persist-c'),'partner',false);
   const before=[store.message(pending.id),store.message(sending.id)];await broker.stop();store.close();
-  store=new Store(file);codex=new FakeAdapter();claude=new FakeAdapter();broker=new Broker(store,DEFAULT_CONFIG,{codex,claude} as any,home);
+  store=new Store(file);codex=new FakeAdapter();agy=new FakeAdapter();broker=new Broker(store,DEFAULT_CONFIG,{codex,agy} as any,home);
   t.after(async()=>{await broker.stop();store.close();await temp.cleanup();});await broker.start();await broker.pump();
   assert.equal(store.peer(x.id).enabled,false);assert.equal(store.pairFor(x.id)?.id,pair.id);
   assert.deepEqual([store.message(pending.id),store.message(sending.id)],before);
@@ -95,7 +95,7 @@ test('关闭状态持久化，broker 重启不改待发和提交中消息、不�
 
 test('关闭侧不会重新登记、采集环境、处理事件或生成健康告警，原端点不变',async t=>{
   const f=fixture(t);f.store.pair(f.c.id,f.x.id);
-  await change(f.broker,actor('claude','c'),'partner',false);const before=f.store.peer(f.x.id),endpoints=f.store.endpoints(f.x.id);
+  await change(f.broker,actor('agy','c'),'partner',false);const before=f.store.peer(f.x.id),endpoints=f.store.endpoints(f.x.id);
   const registered=await f.broker.dispatch('mcp.register',registration('codex','x',{state:'busy'})) as any;
   assert.equal(registered.id,f.x.id);assert.equal(registered.enabled,false);
   f.codex.emit('state','x','busy',endpoints[0]!.address);f.codex.emit('native',{address:endpoints[0]!.address,message:{method:'turn/started',params:{threadId:'x',turn:{id:'new-turn'}}}});
@@ -128,7 +128,7 @@ test('同一个原生会话的两个窗口，关闭一个成员不会影响另�
 test('关闭期间不结束问题或改写问题消息，开启后才恢复时限处理',async t=>{
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),who=actor('codex','x');
   const result=f.broker.questions.create(pair,f.x,who,{questions:[{id:'one',header:'确认',question:'保留这个问题吗？'}]}) as any;
-  await change(f.broker,actor('claude','c'),'partner',false);
+  await change(f.broker,actor('agy','c'),'partner',false);
   const q=f.store.question(result.request_id)!;q.expiresAt=0;f.store.saveQuestion(q);const message=f.store.message(q.messageId);
   f.broker.questions.sweep();f.broker.questions.recover();assert.equal(f.store.question(q.id)!.status,'pending');assert.deepEqual(f.store.message(q.messageId),message);
   await change(f.broker,who,'self',true,true);f.broker.questions.sweep();assert.equal(f.store.question(q.id)!.status,'timed_out');
@@ -150,10 +150,10 @@ test('MCP 缺少权限元数据时不清掉原生已核验权限，不能因 unk
 test('关闭后的真实 hook 入口直接返回空输出，不登记窗口或注入恢复上下文',async t=>{
   const f=fixture(t),home=temporary(t);f.store.updatePeer(f.x.id,{enabled:false});writeMemberControls(home,f.store);
   for(const event of ['SessionStart','SessionEnd','PreToolUse']){
-    const child=spawn(process.execPath,[path.join(PACKAGE_ROOT,'dist/hook-entry.js'),'hook','--host','codex'],{env:{...process.env,NXBRIDGE_HOME:home},windowsHide:true,stdio:['pipe','pipe','pipe']});let out='',err='';child.stdout.on('data',data=>out+=data);child.stderr.on('data',data=>err+=data);const ended=once(child,'close');child.stdin.end(JSON.stringify({hook_event_name:event,session_id:'x',tool_name:'send_message',tool_input:{message:'nxref:msg:missing'}}));
+    const child=spawn(process.execPath,[path.join(PACKAGE_ROOT,'dist/hook-entry.js'),'hook','--host','codex'],{env:{...process.env,AGYBRIDGE_HOME:home},windowsHide:true,stdio:['pipe','pipe','pipe']});let out='',err='';child.stdout.on('data',data=>out+=data);child.stderr.on('data',data=>err+=data);const ended=once(child,'close');child.stdin.end(JSON.stringify({hook_event_name:event,session_id:'x',tool_name:'send_message',tool_input:{message:'nxref:msg:missing'}}));
     const [code]=await ended;assert.equal(code,0,err);assert.deepEqual(JSON.parse(out),{});assert.equal(err,'');
   }
-  assert.equal(existsSync(path.join(home,'nxbridge.db')),false);
+  assert.equal(existsSync(path.join(home,'agybridge.db')),false);
 });
 
 test('原生历史读取期间关闭成员，不再认领、注入、续跑或结算消息',async t=>{
@@ -168,21 +168,21 @@ test('原生历史读取期间关闭成员，不再认领、注入、续跑或�
 test('用户亲自在已关闭 Codex 的输入框开启另一侧，hook 不登记窗口或注入上下文',async t=>{
   const f=fixture(t),temp=temporaryDirectory(),home=f.broker.home,configHome=path.join(temp.directory,'codex'),binary=path.join(temp.directory,process.platform==='win32'?'codex.exe':'codex');copyFileSync(process.execPath,binary);
   const script=`process.title='codex';process.on('message',p=>{const c=require('node:child_process').spawn(p.node,[p.entry,'hook','--host','codex'],{env:process.env,windowsHide:true,stdio:['pipe','pipe','pipe']});let out='',err='';c.stdout.on('data',d=>out+=d);c.stderr.on('data',d=>err+=d);c.on('close',code=>process.send({code,out,err}));c.stdin.end(JSON.stringify(p.input));});process.send('ready');`;
-  const native=spawn(binary,['-e',script],{env:{...process.env,NXBRIDGE_HOME:home,CODEX_HOME:configHome},windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),closed=once(native,'close');let server:Awaited<ReturnType<typeof listenBroker>>|undefined;
+  const native=spawn(binary,['-e',script],{env:{...process.env,AGYBRIDGE_HOME:home,CODEX_HOME:configHome},windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),closed=once(native,'close');let server:Awaited<ReturnType<typeof listenBroker>>|undefined;
   t.after(async()=>{if(native.exitCode===null&&native.signalCode===null)native.kill();await closed;await server?.close();await temp.cleanup();});await once(native,'message');
   const identity=await processIdentity(native.pid!);f.store.saveEndpoint({...f.store.endpoint(f.x.id)!,mode:'embedded',processKind:'foreground',pid:native.pid!,procStart:identity.startedAt,configHome});f.store.pair(f.c.id,f.x.id);f.store.updatePeer(f.c.id,{enabled:false});f.store.updatePeer(f.x.id,{enabled:false});writeMemberControls(home,f.store);
   await ensureHome(home);server=await listenBroker(home,(method,params)=>f.broker.dispatch(method,params));
-  const done=once(native,'message');native.send({node:process.execPath,entry:path.join(PACKAGE_ROOT,'dist/hook-entry.js'),input:{hook_event_name:'UserPromptSubmit',session_id:'x',prompt:'nxbridge on claude'}});const value=(await done)[0];assert.equal(value.code,0,value.err);assert.equal(value.err,'');const result=JSON.parse(value.out);assert.equal(result.decision,'block');assert.equal(result.hookSpecificOutput,undefined);assert.equal(f.store.peer(f.c.id).enabled,true);assert.equal(f.store.peer(f.x.id).enabled,false);
+  const done=once(native,'message');native.send({node:process.execPath,entry:path.join(PACKAGE_ROOT,'dist/hook-entry.js'),input:{hook_event_name:'UserPromptSubmit',session_id:'x',prompt:'agybridge on agy'}});const value=(await done)[0];assert.equal(value.code,0,value.err);assert.equal(value.err,'');const result=JSON.parse(value.out);assert.equal(result.decision,'block');assert.equal(result.hookSpecificOutput,undefined);assert.equal(f.store.peer(f.c.id).enabled,true);assert.equal(f.store.peer(f.x.id).enabled,false);
 });
 
 test('关闭后的真实 MCP 入口不连接 broker、所有业务工具简短返回 off，保留控制入口',async t=>{
   const f=fixture(t),temp=temporaryDirectory(),home=temp.directory,binary=path.join(home,process.platform==='win32'?'codex.exe':'codex');copyFileSync(process.execPath,binary);
   const script=`process.title='codex';process.send('ready');process.on('message',async p=>{try{const{Client}=await import(p.client);const{StdioClientTransport}=await import(p.transport);const c=new Client({name:'off-test',version:'1'});const tr=new StdioClientTransport({command:p.node,args:[p.entry,'mcp','--host','codex'],env:process.env,stderr:'pipe'});let err='';tr.stderr?.on('data',d=>err+=d);await c.connect(tr);const list=await c.listTools();const values=[];for(const name of ['send_message','receive_messages','checkpoint'])values.push(await c.callTool({name,arguments:name==='send_message'?{message:'不应发送'}:{},_meta:{threadId:'x',sessionId:'x'}}));await c.close();process.send({names:list.tools.map(t=>t.name),values,err});}catch(e){process.send({error:String(e)});}});`;
-  const native=spawn(binary,['-e',script],{env:{...process.env,NXBRIDGE_HOME:home,CODEX_HOME:path.join(home,'codex-home')},windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),closed=once(native,'close');
+  const native=spawn(binary,['-e',script],{env:{...process.env,AGYBRIDGE_HOME:home,CODEX_HOME:path.join(home,'codex-home')},windowsHide:true,stdio:['ignore','ignore','ignore','ipc']}),closed=once(native,'close');
   t.after(async()=>{if(native.exitCode===null&&native.signalCode===null)native.kill();await closed;await temp.cleanup();});await once(native,'message');
   const identity=await processIdentity(native.pid!);f.store.saveEndpoint({...f.store.endpoint(f.x.id)!,mode:'embedded',processKind:'foreground',pid:native.pid!,procStart:identity.startedAt});f.store.updatePeer(f.x.id,{enabled:false});writeMemberControls(home,f.store);
   const done=once(native,'message'),sdk=path.join(PACKAGE_ROOT,'node_modules/@modelcontextprotocol/sdk/dist/esm/client');native.send({node:process.execPath,entry:path.join(PACKAGE_ROOT,'dist/mcp-entry.js'),client:pathToFileURL(path.join(sdk,'index.js')).href,transport:pathToFileURL(path.join(sdk,'stdio.js')).href});
   const value=(await done)[0];assert.equal(value.error,undefined);assert.ok(value.names.includes('set_enabled'));
-  for(const result of value.values){const output=JSON.parse(result.content[0].text);assert.equal(output.code,'member_disabled');assert.equal(output.enable_command,`nxbridge on codex --member ${f.x.id}`);}
-  assert.equal(value.err,'');assert.equal(existsSync(path.join(home,'nxbridge.db')),false);
+  for(const result of value.values){const output=JSON.parse(result.content[0].text);assert.equal(output.code,'member_disabled');assert.equal(output.enable_command,`agybridge on codex --member ${f.x.id}`);}
+  assert.equal(value.err,'');assert.equal(existsSync(path.join(home,'agybridge.db')),false);
 });

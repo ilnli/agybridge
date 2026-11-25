@@ -14,7 +14,7 @@ test('Windows bootstrap 预检拒绝时不停止现有协调器、不预约、�
   const state=path.join(home,'run','background-state.json'),before=readFileSync(state),methods:string[]=[];
   const server=await listenBroker(home,async method=>{methods.push(method);assert.equal(method,'ping');return{pid:process.pid,runtime:{windowsIndependent:false}};});t.after(()=>server.close());
   let probes=0;
-  await assert.rejects(bootstrapBackground(home,{preflight:async()=>{probes++;throw new BridgeError('bootstrap_context_unavailable','请在普通 PowerShell 运行 nxbridge bootstrap');}}),{code:'bootstrap_context_unavailable'});
+  await assert.rejects(bootstrapBackground(home,{preflight:async()=>{probes++;throw new BridgeError('bootstrap_context_unavailable','请在普通 PowerShell 运行 agybridge bootstrap');}}),{code:'bootstrap_context_unavailable'});
   assert.equal(probes,1);assert.deepEqual(methods,['ping']);assert.deepEqual(readFileSync(state),before);
   assert.equal(existsSync(path.join(home,'run','broker-startup.db')),false);
 });

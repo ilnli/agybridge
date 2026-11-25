@@ -63,7 +63,7 @@ test('用户窗口只返回原生恢复步骤，不进入后台引导或停止�
 });
 
 test('搭档命令从预检到停止保留原生调用方及配对围栏，拒绝原因指明等待或停止',async t=>{
-  const home=temporary(t);await ensureHome(home);const native={host:'claude' as const,pid:101,procStart:'caller'};let failure='';
+  const home=temporary(t);await ensureHome(home);const native={host:'agy' as const,pid:101,procStart:'caller'};let failure='';
   const server=await listenBroker(home,async(method,params:any)=>{
     if(method==='ping')return{pid:process.pid};
     assert.equal(params.partner,true);assert.deepEqual(params.native,native);

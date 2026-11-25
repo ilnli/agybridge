@@ -26,7 +26,7 @@ export async function requireRestoreBootstrap(launch:HostLaunch):Promise<void>{
     work=runCli('codex',['--no-daemon',...CODEX_RESTORE_BOOTSTRAP,'features','list'],{launch,timeout:8000}).then(()=>{},error=>{
       restoreCapabilities.delete(key);
       if(!bootstrapPolicyRejected(error))throw error;
-      throw Object.assign(new BridgeError('bootstrap_policy_unsupported',`所选 Codex ${launch.executable.command}（${launch.profile?.version??'版本未知'}）拒绝命名权限启动配置。请更新此 Codex，或用 nxbridge setup --codex-command 指定支持的入口；检测到入口更新后会重新核验，也可显式重试 nxbridge adopt codex。原消息继续保留。原因：${describeError(error).slice(0,600)}`),{bootstrapProbeKey:key});
+      throw Object.assign(new BridgeError('bootstrap_policy_unsupported',`所选 Codex ${launch.executable.command}（${launch.profile?.version??'版本未知'}）拒绝命名权限启动配置。请更新此 Codex，或用 agybridge setup --codex-command 指定支持的入口；检测到入口更新后会重新核验，也可显式重试 agybridge adopt codex。原消息继续保留。原因：${describeError(error).slice(0,600)}`),{bootstrapProbeKey:key});
     });restoreCapabilities.set(key,work);
   }
   return work;
@@ -35,7 +35,7 @@ export async function requireRestoreBootstrap(launch:HostLaunch):Promise<void>{
 export async function requireDedicatedCodex(launch:HostLaunch,home?:string):Promise<{authenticatedWebsocket:boolean}>{
   const key=JSON.stringify([launch.executable,(()=>{try{return lstatSync(launch.executable.command).mtimeMs;}catch{return 0;}})()]);
   let work=capabilities.get(key);
-  if(!work){work=runCli('codex',['--no-daemon','app-server','--help'],{launch,home,timeout:8000}).then(help=>({authenticatedWebsocket:/--ws-auth\b/.test(help)&&/--ws-token-file\b/.test(help)}),error=>{capabilities.delete(key);if(/(?:unexpected argument|unrecognized (?:option|argument)|unknown option).{0,30}--no-daemon/i.test(String(error)))throw new BridgeError('dedicated_mode_unsupported','所选 Codex 不支持专用 App Server；请在原窗口恢复同一会话，并用 nxbridge status 核对。');throw error;});capabilities.set(key,work);}
+  if(!work){work=runCli('codex',['--no-daemon','app-server','--help'],{launch,home,timeout:8000}).then(help=>({authenticatedWebsocket:/--ws-auth\b/.test(help)&&/--ws-token-file\b/.test(help)}),error=>{capabilities.delete(key);if(/(?:unexpected argument|unrecognized (?:option|argument)|unknown option).{0,30}--no-daemon/i.test(String(error)))throw new BridgeError('dedicated_mode_unsupported','所选 Codex 不支持专用 App Server；请在原窗口恢复同一会话，并用 agybridge status 核对。');throw error;});capabilities.set(key,work);}
   return work;
 }
 export async function verifyDedicatedCodex(endpoint:string,native:ProcessIdentity):Promise<void>{

@@ -13,19 +13,19 @@ import {VERSION} from '../dist/version.js';
 
 const terminal=new Set(['runtimeQueued','contextObserved','responded','refused','expired']);
 export function readAuditState(home){
-  const db=new DatabaseSync(path.join(home,'nxbridge.db'),{readOnly:true});
+  const db=new DatabaseSync(path.join(home,'agybridge.db'),{readOnly:true});
   try{
     db.exec('BEGIN');
                                             
     const protectedIds=new Set(db.prepare("WITH RECURSIVE protected(id) AS (SELECT id FROM messages WHERE state NOT IN ('runtimeQueued','contextObserved','responded','refused','expired') UNION SELECT id FROM messages WHERE sender IN (SELECT id FROM peers WHERE CASE WHEN json_valid(data) THEN json_extract(data,'$.enabled')=0 END) OR recipient IN (SELECT id FROM peers WHERE CASE WHEN json_valid(data) THEN json_extract(data,'$.enabled')=0 END) UNION SELECT CASE WHEN json_valid(data) THEN json_extract(data,'$.messageId') END FROM questions UNION SELECT m.in_reply_to FROM messages m JOIN protected p ON m.id=p.id WHERE m.in_reply_to IS NOT NULL) SELECT id FROM protected WHERE id IS NOT NULL").all().map(row=>row.id));
     return{
-      pairs:db.prepare('SELECT id,claude,codex FROM pairs WHERE archived=0 ORDER BY id').all(),
+      pairs:db.prepare('SELECT id,agy,codex FROM pairs WHERE archived=0 ORDER BY id').all(),
       messages:db.prepare('SELECT id,state FROM messages ORDER BY id').all().map(row=>({...row,protected:protectedIds.has(row.id)}))
     };
   }finally{db.close();}
 }
 function snapshot(home){
-  const nativeHome=loadConfig(home).codexHome??codexHome(),directory=path.join(nativeHome,'plugins','cache','nxbridge-local','nxbridge',VERSION);
+  const nativeHome=loadConfig(home).codexHome??codexHome(),directory=path.join(nativeHome,'plugins','cache','agybridge-local','agybridge',VERSION);
   const files=fileHashes(directory);assert.ok(Object.keys(files).length,'无法读取已安装的 Codex 插件文件');
                                                   
   return JSON.parse(JSON.stringify({owner:'nxbridge-update-audit-v1',at:new Date().toISOString(),home,buildId:activeRuntime(home)?.buildId??null,bundle:{directory,files},hookTrust:parse(readFileSync(path.join(nativeHome,'config.toml'),'utf8')).hooks?.state??null,state:readAuditState(home)}));

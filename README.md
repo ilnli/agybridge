@@ -1,72 +1,95 @@
-# nxbridge
+# agybridge
 
-让同一台电脑上的 **Claude Code** 和 **Codex CLI** 互相发消息、平等协作。
+让同一台电脑上的 **Antigravity CLI (`agy`)** 和 **Codex CLI (`codex`)** 互相发消息、平等异步协作。
 
-你照常跟其中一边说要做什么，两边会按各自擅长的方向自动分工、互相把关，取长补短，不用你在两个窗口之间来回转述。两边仍然是各自的官方 CLI，用各自的登录、模型服务、上下文和权限。nxbridge 自己只在本机传递消息，不调用任何模型，也不把内容发到别处。
+你照常跟其中一边说要做什么，两边会按各自擅长的方向自动商量分工、并行推进、互相审查把关，不用你在两个终端窗口之间来回复制转述。两边仍然是各自的官方 CLI，使用各自的登录态、模型服务、上下文与权限边界；`agybridge` 只在本机传递消息与维护协调状态，不调用任何外部模型，也不把内容发往别处。
 
 ## 它能做什么
 
-- **取长补短：** 两边按各自擅长的方向自动分工，较大的任务先商量好再并行，重要的改动互相审查，不用你指定谁来做。
-- **自动找搭档：** 同一项目里开着对方的窗口时，问你要不要和它配对；没有时自动在后台启动一个当搭档，有消息就叫醒它干活。
-- **后台搭档可以无人值守：** nxbridge 在后台启动的那一边默认全自动运行；崩溃或退出后按原会话自动恢复。
-- **消息可靠：** 每条消息都有送达状态，送没送到会如实告诉发信方；结果不明的消息不会自动重发。
-- **不动你的模型和权限设置：** 通过两家官方的插件、hooks 和 MCP 接入，安装只添加 nxbridge 自己的插件和工具设置；不改 CLI 本身，不改你的模型、审批和沙箱设置，不装系统服务。
+- **平等搭档、取长补短**：AGY 擅长交互规划、跨模块综合分析、前端/UI 与多代理编排；Codex 擅长纵深后端工程、系统级调试、严密验证与安全审查。双方作为对等同事异步配合，绝不把一方降级成另一方的无状态子代理。
+- **前台自动唤醒 + 双向后台托管**：
+  - 在 **AGY 前台窗口**发信后通过 `codex.wait_partner` 在后台挂起监听，Codex 完成任务回信时**自动唤醒空闲中的 AGY 窗口并注入完整回复**，无需轮询。
+  - 同目录没有对方窗口时自动按需拉起后台搭档（后台专用 Codex App Server，或基于 **`agy acp --stdio`** 的后台 AGY 会话）；需要人工查看或介入时，随时用 `agybridge open codex` 或 `agybridge open agy` 在前台打开原会话。
+- **消息可靠、断线可恢复**：每条消息与问答均记录在本机 SQLite WAL 持久账本中，送达证据如实反馈，结果不明（`unknown`）的消息绝不盲目重发；后台搭档意外退出后按原会话自动恢复，关键状态文件均经 `fsync` 落盘后原子替换。
+- **非侵入、数据隔离**：通过两家官方的插件、生命周期 hooks 和 MCP 标准协议接入，不修改 CLI 本身，不改动你的模型、沙箱和审批策略，也不安装系统常驻服务。所有运行数据隔离保存在 `~/.agybridge`（`AGYBRIDGE_HOME`）。
 
-## 需要什么
+## 环境要求
 
-| 需要 | 说明 |
+| 依赖 | 说明 |
 |---|---|
-| Node.js 24～26 | 需要内置的 `node:sqlite`，运行 `node -v` 确认 |
-| Claude Code | 已登录 |
-| Codex CLI | 已登录，至少 0.164.0 |
+| Node.js `24` ～ `26` | 需要内置 `node:sqlite`，运行 `node -v` 确认 |
+| Antigravity CLI (`agy`) | 已完成登录（推荐 `1.5.14+`） |
+| Codex CLI (`codex`) | 已完成登录，版本至少 `0.164.0` |
 
-已在 Windows 和 WSL（Ubuntu 22.04）上验证。macOS 只在真机上验证过一部分；每次更新时，GitHub Actions 的 macOS 测试机会用官方 CLI 自动跑原生测试。其他 Linux 发行版应该可以用，但没有单独测过。
+已在 Linux / WSL 与 Windows 环境完成协议验证；macOS 提供独立只读验证工具与隔离用例（见 [tools/macos-validation.md](tools/macos-validation.md)）。
 
 ## 安装
 
-1. 从 [Releases](../../releases) 下载最新的 zip 并解压，在解压出的 `nxbridge-<版本>` 文件夹里打开终端。
-2. 安装：
+### 方式一：从 Release 压缩包安装
+
+1. 从 [Releases](https://github.com/ilnli/agybridge/releases) 下载最新 `agybridge-<版本>.zip` 并解压，在解压目录打开终端。
+2. 执行安装：
 
    ```sh
-   node nxbridge.mjs setup --dry-run   # 先预演：做完整检查，不写入任何东西
-   node nxbridge.mjs setup             # 正式安装
+   node agybridge.mjs setup --dry-run   # 先预演检查，不写入任何文件
+   node agybridge.mjs setup             # 正式安装
    ```
 
-   安装会把运行文件复制到 `~/.nxbridge`，用两家官方的插件命令装上插件，并放一个 `nxbridge` 命令到你 PATH 里的用户目录。装好后，解压出的文件夹就可以删掉了。
+### 方式二：从源码构建安装
 
-3. 让插件生效：
-   - **Claude Code：** 在已打开的窗口里执行 `/reload-plugins`，或新开一个窗口。
-   - **Codex：** 新开一个会话，在 `/hooks` 里信任 nxbridge 的 hooks。
-4. 想让后台启动的 Claude 全自动运行，需要你本人先在任意终端运行一次 `claude --dangerously-skip-permissions` 并接受提示（只需一次）。
-5. 检查：运行 `nxbridge doctor`。
+```sh
+git clone git@github.com:ilnli/agybridge.git
+cd agybridge
+npm ci
+npm run build:publish
+node publish/agybridge.mjs setup
+```
 
-## 使用
+`setup` 会将独立运行时复制到 `~/.agybridge/runtime/`，通过两端官方插件机制安装 `agybridge` 插件，并在你 `PATH` 中的用户目录放置 `agybridge` 命令。安装完成后，临时解压目录或构建目录移走也不影响运行。
 
-在项目目录里打开 Claude Code，像平常一样交代任务就行，一般不用说该谁来做：两边会按各自擅长的方向自动分工，需要时互相审查、交换意见。想指定时直接说，比如“这次让 Codex 审查一下”。
+### 让插件生效
 
-不用自己开 Codex 窗口：需要搭档时，nxbridge 会在后台启动一个 Codex。想看它在做什么，运行 `nxbridge open codex`。
+1. **AGY**：新开一个 `agy` 窗口，或用 `agy --conversation <会话ID>` 恢复会话以加载插件。
+2. **Codex**：新开一个会话，在 `/hooks` 中信任 `agybridge` 的 hooks。
+3. **自检**：运行 `agybridge doctor` 确认两端状态正常。
 
-从 Codex 开始也一样，需要时会在后台启动一个 Claude。
+## 日常使用
+
+在项目目录打开 `agy`（或 `codex`），直接像平时一样描述任务即可：需要搭档时会自动配对或在后台拉起搭档，双方商定边界后并行工作、互相核验。也可以直接指定分工或模型，例如“用 `agybridge` 拉起一个 Codex（`gpt-6.2-astra` `high`），把底层重构和测试交给它”。
 
 常用命令：
 
 | 命令 | 作用 |
 |---|---|
-| `nxbridge status` | 查看配对和双方状态 |
-| `nxbridge doctor` | 检查安装和运行状态 |
-| `nxbridge open codex` | 打开后台的 Codex，看它在做什么 |
-| `nxbridge pause` / `resume` / `unpair` | 暂停、恢复或解除当前配对 |
-| `nxbridge update --from <新版本文件夹>` | 更新到新版本 |
-| `nxbridge uninstall` | 卸载（加 `--dry-run` 先看会做什么） |
+| `agybridge status` | 查看当前配对、双方状态与消息计数 |
+| `agybridge doctor` | 检查双端 CLI、插件、hooks 信任与本机协调器状态 |
+| `agybridge pair` | 查看可配对窗口、历史后台搭档，或手动指定配对 |
+| `agybridge open codex` / `agybridge open agy` | 在前台临时接管后台运行的 Codex 或 AGY 会话 |
+| `agybridge adopt codex` / `release codex` | 将 Codex 会话转交后台托管，或交还用户窗口 |
+| `agybridge partner-profile codex\|agy` | 查看或修改后台搭档使用的模型与推理强度 |
+| `agybridge pause` / `resume` / `unpair` | 暂停、恢复或解除当前配对 |
+| `agybridge restart codex` | 在后台 Codex 空闲时平滑重启运行时 |
+| `agybridge watch` | 实时查看双方消息流与结构化问答 |
+| `agybridge update [--from <目录>]` | 更新或修复当前安装 |
+| `agybridge uninstall [--dry-run] [--purge]` | 卸载插件与命令（`--purge` 一并清理 `~/.agybridge`） |
+
+在 AGY 或 Codex 输入框里也可以直接输入快捷指令：`agybridge status`、`agybridge on/off`、`agybridge pair [<配对码>]`、`agybridge pickup`（或 `agybridge 收信`）、`agybridge config pending` / `confirm`。
 
 ## 文档
 
-- [使用说明](docs/user-guide.md)：安装、权限模式、配对、后台搭档、配置、更新、卸载和遇到问题时怎么办的完整说明
-- [行为说明](docs/behavior.md)：各功能的实际行为、限制和已知边界
-- [开发说明](docs/development.md)：目录结构、从源码构建、测试和 CI
+- [使用说明](docs/user-guide.md)：安装、更新、配对、后台托管、快捷指令与安全边界完整指南
+- [协作指南](docs/collaboration.md)：AGY 与 Codex 的分工方式、`wait_partner` 唤醒与协作约定
+- [行为说明](docs/behavior.md)：协议细节、状态机、异常检测、恢复策略与 TOML 配置项参考
+- [开发说明](docs/development.md)：目录结构、从源码构建、插件校验与自动化测试
 
-## 反馈与许可证
+## 致谢
 
-安全漏洞请按 [SECURITY.md](SECURITY.md) 私下报告。本仓库不接受 Issue 和 Pull Request。
+本项目基于 **[nxbridge](https://github.com/nxbridge/nxbridge)** 衍生与改造而来，特此向原项目及其作者致以诚挚感谢！
 
-许可证为 MIT，见 [LICENSE](LICENSE)。
+`nxbridge` 为本地 CLI 智能体之间的对等异步协作奠定了极其扎实的工程基础——包括本机协调器架构、SQLite 可靠投递账本、Codex App Server / daemon 深度协议适配、进程代次归属核验以及克制严谨的安全边界设计。`agybridge` 在继承上述核心设计与可靠性保障的基础上，将协作另一端适配并扩展至 **Antigravity CLI (`agy`)**，实现了原生 AGY 插件与生命周期 hooks、`wait_partner` 前台异步挂起唤醒，以及基于 `agy acp --stdio` 的后台会话托管与前后台无损切换。
+
+## 安全反馈与许可证
+
+安全问题请参见 [SECURITY.md](SECURITY.md) 私下报告。
+
+本项目采用 MIT 许可证发布，详见 [LICENSE](LICENSE)。

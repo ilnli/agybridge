@@ -9,12 +9,12 @@ test('收到搭档任务后忙碌满当前强度阈值才提醒，收信推迟�
   const advance=(ms:number)=>{while(ms>0){const step=Math.min(ms,60000);now+=step;for(const peer of f.store.peers())f.broker.communicationTips.cooperation.observe(peer);ms-=step;}};
   const f=fixture(t);f.store.pair(f.c.id,f.x.id);f.store.updatePeer(f.x.id,{state:'busy',effort:'xhigh'});
   const actor={host:'codex' as const,sessionId:'x',callId:'tip'},tip=async()=>(await f.broker.dispatch('tip.sync',{actor}) as any).tip;
-  const incoming=async(callId:string)=>{const m=f.broker.send({actor:{host:'claude',sessionId:'c',callId},message:'搭档任务'},false);await f.broker.dispatch('observe',{actor,message_id:m.message_id,state:'contextObserved'});return m;};
+  const incoming=async(callId:string)=>{const m=f.broker.send({actor:{host:'agy',sessionId:'c',callId},message:'搭档任务'},false);await f.broker.dispatch('observe',{actor,message_id:m.message_id,state:'contextObserved'});return m;};
   assert.equal(await tip(),undefined,'没有本上下文交互时保持安静');
   const first=await incoming('task');advance(30*60000-1);assert.equal(await tip(),undefined);advance(1);
   assert.match(await tip(),/no contact 30m/);
   advance(30*60000);await incoming('more');assert.equal(await tip(),undefined,'新收信推迟提醒，但不补次数');advance(30*60000);assert.match(await tip(),/tip 2\/3/);
-  const send={actor:{...actor,callId:'own-send'},message:'中途同步'},sent=f.broker.send(send,false);await f.broker.dispatch('observe',{actor:{host:'claude',sessionId:'c',callId:'see'},message_id:sent.message_id,state:'contextObserved'});
+  const send={actor:{...actor,callId:'own-send'},message:'中途同步'},sent=f.broker.send(send,false);await f.broker.dispatch('observe',{actor:{host:'agy',sessionId:'c',callId:'see'},message_id:sent.message_id,state:'contextObserved'});
   advance(10*60000);const latest=await incoming('later');advance(20*60000);assert.equal(await tip(),undefined);
   await f.broker.dispatch('observe',{actor,message_id:latest.message_id,state:'contextObserved'});
   await f.broker.dispatch('observe',{actor,message_id:first.message_id,state:'contextObserved'});
@@ -32,7 +32,7 @@ test('同步提醒按配对和根上下文隔离，暂停、空闲、人工等�
   f.store.setPaused(true,pair.id);assert.equal(tips.syncTip(f.x,7),undefined);f.store.setPaused(false,pair.id);
   const child=f.store.register(registration('codex','child',{kind:'subagent',parentId:'x'}));
   assert.equal((await f.broker.dispatch('tip.sync',{actor:{host:'codex',sessionId:child.sessionId,callId:'child',via:'child'}}) as any).tip,undefined);
-  const c2=f.store.register(registration('claude','c2',{state:'ready'})),x2=f.store.register(registration('codex','x2',{state:'busy',effort:'xhigh'}));f.store.pair(c2.id,x2.id);
+  const c2=f.store.register(registration('agy','c2',{state:'ready'})),x2=f.store.register(registration('codex','x2',{state:'busy',effort:'xhigh'}));f.store.pair(c2.id,x2.id);
   assert.equal(tips.syncTip(x2,7),undefined);advance(7*60000);assert.match(tips.syncTip(f.x,7)!,/no contact 7m/);
   assert.match(tips.syncTip(x2,7)!,/no contact 7m/);assert.equal(tips.syncTip(f.x,7),undefined);
   const binding=f.store.bindings.activate({host:'codex',pid:101,procStart:'generation',configHome:'/isolated'},f.x.id,'x','reset');
@@ -52,10 +52,10 @@ test('Codex 根工具完成先提示取件，真实收信后才启动协作时�
   await f.broker.dispatch('hook',{...hook,hook_event_name:'SessionStart'});
   await f.broker.dispatch('hook',{...hook,hook_event_name:'UserPromptSubmit'});
   f.store.updatePeer(f.x.id,{effort:'xhigh'});
-  const pending=f.broker.send({actor:{host:'claude',sessionId:'c',callId:'pending'},message:'还有任务'},false);advance(30*60000);
+  const pending=f.broker.send({actor:{host:'agy',sessionId:'c',callId:'pending'},message:'还有任务'},false);advance(30*60000);
   const event={...hook,hook_event_name:'PostToolUse',tool_name:'exec_command'};
   assert.deepEqual(await f.broker.dispatch('hook',{...event,agent_id:'child'}),{});
-  const pickup:any=await f.broker.dispatch('hook',event);assert.match(pickup.hookSpecificOutput.additionalContext,/claude msg pending/);assert.doesNotMatch(pickup.hookSpecificOutput.additionalContext,/nxbridge tip/);
+  const pickup:any=await f.broker.dispatch('hook',event);assert.match(pickup.hookSpecificOutput.additionalContext,/agy msg pending/);assert.doesNotMatch(pickup.hookSpecificOutput.additionalContext,/nxbridge tip/);
   await f.broker.dispatch('observe',{actor:{host:'codex',sessionId:'x',callId:'seen'},message_id:pending.message_id,state:'contextObserved'});advance(30*60000);
   const first:any=await f.broker.dispatch('hook',event);assert.match(first.hookSpecificOutput.additionalContext,/no contact 30m/);
   const again:any=await f.broker.dispatch('hook',event);assert.doesNotMatch(again.hookSpecificOutput?.additionalContext??'',/nxbridge tip/);
@@ -91,7 +91,7 @@ test('长报告使用原文 Unicode 字符阈值，提醒服从轮次、十次�
 test('复用查找连续三百字符，返回可用的消息或自有已完成代理引用，优先于长度提醒',t=>{
   const f=fixture(t);f.store.pair(f.c.id,f.x.id);
   const content=Array.from({length:650},(_,i)=>String.fromCodePoint(0x4e00+i)).join('');
-  const sent=f.broker.send({actor:{host:'claude',sessionId:'c',callId:'source'},message:'来源前缀 '+content+' 来源后缀'});
+  const sent=f.broker.send({actor:{host:'agy',sessionId:'c',callId:'source'},message:'来源前缀 '+content+' 来源后缀'});
   const original='新前缀 '.repeat(27)+content.slice(17,517)+' 新后缀';
   const tip=f.broker.communicationTips.record(f.x,original,'partner','reuse','turn-1');
   assert.match(tip!,/500 chars match msg/);assert.ok(tip!.includes('nxref:msg:'+sent.message_id));
@@ -106,19 +106,19 @@ test('复用查找连续三百字符，返回可用的消息或自有已完成�
 
 test('已识别逐字载荷、已有引用不触发复用，旧配对及过期快照不作为来源',t=>{
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),body='可复用长内容'.repeat(100);
-  const sent=f.broker.send({actor:{host:'claude',sessionId:'c',callId:'old'},message:body});
+  const sent=f.broker.send({actor:{host:'agy',sessionId:'c',callId:'old'},message:body});
   for(const [i,text]of['原文：\n'+body,'verbatim:\n'+body,'```txt\n'+body+'\n```',JSON.stringify({payload:body}),body+' `nxref:msg:example`'].entries())assert.equal(f.broker.communicationTips.record(f.x,text,'partner','literal-'+i),undefined);
-  const other=f.store.register(registration('claude','other'));f.store.pair(other.id,f.x.id,true);
+  const other=f.store.register(registration('agy','other'));f.store.pair(other.id,f.x.id,true);
   assert.equal(f.broker.communicationTips.record(f.x,body,'partner','old-pair'),undefined);
   f.store.pair(f.c.id,f.x.id,true);assert.notEqual(f.store.currentPair()!.id,pair.id);
-  const expired=f.broker.send({actor:{host:'claude',sessionId:'c',callId:'expired'},message:body});f.store.requireSnapshot(expired.message_id);
+  const expired=f.broker.send({actor:{host:'agy',sessionId:'c',callId:'expired'},message:body});f.store.requireSnapshot(expired.message_id);
   assert.equal(f.broker.communicationTips.record(f.x,body,'partner','expired'),undefined);
   assert.equal(f.store.message(sent.message_id).body,body);
 });
 
 test('生产发信先保留投递真相，提示不改正文、展开快照或幂等，统计在状态可见',async t=>{
   const f=fixture(t);f.store.pair(f.c.id,f.x.id);f.codex.probe=async()=>({state:'blocked',reasons:['故障'],checked_at:Date.now()});
-  const actor={host:'claude',sessionId:'c',callId:'long',turnId:'native-turn'},body='长报告 '.repeat(600);
+  const actor={host:'agy',sessionId:'c',callId:'long',turnId:'native-turn'},body='长报告 '.repeat(600);
   const first:any=await f.broker.dispatch('send',{actor,message:body});assert.equal(first.status,'blocked');assert.match(first.message,/saved; delivery blocked/);assert.match(first.tip,/auto length check/);
   assert.equal(f.store.message(first.message_id).body,body);assert.equal(f.broker.references.message(f.store.message(first.message_id)),body);
   for(let i=0;i<65;i++)await f.broker.dispatch('tip.agent',{actor:{...actor,callId:'agent-'+i},text:'短任务'});

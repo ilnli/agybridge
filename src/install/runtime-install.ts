@@ -12,7 +12,7 @@ import { resolveNodeRuntime } from './node-runtime.js';
 import { retryWindowsFileOperation } from '../storage/atomic-file.js';
 import {stateDirectory} from '../storage/state-directory.js';
 
-const execute=promisify(execFile),OWNER='nxbridge-publish-v1';
+const execute=promisify(execFile),OWNER='agybridge-publish-v1';
 const digest=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
 export interface RuntimeReference {buildId:string;directory:string;entry:string;version:string}
 export interface RuntimeManifest {owner:typeof OWNER;buildId:string;version:string;files:Record<string,string>;dependencies:Record<string,string>}
@@ -21,14 +21,12 @@ export interface RuntimePointer extends RuntimeReference {owner:string;node:stri
 interface RuntimeProcess {owner:string;pid:number;generation:string;entry:string;buildId?:string}
 export interface InstallReceipt {owner:string;buildId:string;roots:{directory:string;files:Record<string,string>}[]}
 
-                                        
 export function runtimeEntriesChanged(previous:RuntimeManifest|undefined,candidate:RuntimeCandidate,entries:string[]):boolean{
   const pending=[...entries],seen=new Set<string>();
   while(pending.length){
     const name=pending.pop()!;if(seen.has(name))continue;seen.add(name);
     if(previous?.files[name]!==candidate.manifest.files[name])return true;
     const source=readFileSync(path.join(candidate.directory,name),'utf8');
-                                                  
     for(const match of source.matchAll(/\b(?:from\s*|import\s*(?:\(\s*)?)["'](\.{1,2}\/[^"']+)["']/g)){
       const dependency=path.posix.normalize(path.posix.join(path.posix.dirname(name),match[1]!));
       if(Object.hasOwn(candidate.manifest.files,dependency))pending.push(dependency);
@@ -53,7 +51,7 @@ export function runtimeManifest(root=PACKAGE_ROOT):RuntimeManifest|undefined{
 }
 export function ownsRuntime(home:string,directory:string):boolean{
   const root=path.join(home,'runtime');
-  try{return inside(root,directory)&&sameDirectory(path.dirname(directory),root)&&inside(realpathSync.native(root),realpathSync.native(directory))&&readJson<any>(path.join(directory,'.nxbridge-runtime.json')).owner===managedMarker(home)&&runtimeManifest(directory)?.buildId===path.basename(directory);}catch{return false;}
+  try{return inside(root,directory)&&sameDirectory(path.dirname(directory),root)&&inside(realpathSync.native(root),realpathSync.native(directory))&&readJson<any>(path.join(directory,'.agybridge-runtime.json')).owner===managedMarker(home)&&runtimeManifest(directory)?.buildId===path.basename(directory);}catch{return false;}
 }
 export function activeRuntime(home:string):RuntimePointer|undefined{
   try{const value=readJson<RuntimePointer>(path.join(home,'bin','runtime.json'));return value.owner===managedMarker(home)?value:undefined;}catch{return;}
@@ -70,22 +68,22 @@ export function verifyPublish(root:string):RuntimeManifest{
   const manifest=runtimeManifest(root);
   if(!manifest)throw new BridgeError('publish_missing','没有找到构建好的 publish 目录。请在工程目录里先运行 npm run build:publish，或用 --from 指定一个 publish 目录。');
   if(!/^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(manifest.version))throw new BridgeError('publish_invalid','发布版本号无效。');
-  const files=fileHashes(root,['publish.json','.nxbridge-runtime.json']);
+  const files=fileHashes(root,['publish.json','.agybridge-runtime.json']);
   if(JSON.stringify(files)!==JSON.stringify(manifest.files)||manifest.buildId!==manifest.version+'-'+digest(JSON.stringify({files,dependencies:manifest.dependencies})).slice(0,12))throw new BridgeError('runtime_drift','发布目录与构建清单不一致，未切换当前版本。');
-  for(const name of ['nxbridge.mjs','question-control.mjs','plugins/claude/bridge.cjs','plugins/codex/bridge.cjs','nxbridge-collaboration.md'])if(!files[name])throw new BridgeError('publish_missing','发布目录缺少必要运行文件：'+name);
+  for(const name of ['agybridge.mjs','plugins/agy/bridge.cjs','plugins/codex/bridge.cjs','agybridge-collaboration.md'])if(!files[name])throw new BridgeError('publish_missing','发布目录缺少必要运行文件：'+name);
   if(Object.keys(files).some(file=>/(?:^|\/)(?:node_modules|tests|native-tests)(?:\/|$)|\.map$|\.d\.ts$/.test(file)))throw new BridgeError('publish_invalid','发布目录包含开发文件或未内联的依赖。');
   return manifest;
 }
 export async function stageRuntime(home:string,source:string):Promise<RuntimeCandidate>{
   const manifest=runtimeManifest(source);
   if(!manifest)throw new BridgeError('publish_missing','没有找到构建好的 publish 目录。请在工程目录里先运行 npm run build:publish，或用 --from 指定一个 publish 目录。');
-  const {buildId,version}=manifest,root=path.join(home,'runtime'),directory=path.join(root,buildId),entry=path.join(directory,'nxbridge.mjs');
+  const {buildId,version}=manifest,root=path.join(home,'runtime'),directory=path.join(root,buildId),entry=path.join(directory,'agybridge.mjs');
   if(!inside(root,directory)||!sameDirectory(path.dirname(directory),root))throw new BridgeError('publish_invalid','发布构建编号不能包含目录路径。');
   stateDirectory(root);
   if(existsSync(directory)){
     if(!ownsRuntime(home,directory))throw new BridgeError('runtime_conflict','目标运行时目录不属于本次安装，未覆盖。');
     verifyPublish(directory);
-    if(process.platform==='win32')await execute(process.execPath,['--no-warnings',entry,'prepare-native'],{cwd:directory,env:{...process.env,NXBRIDGE_HOME:home},windowsHide:true,timeout:35000,maxBuffer:1024*1024});
+    if(process.platform==='win32')await execute(process.execPath,['--no-warnings',entry,'prepare-native'],{cwd:directory,env:{...process.env,AGYBRIDGE_HOME:home},windowsHide:true,timeout:35000,maxBuffer:1024*1024});
     return{buildId,version,directory,entry,manifest,reused:true,source};
   }
   const work=path.join(root,'.stage-'+randomUUID());mkdirSync(work);
@@ -96,11 +94,10 @@ export async function stageRuntime(home:string,source:string):Promise<RuntimeCan
       mkdirSync(path.dirname(destination),{recursive:true});copyFileSync(path.join(source,relative),destination);
     }
     atomicJson(path.join(work,'publish.json'),manifest);
-                                                 
     verifyPublish(work);
-    if(process.platform==='win32')await execute(process.execPath,['--no-warnings',path.join(work,'nxbridge.mjs'),'prepare-native'],{cwd:work,env:{...process.env,NXBRIDGE_HOME:home},windowsHide:true,timeout:35000,maxBuffer:1024*1024});
-    else await execute(process.execPath,['--no-warnings',path.join(work,'nxbridge.mjs'),'--version'],{cwd:work,env:{...process.env,NXBRIDGE_HOME:home},windowsHide:true,timeout:15000,maxBuffer:1024*1024});
-    atomicJson(path.join(work,'.nxbridge-runtime.json'),{owner:managedMarker(home),buildId});retryWindowsFileOperation(()=>renameSync(work,directory),directory);
+    if(process.platform==='win32')await execute(process.execPath,['--no-warnings',path.join(work,'agybridge.mjs'),'prepare-native'],{cwd:work,env:{...process.env,AGYBRIDGE_HOME:home},windowsHide:true,timeout:35000,maxBuffer:1024*1024});
+    else await execute(process.execPath,['--no-warnings',path.join(work,'agybridge.mjs'),'--version'],{cwd:work,env:{...process.env,AGYBRIDGE_HOME:home},windowsHide:true,timeout:15000,maxBuffer:1024*1024});
+    atomicJson(path.join(work,'.agybridge-runtime.json'),{owner:managedMarker(home),buildId});retryWindowsFileOperation(()=>renameSync(work,directory),directory);
     return{buildId,version,directory,entry,manifest,reused:false,source};
   }finally{if(existsSync(work))rmSync(work,{recursive:true,force:true});}
 }
@@ -124,10 +121,8 @@ export async function pruneRuntimes(home:string,removeAll=false):Promise<{remove
     let alive=liveProcess(record.pid);
     if(alive)try{alive=(await processIdentity(record.pid)).startedAt===record.generation;}catch{notes.push(`无法核验进程 ${record.pid} 的运行时引用，暂时保留。`);}
     if(!alive){unlinkSync(file);continue;}
-                                                   
-                                     
     let realEntry=record.entry;
-    try{realEntry=path.join(realpathSync.native(path.dirname(record.entry)),path.basename(record.entry));}catch{                         }
+    try{realEntry=path.join(realpathSync.native(path.dirname(record.entry)),path.basename(record.entry));}catch{}
     for(const directory of directories){
       const physicalDirectory=path.join(realRoot,path.basename(directory));
       if(inside(directory,record.entry)||inside(physicalDirectory,record.entry)||inside(physicalDirectory,realEntry))protectedDirs.add(path.resolve(directory));
@@ -152,5 +147,5 @@ export function inspectRuntime(home:string):Record<string,unknown>{
       for(const file of new Set([...Object.keys(root.files),...Object.keys(actual)]))if(actual[file]!==root.files[file])drift.push(path.join(root.directory,file));
     }
   }catch(error){drift.push(String(error));}
-  return{independent:true,buildId:pointer.buildId,entry:pointer.entry,source:pointer.source,previous:pointer.previous??null,drift,liveLoading:'磁盘上的文件和正在运行的 broker 分别核对版本；已打开的 MCP 连接和 Codex 会话是否已加载新版，需要各自确认。'};
+  return{independent:true,buildId:pointer.buildId,entry:pointer.entry,source:pointer.source,previous:pointer.previous??null,drift,liveLoading:'磁盘上的文件和正在运行的 broker 分别核对版本；已打开的 MCP 连接和 AGY/Codex 会话是否已加载新版，需要各自确认。'};
 }

@@ -46,14 +46,6 @@ test('暂停重查保留创建时的 home 与启动证明，不受后续不同�
   monotonic+=30001;assert.equal(await lifecycle(broker).recover(peer),true);assert.equal(attempts,1);
 });
 
-test('Claude 界面或认证统计更新不解除暂停，原生信任变更会重新核验',t=>{
-  const home=temporary(t),peer={host:'claude' as const,sessionId:'original',cwd:home},file=path.join(home,'.claude.json');
-  const config={hasCompletedOnboarding:true,projects:{[home.replaceAll('\\','/')]:{hasTrustDialogAccepted:false}},numStartups:1};writeFileSync(file,JSON.stringify(config),'utf8');
-  const before=launchInputFingerprint(home,DEFAULT_CONFIG,peer,home);
-  writeFileSync(file,JSON.stringify({...config,numStartups:52,oauthAccount:{emailAddress:'test@example.invalid'}}),'utf8');assert.equal(launchInputFingerprint(home,DEFAULT_CONFIG,peer,home),before);
-  config.projects[home.replaceAll('\\','/')]!.hasTrustDialogAccepted=true;writeFileSync(file,JSON.stringify(config),'utf8');assert.notEqual(launchInputFingerprint(home,DEFAULT_CONFIG,peer,home),before);
-});
-
 test('无关配置热更新保留正在等待的恢复退避',async t=>{
   t.mock.timers.enable({apis:['Date'],now:100000});
   const f=fixture(t),broker=f.broker as any,coordinator=lifecycle(f.broker),peer=f.store.updatePeer(f.x.id,{state:'offline'});let attempts=0;

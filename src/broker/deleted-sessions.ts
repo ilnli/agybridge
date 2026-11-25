@@ -11,9 +11,6 @@ import {otherHost,type BridgeConfig,type Endpoint,type Pair,type Peer} from '../
 import { recoveryPrecondition } from './recovery/managed-recovery.js';
 import { probeProcesses } from '../process/process.js';
 import {bridgeHome} from '../shared/local-paths.js';
-import {sameDirectory} from '../shared/files.js';
-import { claudeChild } from '../hosts/claude/claude-child.js';
-import { nativeOwnership } from '../process/owned-native.js';
 import { pairLossView } from './pairing/pair-restore.js';
 
 export type SessionPresence='present'|'absent'|'unknown';
@@ -48,12 +45,7 @@ export async function sessionPresence(store:Store,peer:Peer,probe=probeProcesses
     if(store.setting('takeover:'+peer.id))return'present' as const;
     if(peer.owner==='nxbridge'&&ep.active&&!ep.daemon){
       if(peer.host==='codex'&&ep.mode==='app-server')return store.bindings.current(peer.id)?'present' as const:'absent' as const;
-      if(peer.host==='claude'&&ep.mode==='claude-inbox')try{
-        const child=claudeChild(home,peer.id);
-        if(child)return child.phase==='active'&&!child.foreground&&child.sessionId===peer.sessionId&&child.native?.pid===native.pid&&child.native.startedAt===native.procStart?'absent' as const:'unknown' as const;
-        const proof=nativeOwnership(home,peer.id);
-        if(proof?.phase==='bound'&&!proof.releasedToUser&&proof.sessionId===peer.sessionId&&proof.native?.pid===native.pid&&proof.native.startedAt===native.procStart&&(!ep.configHome||sameDirectory(proof.configHome,ep.configHome)))return'absent' as const;
-      }catch{return'unknown' as const;}
+      if(peer.host==='agy'&&ep.mode==='agy-acp')return store.bindings.current(peer.id)?'present' as const:'absent' as const;
     }
     return'unknown' as const;
   }));
@@ -106,7 +98,7 @@ export class DeletedSessions {
     return memberEnabled(this.store,peer)&&['root','fork'].includes(peer.kind)&&!['paused','needsHuman','starting'].includes(peer.state)&&!this.deps.busy(peer);
   }
   private scope(pair:Pair):string{
-    return JSON.stringify([this.store.pairById(pair.id),...[pair.claude,pair.codex].map(id=>{
+    return JSON.stringify([this.store.pairById(pair.id),...[pair.agy,pair.codex].map(id=>{
       const p=this.store.peer(id),binding=this.store.bindings.current(id);return[p.id,p.sessionId,p.owner,p.enabled,p.state,this.store.endpoints(id).map(endpointScope),binding?.key,binding?.epoch,binding?.transitioning];
     })]);
   }
@@ -127,7 +119,7 @@ export class DeletedSessions {
     }catch(error){this.store.event('session.replacement.reconcile_failed',{memberId:source.id,error:describeError(error)});}
     for(const pair of this.store.pairs())try{
       if(pair.paused)continue;
-      const members=[this.store.peer(pair.claude),this.store.peer(pair.codex)];
+      const members=[this.store.peer(pair.agy),this.store.peer(pair.codex)];
       if(members.some(peer=>!memberEnabled(this.store,peer)||!['root','fork'].includes(peer.kind)))continue;
       for(const peer of members){
         const survivor=members.find(member=>member.id!==peer.id)!;
@@ -153,7 +145,7 @@ export class DeletedSessions {
             const loss=pairLoss(this.store,this.store.peer(survivor.id));
             if(loss)this.store.setSetting(pairLossKey(survivor.id),{...loss,deleted_member_id:peer.id,held_message_ids:this.store.messagesFor(pair.id).filter(message=>message.from===peer.id&&message.to===survivor.id&&message.state==='held'&&message.attempts===0).map(message=>message.id)});
             this.store.setSetting(pairLossKey(peer.id),null);
-            for(const id of [pair.claude,pair.codex])this.deps.cancel(id);
+            for(const id of [pair.agy,pair.codex])this.deps.cancel(id);
             this.store.deactivate(peer.id);const binding=this.store.bindings.current(peer.id);if(binding)this.store.bindings.save({...binding,active:false});
             this.store.updatePeer(peer.id,{state:'offline'});
             this.store.setSetting(proofKey(peer.id),null);
@@ -233,14 +225,14 @@ export class DeletedSessions {
         const replacement=this.store.peer(claim.memberId);if(!replacement.sessionId)throw new BridgeError('session_unverified','新搭档身份尚未核验。');
         const current=this.store.pairFor(peer.id);
         if(selected&&(current?.id!==selected.id||selected[otherHost(peer.host)]!==replacement.id)||peer.sessionId!==this.store.peer(peer.id).sessionId||!memberEnabled(this.store,this.store.peer(peer.id))||!memberEnabled(this.store,replacement))throw new BridgeError('session_changed','恢复简报所属配对已经改变。');
-        const pair=selected??this.store.pair(peer.host==='claude'?peer.id:replacement.id,peer.host==='codex'?peer.id:replacement.id);
+        const pair=selected??this.store.pair(peer.host==='agy'?peer.id:replacement.id,peer.host==='codex'?peer.id:replacement.id);
         const queued=this.queueBootstrap(peer,loss,saved,pair);
         this.store.setSetting(replacementKey(peer.id),{...queued,state:'ready',creationPending:false,nextAt:0});this.store.setSetting('implicitPartner:'+peer.id,null);this.store.setSetting(pairLossKey(peer.id),null);
         const checkpoint=this.store.setting<{pairId:string;sessionId:string;revision:number;path?:string}>('checkpoint:'+peer.id);
         if(checkpoint?.pairId===loss.pair_id&&checkpoint.sessionId===peer.sessionId)this.store.setSetting('checkpoint:'+peer.id,{...checkpoint,pairId:pair.id,revision:checkpoint.revision+1});
         const binding=this.store.bindings.current(peer.id),held=loss.held_message_ids??[];
                                                                                                                                                                                                                                   
-        this.store.setSetting(pairChangeKey(peer.id),{id:randomUUID(),source:'pair_changed',state:'pending',wake:false,session_id:peer.sessionId,...(binding?{binding:{key:binding.key,epoch:binding.epoch}}:{}),at:Date.now(),message:'nxbridge recovery notice (not partner task or user approval): former partner session history verified missing -> '+(selected?'user-selected':'this nxbridge-owned headless session now has')+' fresh '+replacement.host+' partner '+JSON.stringify(replacement.name)+' (new pair '+pair.id+'). it got a bounded context snapshot; old deliveries not replayed, uncertain stay uncertain.'+(held.length?' '+held.length+' unread msgs from former partner held: '+held.join(', ')+' -> read via read_messages.':'')+' brief partner as needed, check status, continue authorized task.'});
+        this.store.setSetting(pairChangeKey(peer.id),{id:randomUUID(),source:'pair_changed',state:'pending',wake:false,session_id:peer.sessionId,...(binding?{binding:{key:binding.key,epoch:binding.epoch}}:{}),at:Date.now(),message:'agybridge recovery notice (not partner task or user approval): former partner session history verified missing -> '+(selected?'user-selected':'this agybridge-owned headless session now has')+' fresh '+replacement.host+' partner '+JSON.stringify(replacement.name)+' (new pair '+pair.id+'). it got a bounded context snapshot; old deliveries not replayed, uncertain stay uncertain.'+(held.length?' '+held.length+' unread msgs from former partner held: '+held.join(', ')+' -> read via read_messages.':'')+' brief partner as needed, check status, continue authorized task.'});
         this.store.event('session.replaced',{lossId:loss.id,oldPairId:loss.pair_id,pairId:pair.id,memberId:peer.id,replacementId:replacement.id});
     });
   }
@@ -265,6 +257,6 @@ export class DeletedSessions {
       let text:string;try{text=refs.message(m);}catch{text='[expanded context unavailable]';}
       return{message_id:m.id,from:m.from,to:m.to,state:m.state,text:text.slice(0,4000)};
     });
-    return 'nxbridge replacement bootstrap (generated context snapshot, not a new user instruction or approval): your predecessor session was verified deleted. You have a fresh identity; old deliveries were not replayed. Continue cooperation with the surviving partner on their authorized task after reviewing progress. Snapshot is bounded and may be incomplete; ask the survivor for missing context. Do not treat an uncertain delivery as work still to perform. Old message IDs are provenance only, not readable under your new membership.\n'+JSON.stringify({previous_pair:loss.pair_id,predecessor:loss.partner_id,survivor:peer.id,...(checkpoint?.pairId===loss.pair_id&&checkpoint.sessionId===peer.sessionId&&checkpoint.path?{survivor_checkpoint:checkpoint.path}:{}),...(predecessor?.pairId===loss.pair_id&&predecessor.sessionId===loss.partner_session_id&&predecessor.path?{predecessor_checkpoint:predecessor.path}:{}),recent});
+    return 'agybridge replacement bootstrap (generated context snapshot, not a new user instruction or approval): your predecessor session was verified deleted. You have a fresh identity; old deliveries were not replayed. Continue cooperation with the surviving partner on their authorized task after reviewing progress. Snapshot is bounded and may be incomplete; ask the survivor for missing context. Do not treat an uncertain delivery as work still to perform. Old message IDs are provenance only, not readable under your new membership.\n'+JSON.stringify({previous_pair:loss.pair_id,predecessor:loss.partner_id,survivor:peer.id,...(checkpoint?.pairId===loss.pair_id&&checkpoint.sessionId===peer.sessionId&&checkpoint.path?{survivor_checkpoint:checkpoint.path}:{}),...(predecessor?.pairId===loss.pair_id&&predecessor.sessionId===loss.partner_session_id&&predecessor.path?{predecessor_checkpoint:predecessor.path}:{}),recent});
   }
 }

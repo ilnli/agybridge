@@ -75,7 +75,7 @@ test('旧进程停止后监听短暂残留时等待释放，释放前不更换�
     if(args[0]!==ipcAddress(home))return Reflect.apply(create,net,args);
     assert.equal(readFileSync(file,'utf8'),'');
     if(++probes>1)return Reflect.apply(create,net,args);
-                                           
+
     const socket=new net.Socket();queueMicrotask(()=>socket.emit('connect'));return socket;
   }) as typeof net.createConnection);
   try{

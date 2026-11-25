@@ -8,7 +8,7 @@ import { fixture } from './support/broker-fixture.js';
 import { registration } from './support/registration.js';
 import { temporary } from './support/temporary.js';
 
-const incoming=(id:string)=>({type:'function_call_output',namespace:'claude',name:'receive_messages',output:JSON.stringify({messages:[{message_id:id,message:'通信正文'}]})});
+const incoming=(id:string)=>({type:'function_call_output',namespace:'agy',name:'receive_messages',output:JSON.stringify({messages:[{message_id:id,message:'通信正文'}]})});
 const boundary=(history:any[]=[])=>({type:'compacted',payload:{replacement_history:history}});
 const item=(payload:any)=>({type:'response_item',payload});
 const digestRows=(text:string)=>text.trimEnd().split('\n').slice(1).reduce<{meta:any;body:string}[]>((rows,line,index,lines)=>{if(index%2===0)rows.push({meta:JSON.parse(line),body:JSON.parse(lines[index+1]!)});return rows;},[]);
@@ -39,7 +39,7 @@ test('五万字符包含引号转义及元数据；先截断最旧正文，最�
   const hugeText=recoveryDigest(f.store,f.x,pair,2,[oldest.id,newest.id,huge.id]),hugeRows=digestRows(hugeText);
   assert.ok(hugeText.length<=RECOVERY_DIGEST_LIMIT);assert.match(hugeRows.at(-1)!.body,/^开头标记/);assert.match(hugeRows.at(-1)!.body,new RegExp('truncated; read_messages '+huge.id));
   assert.equal(Buffer.from(hugeRows.at(-1)!.body).toString(),hugeRows.at(-1)!.body);assert.doesNotMatch(hugeText,/\uFFFD/);
-  const other=f.store.register(registration('claude','foreign')),x=f.store.register(registration('codex','foreign-x')),foreignPair=f.store.pair(other.id,x.id),foreign=f.store.accept(foreignPair,other,'不属于当前配对','foreign');
+  const other=f.store.register(registration('agy','foreign')),x=f.store.register(registration('codex','foreign-x')),foreignPair=f.store.pair(other.id,x.id),foreign=f.store.accept(foreignPair,other,'不属于当前配对','foreign');
   assert.match(recoveryDigest(f.store,f.x,pair,3,[foreign.id]),/0 actual exchange msgs/);
 });
 
@@ -47,13 +47,13 @@ test('窗口编号来自真实通信工具；排除重读、引用、摘要和�
   const file=path.join(temporary(t),'rollout.jsonl'),rows=[
     item(incoming('older-window')),boundary(),
     item(incoming('injected-incoming')),
-    item({type:'function_call',namespace:'claude',name:'send_message',call_id:'sent',arguments:JSON.stringify({message:'nxref:msg:referenced-only'})}),
+    item({type:'function_call',namespace:'agy',name:'send_message',call_id:'sent',arguments:JSON.stringify({message:'nxref:msg:referenced-only'})}),
     item({type:'function_call_output',call_id:'sent',output:[{type:'input_text',text:'Wall time: 0.01s\nOutput:'},{type:'input_text',text:JSON.stringify({message_id:'actual-outgoing',persisted:true})}]}),
-    item({type:'function_call',name:'mcp__claude__receive_messages',call_id:'recv'}),
+    item({type:'function_call',name:'mcp__agy__receive_messages',call_id:'recv'}),
     item({type:'function_call_output',call_id:'recv',output:{content:[{type:'text',text:JSON.stringify({messages:[{message_id:'actual-incoming',message:'正文 nxref:msg:referenced-only'}]})}]}}),
-    item({type:'function_call',namespace:'claude',name:'read_messages',call_id:'reread'}),
+    item({type:'function_call',namespace:'agy',name:'read_messages',call_id:'reread'}),
     item({type:'function_call_output',call_id:'reread',output:JSON.stringify({messages:[{message_id:'reread-only',message:'旧正文'}]})}),
-    item({type:'function_call',namespace:'claude',name:'send_message',call_id:'failed'}),
+    item({type:'function_call',namespace:'agy',name:'send_message',call_id:'failed'}),
     item({type:'function_call_output',call_id:'failed',output:JSON.stringify({message_id:'not-saved',persisted:false})}),
     item({type:'function_call_output',namespace:'other',name:'receive_messages',output:incoming('wrong-tool').output}),
     item({type:'message',role:'developer',content:[{type:'input_text',text:JSON.stringify(incoming('digest-only'))}]}),

@@ -10,7 +10,7 @@ import {type Endpoint,type Peer,type DeliveryState} from '../types.js';
 test('重启参数只接受 Codex 和可选的原会话 ID，用户窗口仅给出原生步骤',async t=>{
   assert.deepEqual(restartArguments(['codex']),{});
   assert.deepEqual(restartArguments(['codex','--session','same']),{session_id:'same'});
-  for(const args of [[],['claude'],['codex','--session'],['codex','--session','--all'],['codex','extra'],['codex','--session','same','extra']])assert.throws(()=>restartArguments(args),{code:'invalid_arguments'});
+  for(const args of [[],['agy'],['codex','--session'],['codex','--session','--all'],['codex','extra'],['codex','--session','same','extra']])assert.throws(()=>restartArguments(args),{code:'invalid_arguments'});
   const {store,broker,x,codex}=fixture(t);store.updatePeer(x.id,{cwd:"C:\\项目's dir",model:'gpt-6.1-sol',effort:'xhigh'});
   const before=store.peer(x.id),result=await broker.dispatch('codex.restart',{session_id:'x'}) as any;
   assert.equal(result.restarted,false);assert.match(result.text,/\/quit/);assert.match(result.text,/--no-daemon/);assert.match(result.text,/resume 'x'/);
@@ -60,7 +60,7 @@ test('中断后的 paused peer 可交给原生空闲核验，重启保留配对�
 });
 
 test('重启隔离目标投递，其他方向照常，新来信仅在恢复后投递一次',async t=>{
-  const {store,broker,c,x,codex,claude}=fixture(t);const pair=store.pair(c.id,x.id);
+  const {store,broker,c,x,codex,agy}=fixture(t);const pair=store.pair(c.id,x.id);
   store.updatePeer(x.id,{owner:'nxbridge',model:'gpt-6.1-sol',effort:'xhigh'});
   let entered!:()=>void,finish!:()=>void;
   const waiting=new Promise<void>(resolve=>entered=resolve),resume=new Promise<void>(resolve=>finish=resolve);
@@ -73,7 +73,7 @@ test('重启隔离目标投递，其他方向照常，新来信仅在恢复后�
   await assert.rejects(broker.dispatch('codex.restart',{}),{code:'restart_in_progress'});
   await assert.rejects(broker.dispatch('open',{host:'codex'}),{code:'restart_in_progress'});
   const incoming=store.accept(pair,c,'重启期间的新消息','during'),outgoing=store.accept(pair,x,'另一方向仍能投递','other-direction');
-  await broker.pump();assert.equal(store.message(incoming.id).state,'accepted');assert.equal(codex.delivered.length,0);assert.equal(claude.delivered[0]?.id,outgoing.id);
+  await broker.pump();assert.equal(store.message(incoming.id).state,'accepted');assert.equal(codex.delivered.length,0);assert.equal(agy.delivered[0]?.id,outgoing.id);
   finish();assert.equal((await restarting as any).restarted,true);await broker.pump();
   assert.equal(codex.delivered.length,1);assert.equal(codex.delivered[0]?.id,incoming.id);assert.equal(store.message(incoming.id).attempts,1);
   assert.equal(store.peer(x.id).sessionId,'x');assert.equal(store.peer(x.id).model,'gpt-6.1-sol');assert.equal(store.peer(x.id).effort,'xhigh');

@@ -13,8 +13,8 @@ import { temporaryDirectory } from './support/temporary.js';
 
 test('外部状态只展示已登记的进程事实，保留损坏记录诊断',async t=>{
   const temp=temporaryDirectory(),home=temp.directory,directory=processRegistryDirectory(home),id=randomUUID(),broken=randomUUID();
-  const store=new Store(':memory:'),config={...DEFAULT_CONFIG,codexBinary:path.join(home,'missing-codex'),claudeBinary:path.join(home,'missing-claude')};
-  const broker=new Broker(store,config,{codex:new FakeAdapter(),claude:new FakeAdapter()} as unknown as Adapters,home);
+  const store=new Store(':memory:'),config={...DEFAULT_CONFIG,codexBinary:path.join(home,'missing-codex'),agyBinary:path.join(home,'missing-claude')};
+  const broker=new Broker(store,config,{codex:new FakeAdapter(),agy:new FakeAdapter()} as unknown as Adapters,home);
   t.after(async()=>{await broker.stop();store.close();rmSync(directory,{recursive:true});await temp.cleanup();});
   mkdirSync(directory,{recursive:true});
                                               

@@ -14,7 +14,7 @@ export function deferBackgroundRetry(home:string,failure:string):void{
   while(failures.size>32)failures.delete(failures.keys().next().value!);
 }
 export function backgroundRetryContext(origin:{pid:number;startedAt:string;name:string}[]):string|undefined{
-  const host=origin.find(value=>/^(?:codex|claude)(?:\.exe(?:\.old\.\d+)?)?$/i.test(value.name));
+  const host=origin.find(value=>/^(?:codex|agy)(?:\.exe(?:\.old\.\d+)?)?$/i.test(value.name));
   return host?host.pid+':'+host.startedAt:undefined;
 }
 export function recordBackgroundState(home:string,failure?:string,context?:string):void{
@@ -30,5 +30,5 @@ export function requireBackgroundRetry(home:string,explicit=false,context?:strin
     const state=backgroundState(home),retry=state?.retryContext,remaining=retry?retry.until-Date.now():0;
     if(retry?.key===context&&remaining>0&&remaining<=BACKGROUND_RETRY_DELAY_MS)failure=state?.failure;
   }
-  if(failure)throw new BridgeError('bootstrap_required','本调用环境最近启动未通过，三十秒内未重复尝试；可从普通 PowerShell 运行 nxbridge bootstrap。原因：'+failure);
+  if(failure)throw new BridgeError('bootstrap_required','本调用环境最近启动未通过，三十秒内未重复尝试；可从普通 PowerShell 运行 agybridge bootstrap。原因：'+failure);
 }

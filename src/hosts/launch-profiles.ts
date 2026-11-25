@@ -60,12 +60,12 @@ export async function captureUserLaunch(home:string,capture:LaunchCapture,peer:P
   const initial=profileState(home);
   const runtime=capture.host==='codex'?managedRuntimes(home).map(record=>record.value).find(value=>value.pid===capture.nativePid&&value.procStart===capture.nativeGeneration):undefined;
   const previous=initial.observations?.find(value=>value.host===capture.host&&value.sourceSession===capture.sessionId&&value.sourcePid===capture.nativePid&&value.sourceGeneration===capture.nativeGeneration);
-  const owned=!!previous?.owned||!!dependencies.owned||peer.owner==='nxbridge'||!!capture.env.NXBRIDGE_OWNED_LAUNCH||runtime?.pid===capture.nativePid&&runtime.procStart===capture.nativeGeneration;
+  const owned=!!previous?.owned||!!dependencies.owned||peer.owner==='nxbridge'||!!capture.env.AGYBRIDGE_OWNED_LAUNCH||runtime?.pid===capture.nativePid&&runtime.procStart===capture.nativeGeneration;
                                       
   if(previous&&!capture.force&&(!expectedPid||expectedPid===capture.nativePid)&&!!previous.owned===owned)return{configHome:previous.configHome,owned,cached:true,profile:owned?undefined:initial.profiles.find(value=>value.sourceSession===capture.sessionId&&value.sourcePid===capture.nativePid&&value.sourceGeneration===capture.nativeGeneration)};
   const chain=await(dependencies.ancestors??processAncestors)(capture.sourcePid,16),nativeIndex=chain.findIndex(value=>value.pid===capture.nativePid&&value.startedAt===capture.nativeGeneration),source=chain[0],native=chain[nativeIndex];
   if(!source||source.startedAt!==capture.sourceGeneration||!native||!new RegExp('^'+capture.host+'(?:\\.exe)?$','i').test(native.name)||expectedPid&&expectedPid!==native.pid||chain.slice(0,nativeIndex).some(value=>/^(?:cmd|powershell|pwsh|bash|zsh|sh)(?:\.exe)?$/i.test(value.name)))throw new BridgeError('launch_capture_unverified','无法确认这份启动环境来自该窗口自身，未记录。');
-  const scopedHome=capture.env[capture.host==='codex'?'CODEX_HOME':'CLAUDE_CONFIG_DIR'];
+  const scopedHome=capture.env[capture.host==='codex'?'CODEX_HOME':'AGY_HOME'];
   const configHome=scopedHome?path.resolve(peer.cwd,scopedHome):configHomeFor(capture.host,capture.env);
   const exe=native.launchImage??native.image;
   if(!exe||!path.isAbsolute(exe)||!existsSync(exe))throw new BridgeError('launch_image_missing','无法确认该窗口实际运行的程序路径，未记录启动环境。');

@@ -135,7 +135,7 @@ test('协作和空闲账本提醒同时到期时合成一条，消费后不会�
   f.tips.partnerSent(f.x,message);f.store.transition(message.id,'contextObserved');f.tips.partnerReceived(f.c,message);
   pulse(t,f,30*minute);f.broker.idleNotices.observe(f.pair,f.store.peer(f.c.id),2);
   const episode=f.store.setting<{noticeId:string}>('idleNotice:'+f.c.id)!;assert.ok(f.broker.deliveryHealth.get(f.pair.id,f.x.id,episode.noticeId));
-  const line=f.tips.syncTip(f.x,30)!;assert.match(line,/recheck split/);assert.match(line,/expected reply still pending/);assert.ok(line.includes(message.id));assert.equal(line.split('nxbridge tip:').length,2);
+  const line=f.tips.syncTip(f.x,30)!;assert.match(line,/recheck split/);assert.match(line,/expected reply still pending/);assert.ok(line.includes(message.id));assert.equal(line.split('agybridge tip:').length,2);
   assert.equal(f.broker.deliveryHealth.get(f.pair.id,f.x.id,episode.noticeId),undefined);f.broker.idleNotices.observe(f.pair,f.store.peer(f.c.id),2);assert.equal(f.broker.deliveryHealth.get(f.pair.id,f.x.id,episode.noticeId),undefined);
 });
 
@@ -163,7 +163,7 @@ test('同一对话更换租约和配对保留上下文档位及压缩去重，�
   pulse(t,f,15*minute);f.coop.usage(f.x,{tokens:650000,at:Date.now()});assert.match(f.tips.syncTip(f.x,30)!,/long context/);
   const window={host:'codex' as const,pid:101,procStart:'generation',configHome:'/isolated'};f.store.bindings.activate(window,f.x.id,'x','resume');f.store.saveEndpoint({...f.store.endpoints(f.x.id)[0]!,mode:'embedded'});
   f.coop.usage(f.x,{tokens:650000,at:Date.now()});f.coop.compacted(f.x,'compact');assert.equal(f.store.setting<any>('cooperation:'+f.x.id).pendingBand,undefined);
-  const other=f.store.register(registration('claude','replacement',{state:'ready'}));f.store.pair(other.id,f.x.id,true);f.coop.usage(f.x,{tokens:650000,at:Date.now()});assert.equal(f.store.setting<any>('cooperation:'+f.x.id).pendingBand,undefined,'更换配对也不重放同一对话的上下文档位');
+  const other=f.store.register(registration('agy','replacement',{state:'ready'}));f.store.pair(other.id,f.x.id,true);f.coop.usage(f.x,{tokens:650000,at:Date.now()});assert.equal(f.store.setting<any>('cooperation:'+f.x.id).pendingBand,undefined,'更换配对也不重放同一对话的上下文档位');
   assert.equal(f.store.events(0,1000).filter(e=>e.type==='communication.contextReset').length,1);
   f.store.updatePeer(f.x.id,{sessionId:'new-context'});f.store.bindings.activate(window,f.x.id,'new-context','reset');f.coop.usage(f.store.peer(f.x.id),{tokens:650000,at:Date.now()});
   pulse(t,f,15*minute);assert.match(f.tips.syncTip(f.x,30)!,/long context/);

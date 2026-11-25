@@ -27,7 +27,7 @@ import { nativeDescendant } from '../process/process.js';
 test('安装版 Codex 本地压缩：真实窗口的最后五条通信直接恢复；再次压缩不回填旧消息',{timeout:90000},async t=>{
   const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexhome=path.join(root,'codex');mkdirSync(codexhome);await ensureHome(home);
   const requests:any[]=[],launchId=randomUUID(),recoveries:string[]=[];let phase='initial';
-  const store=new Store(path.join(home,'nxbridge.db')),broker=new Broker(store,{...DEFAULT_CONFIG,implicit:'never'},{codex:new FakeAdapter(),claude:new FakeAdapter()} as any,home),partner=store.register(registration('claude','counterpart',{cwd:root}));
+  const store=new Store(path.join(home,'agybridge.db')),broker=new Broker(store,{...DEFAULT_CONFIG,implicit:'never'},{codex:new FakeAdapter(),agy:new FakeAdapter()} as any,home),partner=store.register(registration('agy','counterpart',{cwd:root}));
   const ipc=await listenBroker(home,async(method,params)=>{const result:any=await broker.dispatch(method,params);if(method==='hook'&&(params as any).source==='compact')recoveries.push(result?.hookSpecificOutput?.additionalContext??'');return result;});
   const model=http.createServer(async(req,res)=>{
     try{
@@ -52,14 +52,14 @@ test('安装版 Codex 本地压缩：真实窗口的最后五条通信直接恢�
     await temp.cleanup();
   });
   const exe=resolveCli('codex'),endpoint='unix://'+path.join(await socketDirectory(home),'retention.sock');
-  const child=spawn(exe.command,[...exe.prefix,'--dangerously-bypass-hook-trust','app-server','--listen',endpoint],{cwd:root,env:{...process.env,CODEX_HOME:codexhome,NXBRIDGE_HOME:home,OPENAI_API_KEY:'local-only',OPENAI_BASE_URL:baseUrl},stdio:'ignore',windowsHide:true});
+  const child=spawn(exe.command,[...exe.prefix,'--dangerously-bypass-hook-trust','app-server','--listen',endpoint],{cwd:root,env:{...process.env,CODEX_HOME:codexhome,AGYBRIDGE_HOME:home,OPENAI_API_KEY:'local-only',OPENAI_BASE_URL:baseUrl},stdio:'ignore',windowsHide:true});
   await rememberOwnedHost(home,child,'codex','codex-runtime',launchId,codexhome);
   for(let i=0;i<80&&!client;i++){try{client=await connectAppServer(endpoint,{...DEFAULT_CONFIG,codexHome:codexhome},undefined,home);}catch{await delay(50);}}
   assert.ok(client);const completed=new Set<string>();let serial=0;
   client.on('notification',message=>{if(message.method==='turn/completed'){completed.add(message.params.turn.id);serial++;}});
   const wait=async(check:()=>boolean)=>{const end=Date.now()+15000;while(!check()){if(Date.now()>end)throw Error('原生压缩探针等待超时');await delay(20);}};
   const spec=JSON.parse(readFileSync(path.join(PACKAGE_ROOT,'plugins/codex/hooks/hooks.json'),'utf8')).hooks.SessionStart[0].hooks[0];
-  writeFileSync(path.join(codexhome,'hooks.json'),JSON.stringify({hooks:{SessionStart:[{hooks:[{...spec,command:'node "'+path.join(PACKAGE_ROOT,'publish/nxbridge.mjs').replaceAll('\\','/')+'" hook --host codex'}]}]}}),'utf8');
+  writeFileSync(path.join(codexhome,'hooks.json'),JSON.stringify({hooks:{SessionStart:[{hooks:[{...spec,command:'node "'+path.join(PACKAGE_ROOT,'publish/agybridge.mjs').replaceAll('\\','/')+'" hook --host codex'}]}]}}),'utf8');
   const hooks=(await client.request('hooks/list',{cwds:[root]})).data.flatMap((v:any)=>v.hooks??[]);assert.equal(hooks.length,1);
   await client.request('config/batchWrite',{edits:[{keyPath:'hooks.state',value:Object.fromEntries(hooks.map((h:any)=>[h.key,{trusted_hash:h.currentHash}])),mergeStrategy:'upsert'}],filePath:path.join(codexhome,'config.toml'),reloadUserConfig:true},{mutation:true});
   const {thread}=await client.request('thread/start',{cwd:root,approvalPolicy:'never',sandbox:'read-only',developerInstructions:'CONTINUITY_DEVELOPER_INSTRUCTION'});
@@ -71,7 +71,7 @@ test('安装版 Codex 本地压缩：真实窗口的最后五条通信直接恢�
   for(let index=0;index<6;index++){
     const body=index===0?'EXCLUDED_SIXTH_OLDEST':index===1?'中文旧消息'.repeat(12000):index===5?'NEW_PARTNER_TASK_MARKER '+('最新完整正文'.repeat(2000)):'WINDOW_EXCHANGE_'+index;
     const message=store.accept(pair,index%2?partner:peer,body,'exchange-'+index);messages.push(message);
-    await turn({input:[],toolOutput:{namespace:'claude',name:index%2?'receive_messages':'send_message',output:JSON.stringify(index%2?{messages:[{message_id:message.id,message:body}]}:{message_id:message.id,persisted:true})}});
+    await turn({input:[],toolOutput:{namespace:'agy',name:index%2?'receive_messages':'send_message',output:JSON.stringify(index%2?{messages:[{message_id:message.id,message:body}]}:{message_id:message.id,persisted:true})}});
   }
   store.accept(pair,partner,'EXCLUDED_UNOBSERVED_NEW_MESSAGE','unseen');
   assert.ok(JSON.stringify(requests.findLast(r=>r.phase==='partner').body).includes('NEW_PARTNER_TASK_MARKER'));

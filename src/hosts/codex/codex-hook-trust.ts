@@ -10,10 +10,10 @@ export const hookApprovalRequired=(error:string)=>/plugin contents changed;\s*ho
 
 export function hookTrustMessage(peer:Pick<Peer,'id'|'owner'>,issue:HookTrustIssue,human=false,home?:string):string{
   if(issue==='hooks_trust_required')return human
-    ?'Codex 的 nxbridge hooks 需要重新信任：在使用该配置目录的 Codex 窗口里打开 /hooks，信任 nxbridge。'
-    :'nxbridge hooks need re-trust: user opens /hooks in a Codex window using this config dir and trusts nxbridge; tell user';
+    ?'Codex 的 agybridge hooks 需要重新信任：在使用该配置目录的 Codex 窗口里打开 /hooks，信任 agybridge。'
+    :'agybridge hooks need re-trust: user opens /hooks in a Codex window using this config dir and trusts agybridge; tell user';
   if(peer.owner==='nxbridge')return human
-    ?`Codex 已信任新版 hooks，但这个后台会话仍使用旧定义或信任快照；搭档 Claude 会在它空闲时自动重启。要马上处理，可等它空闲后在 Codex 之外的终端运行 nxbridge restart codex --member ${peer.id}。`
+    ?`Codex 已信任新版 hooks，但这个后台会话仍使用旧定义或信任快照；搭档 AGY 会在它空闲时自动重启。要马上处理，可等它空闲后在 Codex 之外的终端运行 agybridge restart codex --member ${peer.id}。`
     :`hooks trusted on disk but this Codex session still runs old definitions/trust snapshot; ${partnerRestartAdvice(home)}`;
   return human
     ?'Codex 已信任新版 hooks，但该会话仍使用旧定义或信任快照；请等它空闲后退出并按原会话 ID 恢复，或重新打开该 Codex 会话。'
@@ -22,7 +22,7 @@ export function hookTrustMessage(peer:Pick<Peer,'id'|'owner'>,issue:HookTrustIss
 
 interface NativeHook {pluginId?:string;enabled?:boolean;trustStatus?:string;currentHash?:string}
 export function hookTrustFromList(hooks:NativeHook[]):HookTrust{
-  const own=hooks.filter(hook=>hook.pluginId==='nxbridge@nxbridge-local'&&hook.enabled!==false);
+  const own=hooks.filter(hook=>hook.pluginId==='agybridge@agybridge-local'&&hook.enabled!==false);
   if(own.some(hook=>hook.trustStatus==='untrusted'||hook.trustStatus==='modified'))return'required';
   return own.length&&own.every(hook=>hook.trustStatus==='trusted'||hook.trustStatus==='managed')?'trusted':'unknown';
 }

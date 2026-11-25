@@ -5,8 +5,8 @@ import { createInterface } from 'node:readline';
 type Exchange='send_message'|'receive_messages';
 function exchange(item:any):Exchange|undefined{
   const name=typeof item?.name==='string'?item.name:'',namespace=item?.namespace;
-  if(namespace==='claude'&&['send_message','receive_messages'].includes(name))return name as Exchange;
-  const match=/^(?:mcp__)?claude(?:__|\.)(send_message|receive_messages)$/.exec(name);
+  if(namespace==='agy'&&['send_message','receive_messages'].includes(name))return name as Exchange;
+  const match=/^(?:mcp__)?agy(?:__|\.)(send_message|receive_messages)$/.exec(name);
   return match?.[1] as Exchange|undefined;
 }
 

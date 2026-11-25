@@ -18,7 +18,7 @@ import {ensureHome} from '../ipc/home.js';
 import { pairChangeKey } from '../broker/pairing/pair-changes.js';
 
 function healthFixture(t:TestContext){
-  const temp=temporaryDirectory(),filename=path.join(temp.directory,'nxbridge.db'),store=new Store(filename),x=store.register(registration('codex','storage-root')),c=store.register(registration('claude','storage-partner')),pair=store.pair(c.id,x.id);
+  const temp=temporaryDirectory(),filename=path.join(temp.directory,'agybridge.db'),store=new Store(filename),x=store.register(registration('codex','storage-root')),c=store.register(registration('agy','storage-partner')),pair=store.pair(c.id,x.id);
   t.after(async()=>{store.close();await temp.cleanup();});return{home:temp.directory,filename,store,x,c,pair};
 }
 async function holdWriter(t:TestContext,filename:string,duration?:number){
@@ -52,7 +52,7 @@ test('同批通知的后续领取失败时整体回滚，重试仍能领取原�
   store.contextNotices=()=>[{id:'rotation',peerId:x.id,oldSessionId:'old',sessionId:x.sessionId!,oldEpoch:'old',epoch:'new',reason:'reset',at:Date.now(),unanswered:[],uncertain:[]}];
   let recoveries=0;(broker as any).runtimeHealth.outageRecovery=()=>{recoveries++;return undefined;};
   let fail=true;store.admitContextNotice=()=>{if(fail)throw{errcode:5,code:'ERR_SQLITE_ERROR'};return true;};
-  const params={actor:{host:'claude',sessionId:c.sessionId,callId:'atomic-monitor'}};
+  const params={actor:{host:'agy',sessionId:c.sessionId,callId:'atomic-monitor'}};
   await assert.rejects(broker.dispatch('health.monitor',params),error=>{const detail=modelError(error);assert.equal(detail.code,'storage_busy');assert.equal(detail.phase,'prepare');assert.equal(detail.uncertain,false);return true;});
   assert.equal(health.get(pair.id,c.id,id)?.message,'必须保留的通知正文');
   assert.equal(recoveries,0,'SQL 回滚前不能提交独立故障账本');
@@ -63,9 +63,9 @@ test('hook 剩余预算不足时不领取，已提交的领取 RPC 超时不转�
   const f=healthFixture(t);await ensureHome(f.home);let calls=0;const server=await listenBroker(f.home,async()=>{calls++;return new Promise(()=>{});});
   try{
     f.store.setSetting(pairChangeKey(f.x.id),{id:'short-budget-change',pair_id:f.pair.id,session_id:f.x.sessionId,state:'pending',source:'pair_changed',message:'配对变更',at:Date.now(),cancelled_message_ids:[],uncertain_message_ids:[]});
-    assert.deepEqual(await collectRuntimeNotices(f.home,'codex','storage-root',{pid:process.pid,procStart:'test'},undefined,undefined,undefined,{deadline:performance.now()+100}),[]);assert.equal(calls,0);
+    assert.deepEqual(await collectRuntimeNotices(f.home,'codex','storage-root',{pid:process.pid,procStart:'test'},undefined,{deadline:performance.now()+100}),[]);assert.equal(calls,0);
     assert.notEqual(f.store.setting<any>(pairChangeKey(f.x.id)).admitted,true);f.store.setSetting(pairChangeKey(f.x.id),null);
-    const began=performance.now();await assert.rejects(collectRuntimeNotices(f.home,'codex','storage-root',{pid:process.pid,procStart:'test'},undefined,undefined,undefined,{deadline:performance.now()+6000}),{code:'timeout',uncertain:true});assert.ok(performance.now()-began<5000);
+    const began=performance.now();await assert.rejects(collectRuntimeNotices(f.home,'codex','storage-root',{pid:process.pid,procStart:'test'},undefined,{deadline:performance.now()+6000}),{code:'timeout',uncertain:true});assert.ok(performance.now()-began<5000);
   }finally{await server.close();}
 });
 

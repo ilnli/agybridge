@@ -25,11 +25,11 @@ for(const count of [0,1,12])test('隔离资源测量：'+count+' 个协议前端
   for(const [label,publish] of versions){
     const root=path.join(temp.directory,label),home=path.join(root,'bridge'),metrics=path.join(root,'metrics'),plugin=path.join(root,'plugin');
     for(const d of [root,home,metrics,plugin])mkdirSync(d,{recursive:true});
-    const entry=path.join(publish,'nxbridge.mjs'),probe=path.join(root,'profile.mjs');writeFileSync(probe,preload,'utf8');
-    writeFileSync(path.join(home,'config.json'),JSON.stringify({...DEFAULT_CONFIG,implicit:'never',codexHome:path.join(root,'codex'),claudeHome:path.join(root,'claude')}),'utf8');
+    const entry=path.join(publish,'agybridge.mjs'),probe=path.join(root,'profile.mjs');writeFileSync(probe,preload,'utf8');
+    writeFileSync(path.join(home,'config.json'),JSON.stringify({...DEFAULT_CONFIG,implicit:'never',codexHome:path.join(root,'codex'),agyHome:path.join(root,'agy')}),'utf8');
     writeFileSync(path.join(plugin,'bridge.cjs'),readFileSync(path.join(publish,'plugins/codex/bridge.cjs')));
     writeFileSync(path.join(plugin,'runtime.json'),JSON.stringify({node:process.execPath,entry,home}),'utf8');
-    const env={...process.env,NXBRIDGE_HOME:home,CODEX_HOME:path.join(root,'codex'),CLAUDE_CONFIG_DIR:path.join(root,'claude'),NXBRIDGE_PROFILE_DIR:metrics,NODE_OPTIONS:'--import '+JSON.stringify(pathToFileURL(probe).href)};
+    const env={...process.env,AGYBRIDGE_HOME:home,CODEX_HOME:path.join(root,'codex'),AGY_HOME:path.join(root,'agy'),NXBRIDGE_PROFILE_DIR:metrics,NODE_OPTIONS:'--import '+JSON.stringify(pathToFileURL(probe).href)};
     const children:{child:ChildProcess;closed:Promise<void>}[]=[],errors:string[]=[];
     const launch=(args:string[])=>{const child=spawn(process.execPath,args,{env,windowsHide:true,stdio:['pipe','pipe','pipe']});child.stderr!.on('data',c=>errors.push(String(c)));const closed=new Promise<void>(resolve=>child.once('close',()=>resolve()));children.push({child,closed});return child;};
     const finish=async()=>{for(const {child}of children.slice(1))child.stdin?.end();try{await brokerCall('shutdown',{releaseOwned:false},{home,start:false});}catch{}
@@ -37,7 +37,7 @@ for(const count of [0,1,12])test('隔离资源测量：'+count+' 个协议前端
     try{
       launch([entry,'service']);let ready=false;for(let i=0;i<100;i++){try{await brokerCall('ping',{}, {home,start:false,timeout:1000});ready=true;break;}catch{await delay(100);}}
       assert.ok(ready,errors.join(''));
-      const frontends=await Promise.all(Array.from({length:count},async()=>{const child=launch([path.join(plugin,'bridge.cjs'),'mcp','--host','claude']);let output='';child.stdout!.on('data',c=>output+=c);child.stdin!.write(JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'isolated-resource-profile',version:'1'}}})+'\n');
+      const frontends=await Promise.all(Array.from({length:count},async()=>{const child=launch([path.join(plugin,'bridge.cjs'),'mcp','--host','agy']);let output='';child.stdout!.on('data',c=>output+=c);child.stdin!.write(JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2024-11-05',capabilities:{},clientInfo:{name:'isolated-resource-profile',version:'1'}}})+'\n');
         for(let i=0;i<150&&!output.includes('"id":1');i++)await delay(100);assert.ok(output.includes('"id":1'),errors.join(''));child.stdin!.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');return child;}));
       await delay(3000);
       const rows=()=>readdirSync(metrics).filter(f=>f.endsWith('.jsonl')).flatMap(f=>readFileSync(path.join(metrics,f),'utf8').trim().split('\n').filter(Boolean).map(s=>JSON.parse(s)));

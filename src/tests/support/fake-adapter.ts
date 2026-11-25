@@ -1,7 +1,8 @@
 import { EventEmitter } from 'node:events';
 import type { DeliveryResult, Endpoint, Message, Peer, PermissionClass, RegisterInput } from '../../types.js';
 import type { CodexContextReceipt } from '../../hosts/codex/adapter.js';
-import type {RuntimeAvailability} from '../../broker/health/contracts.js';
+import type { RuntimeAvailability } from '../../broker/health/contracts.js';
+import type { TurnHealth } from '../../broker/health/turn-health.js';
 import { registration } from './registration.js';
 
 export class FakeAdapter extends EventEmitter{
@@ -19,6 +20,8 @@ export class FakeAdapter extends EventEmitter{
   private injectionTurn=0;
   injectedNotices:{id:string;body:string}[]=[];
   injected:{callId:string;output:string}[]=[];
+  healthMap=new Map<string,TurnHealth>();
+  healthOf(peerId:string):TurnHealth|undefined{return this.healthMap.get(peerId);}
   async injectionState(peer:Peer,_endpoint:Endpoint){return{thread:{id:peer.sessionId!,cwd:peer.cwd,status:{type:peer.state==='busy'?'active':'idle'},turns:this.injectionTurn?[{id:'injection-turn-'+this.injectionTurn,status:'completed'}]:[]},history:{status:'supported' as const,receipts:this.injectionReceipts,calls:this.injectionReceipts.map(receipt=>receipt.callId),cursor:{dev:1,ino:1,offset:0},complete:true}};}
   async inject(peer:Peer,_endpoint:Endpoint,callId:string,output:string){
     if(this.fail)throw this.fail;
@@ -40,14 +43,19 @@ export class FakeAdapter extends EventEmitter{
   userSubscriptions():{peer:Peer;endpoint:Endpoint}[]{return[];}
   async releaseIdle(_peer:Peer,_endpoint:Endpoint,_guard:()=>boolean,_closing=false):Promise<'retained'|'released'|'unloaded'|'idle'>{return'retained';}
   async ensureEndpoint(_cwd?:string,_peerId?:string,_requesterSession?:string,_sessionId?:string,_configHome?:string,beforeLaunch?:()=>void|Promise<void>){await beforeLaunch?.();this.ensured++;return'new-endpoint';}
-  async wake(peer:Peer,_endpoint?:Endpoint,_signal?:AbortSignal,beforeSubmit?:()=>Promise<boolean|void>){if(this.fail)throw this.fail;if(beforeSubmit&&await beforeSubmit()===false)return;this.woken.push(peer);}
-  async discover(sessionId:string):Promise<RegisterInput|undefined>{const input=registration('claude',sessionId,{state:'ready'});return{...input,endpoint:{...input.endpoint,nativePermission:{mode:'bypassPermissions',permission:'bypass',observedAt:Date.now()},nativeInbound:{policy:'accept',source:'flag',observedAt:Date.now()}}};}
+  async wake(peer:Peer,_endpoint?:Endpoint,_signal?:AbortSignal|(()=>void),beforeSubmit?:()=>Promise<boolean|void>):Promise<any>{
+    if(this.fail)throw this.fail;
+    if(typeof beforeSubmit==='function'&&await beforeSubmit()===false)return;
+    this.woken.push(peer);
+    if(peer.host==='agy')return registration('agy',peer.sessionId??'woken-'+peer.id,{state:'ready'});
+  }
   async deliver(_p:Peer,_e:unknown,m:Message & {beforeSubmit?:()=>Promise<boolean>}):Promise<DeliveryResult>{if(this.fail)throw this.fail;if(m.beforeSubmit&&!await m.beforeSubmit())return{state:'expired',evidence:'通知条件已失效'};this.delivered.push(m);return{state:'runtimeQueued',evidence:'模拟宿主接受'};}
-  async create(peer:Peer,requesterOrGuard?:string|(()=>void|Promise<void>),guardOrPermission?:PermissionClass|(()=>void|Promise<void>),permissionOrCreate?:PermissionClass|(()=>void|Promise<void>),beforeCreate?:()=>void|Promise<void>):Promise<any>{
+  async create(peer:Peer,requesterOrGuard?:string|(()=>void|Promise<void>),guardOrPermission?:PermissionClass|(()=>void|Promise<void>),permissionOrCreate?:PermissionClass|(()=>void|Promise<void>),beforeCreate?:()=>void|Promise<void>):Promise<RegisterInput>{
     const guard=typeof requesterOrGuard==='function'?requesterOrGuard:typeof guardOrPermission==='function'?guardOrPermission:undefined;
     await guard?.();await(typeof permissionOrCreate==='function'?permissionOrCreate:beforeCreate)?.();
-    this.created.push(peer);return peer.host==='claude'?'implicit-'+peer.id:registration(peer.host,'implicit-'+peer.id);
+    this.created.push(peer);return registration(peer.host,'implicit-'+peer.id,{state:'ready'});
   }
+  async handoffToForeground(peer:Peer,_interrupt=false){return{sessionId:peer.sessionId??'handoff-'+peer.id,configHome:process.cwd()};}
   async reconcile(_peer:Peer,_endpoint:Endpoint):Promise<CodexContextReceipt[]>{return[];}
   async release(peer:Peer){this.released.push(peer);}
   async releaseRuntime(){this.runtimeReleased=true;}

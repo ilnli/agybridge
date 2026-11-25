@@ -24,8 +24,8 @@ import { registration, codexInitializeResult } from './support/registration.js';
 import { temporary } from './support/temporary.js';
 
 async function setup(t:Parameters<typeof temporary>[0],persist=false){
-  const home=temporary(t),filename=persist?path.join(home,'nxbridge.db'):':memory:',store=new Store(filename),identity=await processIdentity(process.pid);
-  const c=store.register(registration('claude','c',{cwd:home})),x=store.register(registration('codex','root',{cwd:home,endpoint:{mode:'app-server',address:'ws://127.0.0.1:1234',epoch:'runtime',pid:identity.pid,procStart:identity.startedAt,configHome:home}})),pair=store.pair(c.id,x.id);
+  const home=temporary(t),filename=persist?path.join(home,'agybridge.db'):':memory:',store=new Store(filename),identity=await processIdentity(process.pid);
+  const c=store.register(registration('agy','c',{cwd:home})),x=store.register(registration('codex','root',{cwd:home,endpoint:{mode:'app-server',address:'ws://127.0.0.1:1234',epoch:'runtime',pid:identity.pid,procStart:identity.startedAt,configHome:home}})),pair=store.pair(c.id,x.id);
   store.updatePeer(x.id,{owner:'nxbridge',state:'busy'});
   const runtime:ManagedRuntime={id:randomUUID(),peerId:x.id,owner:managedMarker(home),kind:'owned',state:'ready',dedicated:true,endpoint:store.endpoint(x.id)!.address,configHome:home,pid:identity.pid,procStart:identity.startedAt,createdAt:Date.now()};saveManagedRuntime(home,runtime);
   const input=(id:string,kind:RegisterInput['kind']='root',parentId?:string)=>registration('codex',id,{cwd:home,kind,parentId,endpoint:{mode:'embedded',address:'',epoch:'hook-'+id,pid:identity.pid,procStart:identity.startedAt,configHome:home}});
@@ -40,7 +40,7 @@ for(const source of [{subAgent:{thread_spawn:{parent_thread_id:'root'}}},{subAge
 test('自有后台收到 kind=root 的 hook 登记，以原生父链登记子代理并保留根会话',async t=>{
   let broker:Broker|undefined;t.after(async()=>{if(broker)await broker.stop();});const f=await setup(t);t.after(()=>f.store.close());const reads:string[]=[],codex=new FakeAdapter();
   Object.assign(codex,{inspectThread:async(runtime:ManagedRuntime,id:string)=>{assert.equal(runtime.id,f.runtime.id);reads.push(id);return{id,source:{subAgent:{thread_spawn:{parent_thread_id:'root'}}}};}});
-  broker=new Broker(f.store,DEFAULT_CONFIG,{codex,claude:new FakeAdapter()} as unknown as Adapters,f.home);
+  broker=new Broker(f.store,DEFAULT_CONFIG,{codex,agy:new FakeAdapter()} as unknown as Adapters,f.home);
   const child=await broker.dispatch('mcp.register',f.input('child')) as any;
   assert.equal(child?.kind,'subagent');assert.equal(child?.parentId,'root');assert.equal(child?.rootPeerId,f.x.id);assert.deepEqual(reads,['child']);
   const again=await broker.dispatch('mcp.register',f.input('child','subagent','root')) as any;
@@ -52,7 +52,7 @@ test('遗留外来根线程的元数据已不可读时，仍按原生卸载证�
   let broker:Broker|undefined;t.after(async()=>{if(broker)await broker.stop();});const f=await setup(t);t.after(()=>f.store.close());
   const key='managedRuntimeConflict:'+f.x.id;f.store.setSetting(key,{runtimeId:f.runtime.id,sessionId:'foreign',at:1});const codex=new FakeAdapter();
   Object.assign(codex,{inspectThread:async()=>{throw Error('原线程已卸载');},sessionState:async()=> 'dead'});
-  broker=new Broker(f.store,DEFAULT_CONFIG,{codex,claude:new FakeAdapter()} as unknown as Adapters,f.home);
+  broker=new Broker(f.store,DEFAULT_CONFIG,{codex,agy:new FakeAdapter()} as unknown as Adapters,f.home);
   await lifecycle(broker).observeManagedExits();assert.equal(f.store.setting(key),null);assert.equal(hostingGate(f.store,f.x),false);assert.equal(codex.ensured,0);
 });
 
@@ -78,9 +78,9 @@ test('启动巡检解除持久假冲突与 adopting，原消息仅领取一次�
   let broker:Broker|undefined,store:Store|undefined;t.after(async()=>{if(broker)await broker.stop();store?.close();});
   const f=await setup(t,true),key='managedRuntimeConflict:'+f.x.id;
   f.store.setSetting(key,{runtimeId:f.runtime.id,sessionId:'child',at:1});writeHosting(f.store,f.x,{background:true,phase:'adopting',reason:'session_changed',attempts:1,nextAt:Date.now()+300000},f.home);
-  const pending=f.store.accept(f.pair,f.c,'原消息','once');f.store.close();store=new Store(f.filename);const codex=new FakeAdapter(),claude=new FakeAdapter();
+  const pending=f.store.accept(f.pair,f.c,'原消息','once');f.store.close();store=new Store(f.filename);const codex=new FakeAdapter(),agy=new FakeAdapter();
   Object.assign(codex,{inspectThread:async(_runtime:ManagedRuntime,id:string)=>({id,...(id==='child'?{source:{subAgent:{thread_spawn:{parent_thread_id:'root'}}}}:{source:'cli'}),status:{type:'active'}}),sessionState:async()=> 'alive'});
-  broker=new Broker(store,{...DEFAULT_CONFIG,implicit:'never'},{codex,claude} as unknown as Adapters,f.home);
+  broker=new Broker(store,{...DEFAULT_CONFIG,implicit:'never'},{codex,agy} as unknown as Adapters,f.home);
   await broker.start();await lifecycle(broker).observeManagedExits();assert.equal(store.setting(key),null);assert.equal(hostingRecord(store,store.peer(f.x.id))?.phase,undefined);assert.equal(hostingGate(store,store.peer(f.x.id)),false);
   assert.equal(store.peer(f.x.id).state,'busy');assert.equal(store.endpoint(f.x.id)?.pid,f.runtime.pid);assert.equal(runtimeFor(f.home,{peerId:f.x.id})?.value.procStart,f.runtime.procStart);
   const actor={host:'codex' as const,memberId:f.x.id,sessionId:'root',callId:'first'};
@@ -102,7 +102,7 @@ for(const gate of ['verifying','policy','release','takeover','foreign'] as const
 
 test('托管选择不把已托管成员重新标记为 adopting',async t=>{
   const f=await setup(t);t.after(()=>f.store.close());writeHosting(f.store,f.x,{background:true},f.home);
-  const actor={host:'claude' as const,memberId:f.c.id,sessionId:f.c.sessionId!,callId:'choose'};
+  const actor={host:'agy' as const,memberId:f.c.id,sessionId:f.c.sessionId!,callId:'choose'};
   const view=f.store.selections.hosting(f.c,actor,DEFAULT_CONFIG) as any;
   f.store.selections.commit(actor,{selection_id:view.selection_id,action:'adopt'},DEFAULT_CONFIG,()=>assert.fail('无需发送新消息'));
   assert.equal(hostingRecord(f.store,f.x)?.phase,undefined);assert.equal(hostingGate(f.store,f.x),false);
@@ -167,7 +167,7 @@ test('包装器登记统一使用已证明的原生 PID，不在 hook 与适配�
 
 test('托管选择提交后接手已加载的 adopting 成员，只读复核即可恢复原配对',async t=>{
   const f=await setup(t);t.after(()=>f.store.close());writeHosting(f.store,f.x,{background:true,phase:'adopting',reason:'session_changed'},f.home);
-  const actor={host:'claude' as const,memberId:f.c.id,sessionId:f.c.sessionId!,callId:'commit-adopt'},view=f.store.selections.hosting(f.c,actor,DEFAULT_CONFIG) as any;
+  const actor={host:'agy' as const,memberId:f.c.id,sessionId:f.c.sessionId!,callId:'commit-adopt'},view=f.store.selections.hosting(f.c,actor,DEFAULT_CONFIG) as any;
   f.store.selections.commit(actor,{selection_id:view.selection_id,action:'adopt'},DEFAULT_CONFIG,()=>assert.fail('无需新消息'));assert.equal(hostingRecord(f.store,f.x)?.phase,'adopting');
   const transfers=new SessionTransfers(f.store,DEFAULT_CONFIG,f.home,{holder:async()=>assert.fail('不能探测用户窗口'),prepare:async()=>assert.fail('不能恢复或重启'),stop:async()=>assert.fail('不能停止'),enabled:()=>{},inspect:async()=>({id:'root',status:{type:'active'}})});
   assert.equal((await transfers.adopt(f.store.peer(f.x.id)) as any).status,'paired');assert.equal(hostingRecord(f.store,f.x)?.phase,undefined);assert.equal(f.store.pairFor(f.x.id)?.id,f.pair.id);assert.equal(f.store.peer(f.x.id).state,'busy');
@@ -192,7 +192,7 @@ test('旧冲突卸载核验等待期间新增外来根线程，不会清除新�
   const key='managedRuntimeConflict:'+f.x.id;addManagedConflict(f.store,f.x.id,f.runtime.id,'old');const codex=new FakeAdapter();let entered!:()=>void,finish!:()=>void;
   const waiting=new Promise<void>(resolve=>entered=resolve),held=new Promise<'dead'>(resolve=>finish=()=>resolve('dead'));
   Object.assign(codex,{inspectThread:async()=>{throw Error('旧元数据不可读');},sessionState:async()=>{entered();return held;}});
-  broker=new Broker(f.store,DEFAULT_CONFIG,{codex,claude:new FakeAdapter()} as unknown as Adapters,f.home);
+  broker=new Broker(f.store,DEFAULT_CONFIG,{codex,agy:new FakeAdapter()} as unknown as Adapters,f.home);
   const sweep=lifecycle(broker).observeManagedExits();await waiting;codex.emit('register',{...f.input('foreign'),endpoint:{...f.store.endpoint(f.x.id)!}});finish();await sweep;
   assert.equal(hostingGate(f.store,f.x),true);assert.equal(f.store.setting<any>(key).sessionId,'old');assert.equal(f.store.setting<any>(key).pending[0].sessionId,'foreign');
   Object.assign(codex,{sessionState:async(peer:any)=>peer.sessionId==='old'?'dead':'alive'});await lifecycle(broker).observeManagedExits();assert.equal(f.store.setting<any>(key).sessionId,'foreign');assert.equal(hostingGate(f.store,f.x),true);
@@ -218,8 +218,8 @@ test('旧运行时保留 peerId 的原生子代理沿同代次 Unix 端点只读
 
 test('托管选择返回 held 后读取已存回执仍为 held',async t=>{
   let broker:Broker|undefined;t.after(async()=>{if(broker)await broker.stop();});const f=await setup(t);t.after(()=>f.store.close());writeHosting(f.store,f.x,{background:true,phase:'adopting'},f.home);
-  const codex=new FakeAdapter();Object.assign(codex,{inspectThread:async()=>{throw Error('暂不可读');}});broker=new Broker(f.store,DEFAULT_CONFIG,{codex,claude:new FakeAdapter()} as unknown as Adapters,f.home);
-  const actor={host:'claude' as const,memberId:f.c.id,sessionId:f.c.sessionId!,callId:'held-receipt'},view=f.store.selections.hosting(f.c,actor,DEFAULT_CONFIG) as any;
+  const codex=new FakeAdapter();Object.assign(codex,{inspectThread:async()=>{throw Error('暂不可读');}});broker=new Broker(f.store,DEFAULT_CONFIG,{codex,agy:new FakeAdapter()} as unknown as Adapters,f.home);
+  const actor={host:'agy' as const,memberId:f.c.id,sessionId:f.c.sessionId!,callId:'held-receipt'},view=f.store.selections.hosting(f.c,actor,DEFAULT_CONFIG) as any;
   const receipt=await broker.dispatch('pair.selection.commit',{actor,selection_id:view.selection_id,action:'adopt'}) as any;assert.equal(receipt.status,'held');assert.deepEqual(f.store.selections.view(actor,view.selection_id,DEFAULT_CONFIG),JSON.parse(JSON.stringify(receipt)));
 });
 

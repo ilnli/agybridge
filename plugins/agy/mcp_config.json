@@ -1,0 +1,41 @@
+{
+  "mcpServers": {
+    "codex": {
+      "command": "node",
+      "args": [
+        "${PLUGIN_ROOT}/bridge.cjs",
+        "mcp",
+        "--host",
+        "agy"
+      ],
+      "timeoutSeconds": -1,
+      "tools": {
+        "wait_partner": {
+          "eager": true,
+          "background": "always"
+        },
+        "send_message": {
+          "eager": true
+        },
+        "receive_messages": {
+          "eager": true
+        },
+        "status": {
+          "eager": true
+        },
+        "ask": {
+          "eager": true
+        },
+        "answer_question": {
+          "eager": true
+        },
+        "choose_partner": {
+          "eager": true
+        },
+        "select_partner": {
+          "eager": true
+        }
+      }
+    }
+  }
+}

@@ -33,25 +33,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS, latest CLIs
+          - name: macOS, latest Codex
             os: macos-latest
             codex: latest
-            claude: latest
-            files: dist/native-tests/codex.test.js dist/native-tests/session-hosting.test.js dist/native-tests/isolation-options.test.js dist/native-tests/managed-isolation.test.js dist/native-tests/codex-client-identity.test.js dist/native-tests/sdk-user-prompt.test.js dist/native-tests/claude.test.js dist/native-tests/daemon-wake-probe.test.js dist/native-tests/daemon-codex.test.js
+            files: dist/native-tests/codex.test.js dist/native-tests/session-hosting.test.js dist/native-tests/isolation-options.test.js dist/native-tests/managed-isolation.test.js dist/native-tests/codex-client-identity.test.js dist/native-tests/daemon-wake-probe.test.js dist/native-tests/daemon-codex.test.js
           - name: macOS, oldest supported Codex
             os: macos-latest
             codex: 0.164.0
-            claude: ''
             files: dist/native-tests/codex.test.js dist/native-tests/session-hosting.test.js dist/native-tests/isolation-options.test.js
           - name: Linux, full
             os: ubuntu-latest
             codex: ''
-            claude: ''
             files: '"dist/native-tests/**/*.test.js"'
           - name: Windows, hosted-compatible
             os: windows-latest
             codex: ''
-            claude: ''
             files: dist/native-tests/autonomy-codex.test.js dist/native-tests/codex-client-identity.test.js dist/native-tests/codex-hook-trust.test.js dist/native-tests/codex-injection-boundary.test.js dist/native-tests/compaction-probe.test.js dist/native-tests/compaction-retention.test.js dist/native-tests/hook-output-codex.test.js dist/native-tests/isolation-options.test.js dist/native-tests/liveness-codex.test.js dist/native-tests/mcp-list-changed.test.js dist/native-tests/member-control.test.js dist/native-tests/plugin-upgrade-state.test.js dist/native-tests/publish-only.test.js dist/native-tests/recovery-codex.test.js dist/native-tests/runtime-publish.test.js dist/native-tests/setup-preflight.test.js dist/native-tests/socket-integrity.test.js
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
@@ -67,7 +63,6 @@ jobs:
       - uses: ./.github/actions/official-clis
         with:
           codex: ${{ matrix.codex }}
-          claude: ${{ matrix.claude }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: build

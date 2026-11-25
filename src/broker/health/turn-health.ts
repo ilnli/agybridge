@@ -16,13 +16,13 @@ export function nativeToolIssue(item:any,turnId:string,at:number):NativeIssue|un
 export function providerRetryInfo(config:any):Record<string,unknown>{
   const provider=config?.model_provider??'openai',value=config?.model_providers?.[provider]??{},request=value.request_max_retries??4,stream=value.stream_max_retries??5;
   const scope=createHash('sha256').update(JSON.stringify([provider,value.base_url??'',value.wire_api??''])).digest('hex').slice(0,24);
-  return{provider,scope,requestMaxRetries:request,streamMaxRetries:stream,streamIdleTimeoutMs:value.stream_idle_timeout_ms??300000,...(request>=20||stream>=20?{warning:`模型供应商 ${provider} 配置了请求重试 ${request} 次、流重试 ${stream} 次（官方默认 4 次、5 次）；断网时 Codex 可能长时间没有任何输出。nxbridge 不会改动这些设置。`}:{})};
+  return{provider,scope,requestMaxRetries:request,streamMaxRetries:stream,streamIdleTimeoutMs:value.stream_idle_timeout_ms??300000,...(request>=20||stream>=20?{warning:`模型供应商 ${provider} 配置了请求重试 ${request} 次、流重试 ${stream} 次（官方默认 4 次、5 次）；断网时 Codex 可能长时间没有任何输出。agybridge 不会改动这些设置。`}:{})};
 }
 export interface TurnHealth {
   turnId:string;lastProgressAt:number;lastEventAt:number;state:'running'|'networkRetrying'|'silent'|'waitingTool'|'needsHuman'|'ready'|'failed';
   retry?:{message:string;attempt?:number;max?:number;since:number};tools:string[];observedProgressAt?:number;
   completion?:string;error?:string;
-  source?:'native-hook'|'native-mod';
+  source?:'native-hook'|'agy-acp';
   humanRequests?:NativeHumanRequest[];nativeIssue?:NativeIssue;
   modelRequest?:ModelRequestStatus;
   progressEvidence?:boolean;
@@ -31,7 +31,7 @@ export function currentHealthIssue(value:TurnHealth,now=Date.now()):TurnHealth{
   if(value.nativeIssue&&(now-value.nativeIssue.at>15*60*1000||value.nativeIssue.kind==='tool_failed'&&value.state==='ready'&&value.completion!=='failed')){const result={...value};delete result.nativeIssue;return result;}
   return value;
 }
-const incoming=(item:any)=>item?.type==='functionCallOutput'&&item.namespace==='claude'&&item.name==='receive_messages';
+const incoming=(item:any)=>item?.type==='functionCallOutput'&&item.namespace==='agy'&&item.name==='receive_messages';
 const tool=(item:any)=>/^(?:commandExecution|mcpToolCall|dynamicToolCall|functionCall|customToolCall|webSearch|fileChange|sleep)$/i.test(item?.type??'');
 function turnFingerprint(turn:any,items:any[]):string{
   const hash=createHash('sha256').update(JSON.stringify([turn.id,turn.status,items.length]));

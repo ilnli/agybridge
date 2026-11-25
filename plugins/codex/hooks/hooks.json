@@ -8,7 +8,7 @@
             "command": "node \"${PLUGIN_ROOT}/bridge.cjs\" hook --host codex",
             "timeout": 10,
             "additionalContextLimit": 200000,
-            "statusMessage": "nxbridge: session start/registration"
+            "statusMessage": "agybridge: session start/registration"
           }
         ]
       }
@@ -20,7 +20,7 @@
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/bridge.cjs\" hook --host codex",
             "timeout": 3,
-            "statusMessage": "nxbridge: session end/context cleanup"
+            "statusMessage": "agybridge: session end/context cleanup"
           }
         ]
       }
@@ -32,7 +32,7 @@
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/bridge.cjs\" hook --host codex",
             "timeout": 10,
-            "statusMessage": "nxbridge: prompt submit (pair/config confirm, busy state)"
+            "statusMessage": "agybridge: prompt submit (pair/config confirm, busy state)"
           }
         ]
       }
@@ -42,8 +42,8 @@
         "hooks": [
           {
             "type": "mcp_tool",
-            "server": "claude",
-            "tool": "nxbridge_hook",
+            "server": "agy",
+            "tool": "agybridge_hook",
             "input": {
               "session_id": "${session_id}",
               "hook_event_name": "${hook_event_name}",
@@ -58,7 +58,7 @@
               "tool_use_id": "${tool_use_id}"
             },
             "timeout": 10,
-            "statusMessage": "nxbridge: post tool use (pickup/sync)"
+            "statusMessage": "agybridge: post tool use (pickup/sync)"
           }
         ]
       }
@@ -71,7 +71,7 @@
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/bridge.cjs\" hook --host codex",
             "timeout": 10,
-            "statusMessage": "nxbridge: spawn_agent nxref expansion"
+            "statusMessage": "agybridge: spawn_agent nxref expansion"
           }
         ]
       }
@@ -83,7 +83,7 @@
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/bridge.cjs\" hook --host codex",
             "timeout": 10,
-            "statusMessage": "nxbridge: subagent stop/nxref capture"
+            "statusMessage": "agybridge: subagent stop/nxref capture"
           }
         ]
       }
@@ -95,7 +95,7 @@
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/bridge.cjs\" hook --host codex",
             "timeout": 10,
-            "statusMessage": "nxbridge: permission request/human-needed state"
+            "statusMessage": "agybridge: permission request/human-needed state"
           }
         ]
       }
@@ -107,7 +107,7 @@
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/bridge.cjs\" hook --host codex",
             "timeout": 3,
-            "statusMessage": "nxbridge: interrupt/pause and cancel questions"
+            "statusMessage": "agybridge: interrupt/pause and cancel questions"
           }
         ]
       }
@@ -119,7 +119,7 @@
             "type": "command",
             "command": "node \"${PLUGIN_ROOT}/bridge.cjs\" hook --host codex",
             "timeout": 10,
-            "statusMessage": "nxbridge: stop/ready state"
+            "statusMessage": "agybridge: stop/ready state"
           }
         ]
       }

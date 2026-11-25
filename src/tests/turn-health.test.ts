@@ -6,7 +6,7 @@ import {writeFileSync} from 'node:fs';
 import path from 'node:path';
 import {temporary} from './support/temporary.js';
 const boundedResult=(method:string|undefined,thread:any)=>method==='thread/turns/list'?{data:[...(thread.turns??[])].reverse()}:method==='thread/items/list'?{data:(thread.turns?.at(-1)?.items??[]).slice(-1).map((item:any)=>({turnId:thread.turns.at(-1).id,item}))}:{thread};
-                                      
+
 function nativeThread(t:TestContext,thread:any):any{
   const file=path.join(temporary(t),'native.jsonl');
   writeFileSync(file,JSON.stringify({type:'session_meta',payload:{id:thread.id}})+'\n'+JSON.stringify({timestamp:new Date().toISOString(),type:'event_msg',payload:{type:'task_started',turn_id:thread.turns.at(-1).id}})+'\n','utf8');
@@ -67,7 +67,7 @@ test('停滞提醒按真实依赖与联络共同计时，回复后即使历史�
   const progress=f.broker.health.get(endpoint.address,'x')!.lastProgressAt;
   f.broker.send({actor:{host:'codex',sessionId:'x',callId:'result'},message:'任务已经处理',in_reply_to:task.id},false);
   assert.equal(await(f.broker as any).runtimeHealth.healthNotice(pair.id,f.x,notice.id,notice.message,notice.source),'denied');
-  assert.deepEqual(f.broker.deliveryHealth.peek(pair.id,f.c.id),[]);assert.equal(f.claude.delivered.length,0);
+  assert.deepEqual(f.broker.deliveryHealth.peek(pair.id,f.c.id),[]);assert.equal(f.agy.delivered.length,0);
   assert.equal(f.broker.health.get(endpoint.address,'x')!.lastProgressAt,progress,'联络不篡改原生任务进展事实');
 });
 
@@ -78,11 +78,11 @@ test('unknown 成员的原生开放轮次继续核对，新工具进展解除误
   const thread=nativeThread(t,{id:'x',status:{type:'active'},turns:[{id:'long-turn',status:'inProgress',items:[]}]});
   f.codex.connect=async()=>({request:async(method:string)=>boundedResult(method,thread)}) as any;
   f.broker.health.read(address,thread);t.mock.timers.tick(SILENCE_MS);
-  thread.turns[0].items.push({id:'sent-reply',type:'mcpToolCall',status:'completed',server:'claude',tool:'send_message'});
+  thread.turns[0].items.push({id:'sent-reply',type:'mcpToolCall',status:'completed',server:'agy',tool:'send_message'});
   await(f.broker as any).runtimeHealth.checkPairTurnHealth(pair);
   assert.equal(f.broker.health.get(address,'x')?.state,'running');assert.equal(f.broker.health.get(address,'x')?.lastProgressAt,Date.now());assert.equal(f.store.events().some(event=>event.type==='health.alert'),false);
   t.mock.timers.tick(SILENCE_MS);
-  thread.turns[0].items.push({id:'inbound',type:'functionCallOutput',namespace:'claude',name:'receive_messages',text:'只收到来信'});
+  thread.turns[0].items.push({id:'inbound',type:'functionCallOutput',namespace:'agy',name:'receive_messages',text:'只收到来信'});
   await(f.broker as any).runtimeHealth.checkPairTurnHealth(pair);
   assert.equal(f.broker.health.get(address,'x')?.state,'silent');assert.equal(f.store.events().filter(event=>event.type==='health.alert').length,1);assert.equal(f.codex.created.length,0);assert.equal(f.codex.woken.length,0);
 });
@@ -98,7 +98,7 @@ test('新鲜原生事件不因 unknown 重读，陈旧状态读取恢复成员�
   t.mock.timers.tick(30000);await(f.broker as any).runtimeHealth.checkPairTurnHealth(pair);assert.equal(reads,1);assert.equal(f.store.peer(f.x.id).state,'busy');
   t.mock.timers.tick(SILENCE_MS);await(f.broker as any).runtimeHealth.checkPairTurnHealth(pair);assert.equal(reads,2);
   assert.equal(f.store.events().filter(event=>event.type==='health.alert').length,1);
-  for(let index=0;index<3;index++)await f.broker.dispatch('health.monitor',{actor:{host:'claude',sessionId:'c',callId:'poll-'+index},admit:false});
+  for(let index=0;index<3;index++)await f.broker.dispatch('health.monitor',{actor:{host:'agy',sessionId:'c',callId:'poll-'+index},admit:false});
   assert.equal(reads,2);
   t.mock.timers.tick(30000);thread.turns[0]!.items.push({id:'progress',type:'agentMessage',text:'继续'});
   await(f.broker as any).runtimeHealth.checkPairTurnHealth(pair);assert.equal(reads,3);
@@ -183,7 +183,7 @@ test('App Server 并行审批、原生状态和工具错误按当前轮次同步
   assert.equal(broker.health.get(address,'x')?.nativeIssue?.kind,'tool_failed');
   emit('item/completed',{item:{id:'b',type:'commandExecution',status:'declined'}});assert.equal(store.peer(x.id).state,'busy');
   emit('turn/completed',{turn:{id:turnId,status:'completed'}});assert.equal(broker.health.get(address,'x')?.state,'ready');
-  const status=broker.status({host:'claude',sessionId:'c',callId:'status'}) as any;assert.equal(status.partner.native_issue.kind,'approval_denied');
+  const status=broker.status({host:'agy',sessionId:'c',callId:'status'}) as any;assert.equal(status.partner.native_issue.kind,'approval_denied');
   emit('turn/started',{turnId:'next',turn:{id:'next'}});assert.equal(broker.health.get(address,'x')?.nativeIssue,undefined);
 });
 
@@ -196,7 +196,7 @@ test('正文只留私有哈希，同长度和 Unicode 改写仍推进，重复�
   now+=SILENCE_MS;assert.equal(tracker.read('endpoint',thread)?.state,'silent');assert.equal(tracker.get('endpoint',thread.id)?.lastProgressAt,1000);
   item.text='私有正文乙';assert.equal(tracker.read('endpoint',thread)?.observedProgressAt,now);
   now++;assert.equal(tracker.read('endpoint',thread)?.lastProgressAt,now-1);
-  (turn.items as any[]).push({id:'pickup',type:'functionCallOutput',namespace:'claude',name:'receive_messages',text:'入站内容'});
+  (turn.items as any[]).push({id:'pickup',type:'functionCallOutput',namespace:'agy',name:'receive_messages',text:'入站内容'});
   assert.equal(tracker.read('endpoint',thread)?.lastProgressAt,now-1);
   for(const text of ['\uD800','\uFFFD','\uD801']){now++;item.text=text;assert.equal(tracker.read('endpoint',thread)?.observedProgressAt,now);}
 });
@@ -217,7 +217,7 @@ test('原生进展与入站消息分开计时，运行中的工具和审批不�
   let now=1000000;const health=new TurnHealthTracker(()=>now),address='test',id='x',turnId='turn';
   const emit=(method:string,params:any={})=>health.observe(address,{method,params:{threadId:id,turnId,...params}});
   emit('turn/started',{turn:{id:turnId}});now+=SILENCE_MS;
-  emit('item/completed',{item:{id:'incoming',type:'functionCallOutput',namespace:'claude',name:'receive_messages'}});
+  emit('item/completed',{item:{id:'incoming',type:'functionCallOutput',namespace:'agy',name:'receive_messages'}});
   emit('thread/status/changed',{status:{type:'active'}});assert.equal(health.get(address,id)?.state,'silent');
   emit('item/started',{item:{id:'cmd',type:'commandExecution'}});now+=SILENCE_MS;
   assert.equal(health.get(address,id)?.state,'waitingTool');
@@ -258,16 +258,16 @@ test('真实依赖停滞十五分钟后被动提醒，恢复只在主动状态�
   const address=f.store.endpoint(f.x.id)!.address,thread=nativeThread(t,{id:'x',status:{type:'active'},turns:[{id:'t',status:'inProgress',items:[{id:'secret',type:'agentMessage',text:'正文不得流入健康告警'}]}]});
   f.codex.connect=async()=>({request:async(method:string)=>boundedResult(method,thread)}) as any;
   f.broker.health.read(address,thread);t.mock.timers.tick(900000);
-  await f.broker.pump();assert.equal(f.claude.delivered.length,0);
-  const first=await f.broker.dispatch('health.monitor',{actor:{host:'claude',sessionId:'c',callId:'stall-fact'}}) as any;assert.equal(first.notices.length,1);assert.match(first.notices[0].message,/runtime monitor/);
+  await f.broker.pump();assert.equal(f.agy.delivered.length,0);
+  const first=await f.broker.dispatch('health.monitor',{actor:{host:'agy',sessionId:'c',callId:'stall-fact'}}) as any;assert.equal(first.notices.length,1);assert.match(first.notices[0].message,/runtime monitor/);
   const alert=f.store.events().find(event=>event.type==='health.alert')!;
   assert.equal((alert.data as any).health.state,'silent');assert.equal(JSON.stringify(alert).includes('正文不得流入健康告警'),false);
   assert.equal('fingerprint' in (alert.data as any).health,false);assert.equal(JSON.stringify(f.broker.status()).includes('正文不得流入健康告警'),false);
-  t.mock.timers.tick(30000);await f.broker.pump();assert.equal(f.claude.delivered.length,0);
+  t.mock.timers.tick(30000);await f.broker.pump();assert.equal(f.agy.delivered.length,0);
   f.codex.emit('native',{address,message:{method:'item/completed',params:{threadId:'x',turnId:'t',item:{id:'progress',type:'agentMessage',text:'继续'}}}});
-  t.mock.timers.tick(30000);await f.broker.pump();assert.equal(f.claude.delivered.length,0);
-  const recovered=await f.broker.dispatch('health.monitor',{actor:{host:'claude',sessionId:'c',callId:'stall-recovery'}}) as any;assert.equal(recovered.notices.length,0);assert.ok((f.broker.status({host:'claude',sessionId:'c',callId:'status'}) as any).notes.some((n:any)=>n.text.includes('progress resumed')));
-  t.mock.timers.tick(30000);await f.broker.pump();assert.equal(f.claude.delivered.length,0);assert.equal(f.store.messages().length,1);
+  t.mock.timers.tick(30000);await f.broker.pump();assert.equal(f.agy.delivered.length,0);
+  const recovered=await f.broker.dispatch('health.monitor',{actor:{host:'agy',sessionId:'c',callId:'stall-recovery'}}) as any;assert.equal(recovered.notices.length,0);assert.ok((f.broker.status({host:'agy',sessionId:'c',callId:'status'}) as any).notes.some((n:any)=>n.text.includes('progress resumed')));
+  t.mock.timers.tick(30000);await f.broker.pump();assert.equal(f.agy.delivered.length,0);assert.equal(f.store.messages().length,1);
 });
 
 test('明确恢复只中断指定 turn 并提交一次继续指令，不重放旧任务或改写送达证据',async t=>{

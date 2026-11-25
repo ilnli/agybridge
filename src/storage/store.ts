@@ -18,7 +18,6 @@ import { initializeSchema } from './schema.js';
 import { hookContextMatches, registrationWindow, SessionBindings, windowKey } from '../integration/hooks/session-bindings.js';
 import { PairSelections } from '../broker/pairing/pair-selection.js';
 import { memberEnabled } from '../broker/member-control.js';
-import type { NativeApproval } from '../hosts/claude/claude-inbound.js';
 import { codexEvidenceContext, observeCodexPermission } from '../hosts/codex/codex-permission.js';
 import { forgetPeerRecovery, repairPeerRecovery } from '../broker/recovery/peer-recovery-state.js';
 import { FaultBoundary } from '../broker/fault-boundary.js';
@@ -27,7 +26,7 @@ type Row = Record<string, unknown>;
 export type MessageFacts=Pick<Message,'id'|'pairId'|'from'|'to'|'state'|'createdAt'|'updatedAt'|'inReplyTo'|'replyExpected'>;
 export type PendingMessageFacts=Pick<Message,'id'|'pairId'|'to'|'attempts'>;
 const factsFrom=(row:Row):MessageFacts=>({id:row.id as string,pairId:row.pair_id as string,from:row.sender as string,to:row.recipient as string,state:row.state as Message['state'],createdAt:row.created_at as number,updatedAt:row.updated_at as number,inReplyTo:(row.original_reply_to??row.in_reply_to) as string|null,replyExpected:row.reply_expected===1});
-const pairFrom = (row: Row): Pair => ({ id: row.id as string, claude: row.claude as string, codex: row.codex as string, paused: !!row.paused, archived: !!row.archived, createdAt: row.created_at as number });
+const pairFrom = (row: Row): Pair => ({ id: row.id as string, agy: row.agy as string, codex: row.codex as string, paused: !!row.paused, archived: !!row.archived, createdAt: row.created_at as number });
 const messageColumns=['id','pair_id','sender','recipient','in_reply_to','original_reply_to','reply_source','reply_expected','via','call_id','state','created_at','updated_at','evidence','error','attempts'];
 const bodyProjection=(prefix:string)=>messageColumns.map(column=>prefix+column).concat('CAST('+prefix+'body AS BLOB) AS body').join(',');
 const messageFields=bodyProjection(''),joinedMessageFields=bodyProjection('m.');
@@ -68,7 +67,7 @@ export class Store {
   }
   private readQuestions(rows:Row[]):PartnerQuestion[]{return rows.flatMap(row=>{const q=this.decode<PartnerQuestion>('question',String(row.id),String(row.data));return q?[q]:[];});}
   transaction<T>(fn: () => T): T {
-    const nested=this.db.isTransaction,savepoint='nxbridge_'+(++this.transactionSequence);
+    const nested=this.db.isTransaction,savepoint='agybridge_'+(++this.transactionSequence);
     this.db.exec(nested?'SAVEPOINT '+savepoint:'BEGIN IMMEDIATE');
     try { const value=fn(); this.db.exec(nested?'RELEASE '+savepoint:'COMMIT'); return value; }
     catch(error) { this.db.exec(nested?'ROLLBACK TO '+savepoint:'ROLLBACK');if(nested)this.db.exec('RELEASE '+savepoint);throw error; }
@@ -88,12 +87,6 @@ export class Store {
     return row?JSON.parse(row.data as string):undefined;
   }
   events(after = 0, limit = 100): Row[] { return statement(this.db,'SELECT * FROM events WHERE seq>? ORDER BY seq LIMIT ?').all(after,limit).flatMap(row=>{const data=this.decode('event',String(row.seq),String(row.data));return data===undefined?[]:[{...row,data}];}); }
-                                                
-  codexNativeReceipt(messageId:string,sessionId:string,itemId:string):boolean{
-    const matches=(evidence:unknown)=>typeof evidence==='string'&&evidence.startsWith('Codex ')&&evidence.includes(`，thread=${sessionId}，turn=`)&&evidence.endsWith(`，item=${itemId}`);
-    if(matches(this.message(messageId).evidence))return true;
-    return statement(this.db,"SELECT json_extract(data,'$.evidence') AS evidence FROM events WHERE type='message.state' AND json_extract(data,'$.messageId')=? AND json_extract(data,'$.state')='contextObserved'").all(messageId).some(row=>matches(row.evidence));
-  }
   setting<T>(key: string): T | undefined { const r=statement(this.db,'SELECT value FROM settings WHERE key=?').get(key);if(!r)return;try{return JSON.parse(r.value as string) as T;}catch{throw new BridgeError('record_invalid','状态记录无法解析：'+key);} }
   setSetting(key: string, value: unknown): void { statement(this.db,'INSERT INTO settings(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at').run(key,JSON.stringify(value),Date.now()); }
   warnHookContext(contextKey:string|undefined,sessionId:string,event:string,reason:string,peerId?:string):void{
@@ -177,7 +170,7 @@ export class Store {
     }
     if(binding?.active&&binding.sessionId!==input.sessionId&&this.bindings.known(binding.peerId,input.sessionId)&&!input.contextStart)throw new BridgeError('stale_context','旧对话调用已经失效，请从当前原生对话重试。');
     const firstEndpoint=previous?.owner==='nxbridge'&&!this.endpoints(previous.id).length;
-    const peer:Peer={...previous,id:previous?.id ?? randomUUID(),host:input.host,sessionId:input.sessionId,cwd:input.cwd,name:input.name ?? previous?.name ?? input.host,kind:input.kind ?? previous?.kind ?? 'root',parentId:input.parentId ?? previous?.parentId ?? null,owner:previous?.owner ?? 'user',state:reopen?'ready':previous?.state==='paused'?'paused':input.state ?? (previous?.state==='offline'||firstEndpoint?'ready':previous?.state) ?? 'ready',permission:input.permission&&input.permission!=='unknown'?input.permission:previous?.permission??'unknown',...runtimeProfile(previous??{},input),updatedAt:Date.now()};
+    const peer:Peer={...previous,id:previous?.id ?? randomUUID(),host:input.host,sessionId:input.sessionId,cwd:input.cwdFallback&&previous?.cwd?previous.cwd:input.cwd,name:input.name ?? previous?.name ?? input.host,kind:input.kind ?? previous?.kind ?? 'root',parentId:input.parentId ?? previous?.parentId ?? null,owner:previous?.owner ?? 'user',state:reopen?'ready':previous?.state==='paused'?'paused':input.state ?? (previous?.state==='offline'||firstEndpoint?'ready':previous?.state) ?? 'ready',permission:input.permission&&input.permission!=='unknown'?input.permission:previous?.permission??'unknown',...runtimeProfile(previous??{},input),updatedAt:Date.now()};
     if(peer.kind==='subagent'&&peer.parentId){
       const native=registrationWindow({...input,kind:'root'}),root=native?this.bindings.get(windowKey(native)):undefined;
       const parents=this.peers().filter(p=>p.host===input.host&&p.sessionId===peer.parentId&&(root?p.id===root.peerId||p.rootBinding?.key===root.key:this.endpoints(p.id).some(e=>e.address===input.endpoint.address)));
@@ -204,21 +197,12 @@ export class Store {
                                                           
     const sameNative=!!input.endpoint.pid&&!!input.endpoint.procStart&&oldEndpoint?.pid===input.endpoint.pid&&oldEndpoint.procStart===input.endpoint.procStart;
     const nativePermission=input.endpoint.nativePermission??(sameNative?oldEndpoint?.nativePermission:undefined);
-    const inbound=input.endpoint.nativeInbound??(sameNative?oldEndpoint?.nativeInbound:undefined);
-    const inboundPermission=nativePermission?.permission??inbound?.permission??(sameNative?oldEndpoint?.nativeInbound?.permission:undefined);
-    const sameModContext=sameNative&&previous?.sessionId===input.sessionId&&oldEndpoint?.bindingEpoch===current?.epoch;
-    const nativeSession=sameModContext?{...oldEndpoint?.nativeSession,...input.endpoint.nativeSession}:input.endpoint.nativeSession;
-    const nativeDecision=input.endpoint.nativeDecision??(sameNative&&previous?.sessionId===input.sessionId?oldEndpoint?.nativeDecision:undefined);
-    const nativeAutoMode=input.endpoint.nativeAutoMode??(sameModContext?oldEndpoint?.nativeAutoMode:undefined);
-    const nativeProfile=input.endpoint.nativeProfile??(sameModContext?oldEndpoint?.nativeProfile:undefined);
-    const modVersion=input.endpoint.modVersion??(sameModContext?oldEndpoint?.modVersion:undefined),modRevision=input.endpoint.modRevision??(sameModContext&&(input.endpoint.modVersion===undefined||input.endpoint.modVersion===oldEndpoint?.modVersion)?oldEndpoint?.modRevision:undefined);
-    const endpoint: Endpoint={...input.endpoint,...(current?{bindingEpoch:current.epoch}:{}),...(oldEndpoint?.native?{native:oldEndpoint.native}:{}),...(oldEndpoint?.bridge?{bridge:oldEndpoint.bridge}:{}),...(input.endpoint.native?{native:input.endpoint.native}:{}),...(input.endpoint.bridge?{bridge:input.endpoint.bridge}:{}),...(modVersion?{modVersion}:{}),...(modRevision?{modRevision}:{}),...(questionSupport!==undefined?{questionSupport}:{}),...(nativePermission?{nativePermission}:{}),...(inbound?{nativeInbound:{...inbound,...(inboundPermission?{permission:inboundPermission}:{})}}:{}),peerId:peer.id,seenAt:Date.now(),active:true};
+    const sameContext=sameNative&&previous?.sessionId===input.sessionId&&oldEndpoint?.bindingEpoch===current?.epoch;
+    const nativeSession=sameContext?{...oldEndpoint?.nativeSession,...input.endpoint.nativeSession}:input.endpoint.nativeSession;
+    const endpoint: Endpoint={...input.endpoint,...(current?{bindingEpoch:current.epoch}:{}),...(oldEndpoint?.native?{native:oldEndpoint.native}:{}),...(oldEndpoint?.bridge?{bridge:oldEndpoint.bridge}:{}),...(input.endpoint.native?{native:input.endpoint.native}:{}),...(input.endpoint.bridge?{bridge:input.endpoint.bridge}:{}),...(questionSupport!==undefined?{questionSupport}:{}),...(nativePermission?{nativePermission}:{}),peerId:peer.id,seenAt:Date.now(),active:true};
     if(nativeSession&&Object.keys(nativeSession).length)endpoint.nativeSession=nativeSession;
-                                           
-                                                     
     if(endpoint.daemon&&sameNative&&oldEndpoint?.bindingEpoch===current?.epoch)endpoint.daemon={...oldEndpoint.daemon,...endpoint.daemon};
     if(input.host==='codex'){
-      const sameContext=sameNative&&previous?.sessionId===input.sessionId&&oldEndpoint?.bindingEpoch===current?.epoch;
       const legacy=sameContext&&(oldEndpoint.codexPermission??oldEndpoint.daemon),prior=sameContext?(oldEndpoint.codexPermissionObservation??(legacy?{value:legacy,source:'prior-native-registration',context:codexEvidenceContext(input.sessionId,endpoint),observedAt:oldEndpoint.seenAt}:undefined)):undefined;
       const evidence=input.endpoint.codexPermission??(input.endpoint.daemon?{sandbox:input.endpoint.daemon.sandbox,approval:input.endpoint.daemon.approval,autoReview:input.endpoint.daemon.autoReview}:{});
       Object.assign(endpoint,observeCodexPermission(endpoint,input.sessionId,evidence,'native-registration',prior));
@@ -227,11 +211,6 @@ export class Store {
     const sameHealthContext=oldEndpoint?.bindingEpoch===current?.epoch||previous?.sessionId===input.sessionId&&oldEndpoint?.nativeHealth?.turnId===endpoint.nativeHealth?.turnId;
     const previousHealth=sameNative&&sameHealthContext?oldEndpoint?.nativeHealth:undefined;
     if(!endpoint.nativeHealth||previousHealth&&previousHealth.lastEventAt>endpoint.nativeHealth.lastEventAt)endpoint.nativeHealth=previousHealth;
-    if(nativeAutoMode)endpoint.nativeAutoMode=nativeAutoMode;
-    if(nativeProfile)endpoint.nativeProfile=nativeProfile;
-    if(nativeDecision)endpoint.nativeDecision=nativeDecision;
-    const nativeBackground=input.endpoint.nativeBackground??(sameModContext?oldEndpoint?.nativeBackground:undefined);
-    if(nativeBackground)endpoint.nativeBackground=nativeBackground;
     if(peer.host==='codex'&&peer.kind==='subagent'&&input.state==='offline')endpoint.active=false;
     this.saveEndpoint(endpoint);
     if(input.hookContextKey){
@@ -249,25 +228,25 @@ export class Store {
     const rotation:ContextRotation={id:randomUUID(),peerId,...(pair?{pairId:pair.id}:{}),oldSessionId:before.sessionId,sessionId:current.sessionId,oldEpoch:before.epoch,epoch:current.epoch,reason,at:Date.now(),unanswered:messages.filter(m=>['runtimeQueued','contextObserved','held'].includes(m.state)).map(m=>m.id),uncertain:messages.filter(m=>['sending','unknown'].includes(m.state)).map(m=>m.id)};
     for(const message of messages)if(message.state==='sending')this.transition(message.id,'unknown','目标对话切换，传输结果待核对');
     this.selections.invalidate(peerId);this.onRotation?.(rotation);this.event('context.rotated',rotation);
-    if(pair)statement(this.db,'INSERT INTO context_notices(id,pair_id,recipient,data) VALUES(?,?,?,?)').run(rotation.id,pair.id,pair[peer.host==='claude'?'codex':'claude'],JSON.stringify(rotation));
+    if(pair)statement(this.db,'INSERT INTO context_notices(id,pair_id,recipient,data) VALUES(?,?,?,?)').run(rotation.id,pair.id,pair[peer.host==='agy'?'codex':'agy'],JSON.stringify(rotation));
   }
   saveEndpoint(endpoint: Endpoint): void { statement(this.db,'INSERT INTO endpoints(peer_id,epoch,data) VALUES(?,?,?) ON CONFLICT(peer_id,epoch) DO UPDATE SET data=excluded.data').run(endpoint.peerId,endpoint.epoch,JSON.stringify(endpoint)); }
   endpoints(peerId?: string): Endpoint[] { return (peerId?statement(this.db,'SELECT * FROM endpoints WHERE peer_id=?').all(peerId):statement(this.db,'SELECT * FROM endpoints').all()).flatMap(row=>{const endpoint=this.decode<Endpoint>('endpoint',row.peer_id+':'+row.epoch,String(row.data));return endpoint?[endpoint]:[];}); }
   endpoint(peerId: string): Endpoint | undefined {
     const active=this.endpoints(peerId).filter(e=>e.active);
     if(this.bindings.current(peerId)&&this.peer(peerId).owner==='user'){
-      const foreground=active.filter(e=>e.mode!=='app-server');
+      const foreground=active.filter(e=>e.mode!=='app-server'&&e.mode!=='agy-acp');
       if(foreground.length>1)throw new BridgeError('ambiguous_endpoint','同一窗口有多个存活端点，请重新加载插件。');
       if(foreground.length)return foreground[0];
       return undefined;
     }
-    const direct=active.filter(e=>e.mode!=='embedded');
+    const direct=active.filter(e=>e.mode!=='embedded'&&e.mode!=='agy-tui');
     const candidates=direct.length?direct:active;
     if(candidates.length>1)throw new BridgeError('ambiguous_endpoint','同一会话有多个存活端点，请先明确选择。');
     return candidates[0];
   }
   deactivate(peerId: string, epoch?: string): void { for(const ep of this.endpoints(peerId))if(!epoch||ep.epoch===epoch)this.saveEndpoint({...ep,active:false}); }
-  placeholder(host: Host, cwd: string): Peer { return this.savePeer({id:randomUUID(),host,sessionId:null,cwd,name:`nxbridge · ${host} 搭档`,kind:'root',parentId:null,owner:'nxbridge',state:'starting',permission:'unknown',updatedAt:Date.now()}); }
+  placeholder(host: Host, cwd: string): Peer { return this.savePeer({id:randomUUID(),host,sessionId:null,cwd,name:`agybridge · ${host} 搭档`,kind:'root',parentId:null,owner:'nxbridge',state:'starting',permission:'unknown',updatedAt:Date.now()}); }
   adopt(id: string, input: RegisterInput, provisionalId?:string): Peer {
     return this.transaction(()=>{
       const target=this.peer(id);
@@ -277,7 +256,7 @@ export class Store {
       if(existing && existing.id!==id){
         const sameNative=window?this.endpoints(existing.id).some(e=>e.pid===window.pid&&e.procStart===window.procStart&&e.configHome&&windowKey({...window,configHome:e.configHome})===windowKey(window)):input.endpoint.mode==='app-server'&&input.endpoint.pid&&input.endpoint.procStart&&input.endpoint.configHome&&!this.bindings.current(existing.id)&&existing.sessionId===input.sessionId&&this.endpoints(existing.id).some(e=>e.mode==='app-server'&&e.address===input.endpoint.address&&e.epoch===input.endpoint.epoch&&e.pid===input.endpoint.pid&&e.procStart===input.endpoint.procStart&&e.configHome&&sameDirectory(e.configHome,input.endpoint.configHome!));
         if(provisionalId&&(existing.host!==input.host||!sameNative))throw new BridgeError('context_changed','临时成员不属于本次核验的原生窗口。');
-        const inPair=statement(this.db,'SELECT id FROM pairs WHERE claude=? OR codex=?').get(existing.id,existing.id);
+        const inPair=statement(this.db,'SELECT id FROM pairs WHERE agy=? OR codex=?').get(existing.id,existing.id);
         if(inPair)throw new BridgeError('peer_already_paired','恢复发现的会话已参与其他配对，不能收养。');
                                                            
         for(const old of this.bindings.all())if(old.peerId===id&&old.active&&old.key!==binding?.key)this.bindings.save({...old,active:false});
@@ -297,39 +276,39 @@ export class Store {
     });
   }
   pairs():Pair[]{return statement(this.db,'SELECT * FROM pairs WHERE archived=0 ORDER BY created_at,rowid').all().map(pairFrom);}
-  pairHistory(peerId:string):Pair[]{return statement(this.db,'SELECT * FROM pairs WHERE claude=? OR codex=? ORDER BY created_at DESC,rowid DESC').all(peerId,peerId).map(pairFrom);}
+  pairHistory(peerId:string):Pair[]{return statement(this.db,'SELECT * FROM pairs WHERE agy=? OR codex=? ORDER BY created_at DESC,rowid DESC').all(peerId,peerId).map(pairFrom);}
   pairById(id:string):Pair|undefined{const r=statement(this.db,'SELECT * FROM pairs WHERE id=?').get(id);return r?pairFrom(r):undefined;}
-  pairFor(peerId:string):Pair|undefined{const r=statement(this.db,'SELECT * FROM pairs WHERE archived=0 AND (claude=? OR codex=?)').get(peerId,peerId);return r?pairFrom(r):undefined;}
-  hasPairHistory(peerId:string):boolean{return!!statement(this.db,'SELECT 1 FROM pairs WHERE claude=? OR codex=? LIMIT 1').get(peerId,peerId);}
+  pairFor(peerId:string):Pair|undefined{const r=statement(this.db,'SELECT * FROM pairs WHERE archived=0 AND (agy=? OR codex=?)').get(peerId,peerId);return r?pairFrom(r):undefined;}
+  hasPairHistory(peerId:string):boolean{return!!statement(this.db,'SELECT 1 FROM pairs WHERE agy=? OR codex=? LIMIT 1').get(peerId,peerId);}
   currentPair(selector?:string): Pair | undefined {
     if(selector)return this.pairFor(selector)??this.pairs().find(p=>p.id===selector);
     const pairs=this.pairs();if(pairs.length>1)throw new BridgeError('pair_selector_required','有多组配对，请明确指定配对或窗口。');return pairs[0];
   }
-  pair(claude: string,codex: string,replace=false): Pair {
+  pair(agy: string,codex: string,replace=false): Pair {
     return this.transaction(()=>{
-      const c=this.peer(claude),x=this.peer(codex);
-      if(c.host!=='claude'||x.host!=='codex'||!['root','fork'].includes(c.kind)||!['root','fork'].includes(x.kind))throw new BridgeError('invalid_pair','只能配对 Claude 与 Codex 的独立主会话。');
-      const old=[...new Map([this.pairFor(claude),this.pairFor(codex)].filter((p):p is Pair=>!!p).map(p=>[p.id,p])).values()];
-      if(old.length===1&&old[0]!.claude===claude&&old[0]!.codex===codex)return old[0]!;
+      const a=this.peer(agy),x=this.peer(codex);
+      if(a.host!=='agy'||x.host!=='codex'||!['root','fork'].includes(a.kind)||!['root','fork'].includes(x.kind))throw new BridgeError('invalid_pair','只能配对 AGY 与 Codex 的独立主会话。');
+      const old=[...new Map([this.pairFor(agy),this.pairFor(codex)].filter((p):p is Pair=>!!p).map(p=>[p.id,p])).values()];
+      if(old.length===1&&old[0]!.agy===agy&&old[0]!.codex===codex)return old[0]!;
       if(old.length&&!replace)throw new BridgeError('pair_exists','所选窗口已有搭档；替换必须由人显式指定 --replace。');
       for(const p of old)statement(this.db,'UPDATE pairs SET archived=1,archived_at=? WHERE id=?').run(Date.now(),p.id);
-      const pair:Pair={id:randomUUID(),claude,codex,paused:false,archived:false,createdAt:Date.now()};
-      statement(this.db,'INSERT INTO pairs(id,claude,codex,created_at) VALUES(?,?,?,?)').run(pair.id,claude,codex,pair.createdAt);
-      for(const id of [claude,codex])this.setSetting(pairLossKey(id),null);
-      this.selections.invalidate(claude);this.selections.invalidate(codex);
-      this.event('pair.created',pair,[pair.claude,pair.codex]);return pair;
+      const pair:Pair={id:randomUUID(),agy,codex,paused:false,archived:false,createdAt:Date.now()};
+      statement(this.db,'INSERT INTO pairs(id,agy,codex,created_at) VALUES(?,?,?,?)').run(pair.id,agy,codex,pair.createdAt);
+      for(const id of [agy,codex])this.setSetting(pairLossKey(id),null);
+      this.selections.invalidate(agy);this.selections.invalidate(codex);
+      this.event('pair.created',pair,[pair.agy,pair.codex]);return pair;
     });
   }
-  setPaused(paused: boolean,selector?:string): void { const pair=this.currentPair(selector);if(!pair)throw new BridgeError('unpaired','当前没有配对。');statement(this.db,'UPDATE pairs SET paused=? WHERE id=?').run(Number(paused),pair.id);this.event(paused?'pair.paused':'pair.resumed',{pairId:pair.id},[pair.claude,pair.codex]); }
-  unpair(selector?:string,cause?:PairLossCause): Pair | undefined { return this.transaction(()=>{const pair=this.currentPair(selector);if(pair&&cause&&[pair.claude,pair.codex].some(id=>this.peer(id).enabled===false))return pair;if(pair){statement(this.db,'UPDATE pairs SET archived=1,archived_at=? WHERE id=?').run(Date.now(),pair.id);if(cause)recordPairLoss(this,pair,cause);else for(const id of [pair.claude,pair.codex]){this.setSetting(pairLossKey(id),null);this.setSetting('cooperationUnpaired:'+id,true);}this.event('pair.archived',{pairId:pair.id,...(cause?{cause}:{})},[pair.claude,pair.codex]);}return pair;}); }
+  setPaused(paused: boolean,selector?:string): void { const pair=this.currentPair(selector);if(!pair)throw new BridgeError('unpaired','当前没有配对。');statement(this.db,'UPDATE pairs SET paused=? WHERE id=?').run(Number(paused),pair.id);this.event(paused?'pair.paused':'pair.resumed',{pairId:pair.id},[pair.agy,pair.codex]); }
+  unpair(selector?:string,cause?:PairLossCause): Pair | undefined { return this.transaction(()=>{const pair=this.currentPair(selector);if(pair&&cause&&[pair.agy,pair.codex].some(id=>this.peer(id).enabled===false))return pair;if(pair){statement(this.db,'UPDATE pairs SET archived=1,archived_at=? WHERE id=?').run(Date.now(),pair.id);if(cause)recordPairLoss(this,pair,cause);else for(const id of [pair.agy,pair.codex]){this.setSetting(pairLossKey(id),null);this.setSetting('cooperationUnpaired:'+id,true);}this.event('pair.archived',{pairId:pair.id,...(cause?{cause}:{})},[pair.agy,pair.codex]);}return pair;}); }
   restorePair(id:string):Pair{
     return this.transaction(()=>{
       const pair=this.pairById(id);if(!pair)throw new BridgeError('pair_restore_unavailable','原配对不存在。');
       if(!pair.archived)return pair;
-      if(this.pairFor(pair.claude)||this.pairFor(pair.codex))throw new BridgeError('pair_exists','原成员已有其他搭档，不能恢复旧配对。');
+      if(this.pairFor(pair.agy)||this.pairFor(pair.codex))throw new BridgeError('pair_exists','原成员已有其他搭档，不能恢复旧配对。');
       statement(this.db,'UPDATE pairs SET archived=0,archived_at=NULL WHERE id=?').run(id);
-      for(const member of [pair.claude,pair.codex]){this.setSetting(pairLossKey(member),null);this.selections.invalidate(member);}
-      this.event('pair.restored',{pairId:id},[pair.claude,pair.codex]);return{...pair,archived:false};
+      for(const member of [pair.agy,pair.codex]){this.setSetting(pairLossKey(member),null);this.selections.invalidate(member);}
+      this.event('pair.restored',{pairId:id},[pair.agy,pair.codex]);return{...pair,archived:false};
     });
   }
   candidates(host: Host,cwd: string): Peer[] {return this.peers().filter(p=>p.enabled!==false&&p.host===host&&(p.sessionId||this.endpoint(p.id)?.pendingContext)&&!this.pairFor(p.id)&&['root','fork'].includes(p.kind)&&['ready','busy','needsHuman','paused'].includes(p.state)&&!this.bindings.current(p.id)?.transitioning&&sameDirectory(p.cwd,cwd));}
@@ -353,7 +332,7 @@ export class Store {
       const previous=statement(this.db,'SELECT '+messageFields+' FROM messages WHERE sender=? AND call_id=?').get(sender.id,callId);
       if(previous){const m=messageFrom(previous);if(m.pairId!==pair.id||m.body!==body||m.inReplyTo!==(inReplyTo??null)||!!m.replyExpected!==replyExpected)throw new BridgeError('idempotency_conflict','同一次工具调用不能改变配对、消息正文或回复约定。');return m;}
       if(!body.trim()||Buffer.byteLength(body)>256*1024)throw new BridgeError('invalid_message','消息不能为空，且不能超过 256 KiB；长内容请使用摘要和文件引用。');
-      const to=pair.claude===sender.id?pair.codex:pair.codex===sender.id?pair.claude:null;
+      const to=pair.agy===sender.id?pair.codex:pair.codex===sender.id?pair.agy:null;
       if(!to)throw new BridgeError('unpaired','当前会话不是已配对成员。');
       if(this.pairFor(sender.id)?.id!==pair.id)throw new BridgeError('unpaired','原配对已解除，不能向旧搭档发送。');
       if(inReplyTo){const original=this.message(inReplyTo);if(original.pairId!==pair.id||original.from!==to||original.to!==sender.id)throw new BridgeError('invalid_reply','回复关联必须指向当前搭档发来的消息。');}
@@ -463,7 +442,6 @@ export class Store {
   firstPendingId(peerId:string):string|undefined{return statement(this.db,"SELECT m.id FROM messages m JOIN pairs p ON p.id=m.pair_id AND p.archived=0 AND p.paused=0 WHERE m.state='accepted' AND m.recipient=? ORDER BY m.rowid LIMIT 1").get(peerId)?.id as string|undefined;}
                                         
   pendingMessage(facts:PendingMessageFacts):Message|undefined{const row=statement(this.db,'SELECT '+joinedMessageFields+" FROM messages m JOIN pairs p ON p.id=m.pair_id AND p.archived=0 AND p.paused=0 WHERE m.state='accepted' AND m.id=? AND m.pair_id=? AND m.recipient=? AND m.attempts=?").get(facts.id,facts.pairId,facts.to,facts.attempts);return row?messageFrom(row):undefined;}
-  inboundApprovals():{message:Message;approval:NativeApproval}[]{return statement(this.db,'SELECT '+joinedMessageFields+",s.value AS approval FROM settings s JOIN messages m ON s.key='claudeApproval:'||m.id WHERE s.value<>'null'").all().flatMap(row=>{const approval=this.decode<NativeApproval>('inbound_approval',String(row.id),String(row.approval));return approval?[{message:messageFrom(row),approval}]:[];});}
   pendingCount(peerId?:string):number{return Number(statement(this.db,"SELECT count(*) AS n FROM messages m JOIN pairs p ON p.id=m.pair_id AND p.archived=0 AND p.paused=0 WHERE m.state='accepted'"+(peerId?' AND m.recipient=?':'')).get(...(peerId?[peerId]:[]))!.n);}
   unsettledDeliveryFacts(pairId:string,senderId:string):{id:string;state:string}[]{return statement(this.db,"SELECT id,state FROM messages WHERE pair_id=? AND sender=? AND state IN ('accepted','sending','runtimeQueued','held','unknown') ORDER BY id").all(pairId,senderId).map(row=>({id:row.id as string,state:row.state as string}));}
   claim(id: string): boolean {const row=statement(this.db,'SELECT recipient FROM messages WHERE id=?').get(id);if(!row)throw new BridgeError('message_missing','消息不存在。');const binding=this.bindings.current(row.recipient as string);if(binding?.transitioning)return false;return Number(statement(this.db,"UPDATE messages SET state='sending',delivery_epoch=?,attempts=attempts+1,updated_at=? WHERE id=? AND state='accepted'").run(binding?.epoch??null,Date.now(),id).changes)===1;}

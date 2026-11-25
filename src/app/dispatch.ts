@@ -5,9 +5,8 @@ import type {WrapperShell} from '../hosts/shell.js';
 import {HELP_BODY} from './help.js';
 const print=(value:unknown)=>process.stdout.write(JSON.stringify(value,null,2)+'\n');
 const pick=(args:string[],name:string):string|undefined=>{const i=args.indexOf(name);return i<0?undefined:args[i+1];};
-async function getHost(value:unknown):Promise<Host>{const {z}=await import('zod');return z.enum(['claude','codex']).parse(value);}
+async function getHost(value:unknown):Promise<Host>{const {z}=await import('zod');return z.enum(['agy','codex']).parse(value);}
 
-                                  
 export async function dispatchCommand(command:string|undefined,args:string[]):Promise<void>{
   switch(command){
     case 'service':{
@@ -39,12 +38,6 @@ export async function dispatchCommand(command:string|undefined,args:string[]):Pr
       print({version:VERSION,windowsHelper:process.platform==='win32'?windowsHelperStatus(bridgeHome()):null});
       break;
     }
-    case 'claude-worker':{
-      const {z}=await import('zod');
-      const {runClaudeWorker}=await import('../hosts/claude/claude-child.js');
-      await runClaudeWorker(z.string().min(1).parse(args[0]));
-      break;
-    }
     case 'setup':
     case 'update':{
       const {setupArguments,SETUP_HELP}=await import('../install/setup-arguments.js');
@@ -60,12 +53,6 @@ export async function dispatchCommand(command:string|undefined,args:string[]):Pr
     case 'mcp':{
       const {serveMcp}=await import('../integration/mcp/server.js');
       await serveMcp(await getHost(pick(args,'--host')));
-      break;
-    }
-    case 'mod':{
-      const {mod}=await import('../integration/mod/mod-control.js');
-      const {modInput}=await import('../integration/mod/mod-protocol.js');
-      print(await mod(await modInput(args[0])));
       break;
     }
     case 'hook':{
@@ -87,7 +74,7 @@ export async function dispatchCommand(command:string|undefined,args:string[]):Pr
     case 'open':{
       const {openPartner}=await import('../hosts/launch.js');
       const {openTarget}=await import('./commands/open-command.js');
-      if(args.includes('--interrupt')&&args[0]!=='claude')throw new BridgeError('invalid_arguments','只有 open claude 支持 --interrupt。');
+      if(args.includes('--interrupt')&&args[0]!=='agy')throw new BridgeError('invalid_arguments','只有 open agy 支持 --interrupt。');
       const target=await openTarget(await getHost(args[0]),args.slice(1).filter(arg=>arg!=='--interrupt'));
       if(target)process.exitCode=await openPartner(await getHost(args[0]),{...target,interrupt:args.includes('--interrupt')});
       break;
@@ -100,7 +87,7 @@ export async function dispatchCommand(command:string|undefined,args:string[]):Pr
     }
     case 'retire':{
       const {brokerCall}=await import('../ipc/ipc.js');
-      if(args.length!==2||args[0]!=='--member'||!args[1])throw new BridgeError('invalid_arguments','用法：nxbridge retire --member <已解除配对的托管成员ID>；重新核验并回收该成员的自有后台。');
+      if(args.length!==2||args[0]!=='--member'||!args[1])throw new BridgeError('invalid_arguments','用法：agybridge retire --member <已解除配对的托管成员ID>；重新核验并回收该成员的自有后台。');
       print(await brokerCall('runtime.retire',{peer_id:args[1]},{mutation:true,timeout:30000}));
       break;
     }
@@ -126,7 +113,7 @@ export async function dispatchCommand(command:string|undefined,args:string[]):Pr
     case 'doctor':{
       const {diagnose,diagnoseCurrent}=await import('./commands/doctor.js');
       const {administrativeTarget}=await import('../broker/pairing/admin-target.js');
-      if(args.length&&!(args.length===1&&args[0]==='--current'))throw new BridgeError('invalid_arguments','用法：nxbridge doctor [--current]；--current 只诊断当前原生窗口的配对。');
+      if(args.length&&!(args.length===1&&args[0]==='--current'))throw new BridgeError('invalid_arguments','用法：agybridge doctor [--current]；--current 只诊断当前原生窗口的配对。');
       print(args.includes('--current')?await diagnoseCurrent(await administrativeTarget([])):await diagnose());
       break;
     }
@@ -171,7 +158,7 @@ export async function dispatchCommand(command:string|undefined,args:string[]):Pr
     case 'recover':{
       const {recoverCommand}=await import('./commands/restart-command.js');
       const {administrativeTarget}=await import('../broker/pairing/admin-target.js');
-      if(args[0]!=='codex')throw new BridgeError('invalid_arguments','用法：nxbridge recover codex [目标] --dry-run，或 nxbridge recover codex [目标] --turn <turn ID>（卡住的这一轮，或最近一轮已失败停下）。');
+      if(args[0]!=='codex')throw new BridgeError('invalid_arguments','用法：agybridge recover codex [目标] --dry-run，或 agybridge recover codex [目标] --turn <turn ID>（卡住的这一轮，或最近一轮已失败停下）。');
       const turn=pick(args,'--turn');
       if(!args.includes('--dry-run')&&!turn)throw new BridgeError('turn_required','恢复需要明确指定 --turn；请先执行 recover codex --dry-run 查看当前目标。');
       const selector=args.slice(1).filter((arg,index,rest)=>arg!=='--dry-run'&&arg!=='--turn'&&rest[index-1]!=='--turn');

@@ -41,7 +41,7 @@ test('RPC 断连、同步写失败和超时保留写入不确定性，已关闭�
 });
 
 test('成员关闭错误在直接与 IPC 路径均保留确切人工开启命令，模型提示保持英文',async t=>{
-  const enable_command='nxbridge on codex --member disabled-member',error=Object.assign(new BridgeError('member_disabled','成员已关闭；用户可亲自执行 '+enable_command),{enable_command});
+  const enable_command='agybridge on codex --member disabled-member',error=Object.assign(new BridgeError('member_disabled','成员已关闭；用户可亲自执行 '+enable_command),{enable_command});
   const direct=modelError(error);assert.equal(direct.enable_command,enable_command);assert.ok(direct.message.includes(enable_command));assert.doesNotMatch(direct.message,/[\u4e00-\u9fff]|<host>|<id>/);
   const home=temporary(t);await ensureHome(home);const server=await listenBroker(home,async()=>{throw error;}),client=await connectBroker(home);
   try{await assert.rejects(client.request('send'),remote=>{const output=modelError(remote);assert.equal(output.message,direct.message);assert.equal(output.enable_command,enable_command);return true;});}

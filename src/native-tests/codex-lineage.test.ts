@@ -18,10 +18,10 @@ import { NativeTerminal } from './terminal-fixture.js';
 import {codexComposerReady} from './portable-terminal-fixture.js';
 
 test('安装版 Codex 窗口：延迟新建、压缩、分支、恢复及关闭重接保留配对', {skip:process.platform!=='win32',timeout:170000},async t=>{
-  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexhome=path.join(root,'codex'),claudehome=path.join(root,'claude'),eventfile=path.join(root,'events.jsonl');
+  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexhome=path.join(root,'codex'),claudehome=path.join(root,'agy'),eventfile=path.join(root,'events.jsonl');
   for(const d of [home,codexhome,claudehome])mkdirSync(d,{recursive:true});
-  const env={NXBRIDGE_HOME:home,CODEX_HOME:codexhome,CLAUDE_CONFIG_DIR:claudehome,OPENAI_API_KEY:'isolated-lineage-only'},restoreEnvironment=overrideEnvironment(env);
-  writeFileSync(path.join(home,'config.json'),JSON.stringify({...DEFAULT_CONFIG,implicit:'never',compatibilityWake:'strict',codexHome:codexhome,claudeHome:claudehome}),'utf8');
+  const env={AGYBRIDGE_HOME:home,CODEX_HOME:codexhome,AGY_HOME:claudehome,OPENAI_API_KEY:'isolated-lineage-only'},restoreEnvironment=overrideEnvironment(env);
+  writeFileSync(path.join(home,'config.json'),JSON.stringify({...DEFAULT_CONFIG,implicit:'never',compatibilityWake:'strict',codexHome:codexhome,agyHome:claudehome}),'utf8');
   let phase=0,pickup=false,hold=false;const requests:any[]=[],errors:string[]=[];
   const model=http.createServer(async(req,res)=>{try{
     const raw=await readModelBody(req);
@@ -42,16 +42,16 @@ test('安装版 Codex 窗口：延迟新建、压缩、分支、恢复及关闭�
   for(const groups of Object.values(hooks) as any[])for(const group of groups)for(const entry of group.hooks)if(entry.type==='command')entry.command=entry.command.replaceAll('${PLUGIN_ROOT}',path.dirname(bridge).replaceAll('\\','/'));
   for(const event of ['SessionStart','SessionEnd','UserPromptSubmit','Stop','PostCompact','Interrupt']){hooks[event]??=[];hooks[event].unshift({hooks:[{type:'command',command:'node "'+capture+'"',timeout:5}]});}
   writeFileSync(path.join(codexhome,'hooks.json'),JSON.stringify({hooks:Object.fromEntries(['SessionStart','SessionEnd','UserPromptSubmit','Stop','PostCompact','Interrupt'].map(event=>[event,[{hooks:[{type:'command',command:'node "'+capture+'"',timeout:5}]}]]))}),'utf8');
-  writeFileSync(path.join(codexhome,'config.toml'),stringify({model:'gpt-5.1-codex',model_provider:'local_lineage',model_reasoning_effort:'low',approval_policy:'never',sandbox_mode:'read-only',suppress_unstable_features_warning:true,check_for_update_on_startup:false,features:{hooks:true,apps:false,remote_plugin:false,code_mode:{enabled:false,direct_only_tool_namespaces:['claude']},non_prefixed_mcp_tool_names:{enabled:true,server_names:['claude']}},model_providers:{local_lineage:{name:'本地沿袭验收',base_url:`http://127.0.0.1:${(model.address() as any).port}/v1`,wire_api:'responses',requires_openai_auth:false}},projects:{[root]:{trust_level:'trusted'}}}),'utf8');
-  await runCli('codex',['plugin','marketplace','add',marketplace,'--json']);await runCli('codex',['plugin','add','nxbridge@nxbridge-local','--json']);
+  writeFileSync(path.join(codexhome,'config.toml'),stringify({model:'gpt-5.1-codex',model_provider:'local_lineage',model_reasoning_effort:'low',approval_policy:'never',sandbox_mode:'read-only',suppress_unstable_features_warning:true,check_for_update_on_startup:false,features:{hooks:true,apps:false,remote_plugin:false,code_mode:{enabled:false,direct_only_tool_namespaces:['agy']},non_prefixed_mcp_tool_names:{enabled:true,server_names:['agy']}},model_providers:{local_lineage:{name:'本地沿袭验收',base_url:`http://127.0.0.1:${(model.address() as any).port}/v1`,wire_api:'responses',requires_openai_auth:false}},projects:{[root]:{trust_level:'trusted'}}}),'utf8');
+  await runCli('codex',['plugin','marketplace','add',marketplace,'--json']);await runCli('codex',['plugin','add','agybridge@agybridge-local','--json']);
   (await ensureBroker(home)).close();const exe=resolveCli('codex'),start=async(args:string[]=[])=>NativeTerminal.start(root,home,exe.command,[...exe.prefix,'--no-daemon','--no-alt-screen','--dangerously-bypass-hook-trust',...args],root,{...process.env,TERM:'xterm-256color',COLORTERM:'truecolor'});
   terminal=await start();const wait=async(check:()=>boolean|Promise<boolean>,why:string)=>terminal!.wait(check,why+'；'+errors.join(';'),25000);
   const status=()=>brokerCall<any>('status',{}, {home}),turn=async(text:string)=>{const count=events().filter(e=>e.hook_event_name==='Stop').length,offset=terminal!.output.length,marker='LINEAGE_DONE_'+phase;await terminal!.prompt(text);await wait(()=>{const output=stripVTControlCharacters(terminal!.output.slice(offset)),end=output.lastIndexOf(marker);return events().filter(e=>e.hook_event_name==='Stop').length>count&&end!==-1&&output.slice(end+marker.length).includes('Worked for');},'原生轮次未完成');};
-  const identity=await processIdentity(process.pid),c=await brokerCall<any>('register',{host:'claude',sessionId:'lineage-counterpart',cwd:root,name:'沿袭搭档',kind:'root',permission:'prompting',endpoint:{mode:'embedded',address:'',epoch:'counterpart',pid:process.pid,procStart:identity.startedAt}},{home});
+  const identity=await processIdentity(process.pid),c=await brokerCall<any>('register',{host:'agy',sessionId:'lineage-counterpart',cwd:root,name:'沿袭搭档',kind:'root',permission:'prompting',endpoint:{mode:'embedded',address:'',epoch:'counterpart',pid:process.pid,procStart:identity.startedAt}},{home});
   await wait(async()=>{const snapshot=await status();return snapshot.endpoints.some((e:any)=>e.active&&e.pid===terminal!.identity.pid&&e.pendingContext);},'第一轮之前的空闲新窗口未登记候选');
   let s=await status();const candidate=s.peers.find((p:any)=>s.endpoints.some((e:any)=>e.peerId===p.id&&e.active&&e.pid===terminal!.identity.pid&&e.pendingContext));assert.ok(candidate);assert.equal(candidate.sessionId,null);assert.equal(requests.length,0);
-  await brokerCall('pair',{claude:c.id,codex:candidate.id},{home});
-  const ca={host:'claude',sessionId:c.sessionId,callId:'lineage-send'},beforeFirst=await brokerCall<any>('send',{actor:{...ca,callId:'before-first'},message:'NX_BEFORE_FIRST_PROMPT'},{home});
+  await brokerCall('pair',{agy:c.id,codex:candidate.id},{home});
+  const ca={host:'agy',sessionId:c.sessionId,callId:'lineage-send'},beforeFirst=await brokerCall<any>('send',{actor:{...ca,callId:'before-first'},message:'NX_BEFORE_FIRST_PROMPT'},{home});
   assert.equal(beforeFirst.waiting_context,true,JSON.stringify({beforeFirst,snapshot:await status()}));assert.equal((await status()).messages.find((m:any)=>m.id===beforeFirst.message_id).attempts,0);
   pickup=true;await turn('初始化沿袭验收');s=await status();const x=s.peers.find((p:any)=>p.id===candidate.id&&p.context);assert.ok(x,'真实 hook 未沿用候选成员');const original=x.sessionId,native=terminal.identity,pair=s.pair;
   assert.ok(requests.some(r=>JSON.stringify(r.input).includes('NX_BEFORE_FIRST_PROMPT')));assert.equal(pair.codex,x.id);

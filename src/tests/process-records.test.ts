@@ -21,7 +21,7 @@ test('周期回收删除已死及复用 PID 的旧代次记录，保留活进程
   const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),run=path.join(home,'run');mkdirSync(run,{recursive:true});
   const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true}),closed=once(child,'close');
   t.after(async()=>{if(child.exitCode===null&&child.signalCode===null)child.kill();await closed;for(const record of ownedProcesses(home).records)if(record.identity.pid===process.pid)forgetOwnedProcess(record);await temp.cleanup();});
-  const store=new Store(path.join(home,'nxbridge.db'));store.close();
+  const store=new Store(path.join(home,'agybridge.db'));store.close();
   await once(child,'spawn');const parent=await processIdentity(process.pid),identity=await processIdentity(child.pid!);
   await recordOwnedProcess(home,{role:'proxy',identity,parent,proof:{kind:'spawn'}});
   await recordOwnedProcess(home,{role:'broker',identity:parent,proof:{kind:'spawn'}});
@@ -101,16 +101,16 @@ test('旧版临时完成目录已丢失时，确认退出的事实仍能保存�
 test('协调器启动维护回收失效运行时记录，关闭等待维护完成',async t=>{
   const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),run=path.join(home,'run');mkdirSync(run,{recursive:true});
   const identity=await processIdentity(process.pid),file=path.join(run,'runtime-stale.json');atomicJson(file,{owner:managedMarker(home),pid:identity.pid,generation:identity.startedAt+'0',entry:process.execPath});
-  const store=new Store(path.join(home,'nxbridge.db')),broker=new Broker(store,DEFAULT_CONFIG,{codex:new FakeAdapter(),claude:new FakeAdapter()} as unknown as Adapters,home);
+  const store=new Store(path.join(home,'agybridge.db')),broker=new Broker(store,DEFAULT_CONFIG,{codex:new FakeAdapter(),agy:new FakeAdapter()} as unknown as Adapters,home);
   t.after(async()=>{await broker.stop();store.close();await temp.cleanup();});
   await broker.start();await broker.stop();assert.equal(existsSync(file),false);
   assert.ok(store.events().some(event=>event.type==='process.records.maintained'));
 });
 
 test('卸载本 home 的归属目录时保留仍含其他安装证据的共用根',async t=>{
-  const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),root=path.join(temp.directory,'registry'),other=path.join(root,'other-home','proof.json'),previous=process.env.NXBRIDGE_PROCESS_REGISTRY;
-  process.env.NXBRIDGE_PROCESS_REGISTRY=root;mkdirSync(path.dirname(other),{recursive:true});writeFileSync(other,'其他安装的证据','utf8');
-  t.after(async()=>{if(previous===undefined)delete process.env.NXBRIDGE_PROCESS_REGISTRY;else process.env.NXBRIDGE_PROCESS_REGISTRY=previous;await temp.cleanup();});
+  const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),root=path.join(temp.directory,'registry'),other=path.join(root,'other-home','proof.json'),previous=process.env.AGYBRIDGE_PROCESS_REGISTRY;
+  process.env.AGYBRIDGE_PROCESS_REGISTRY=root;mkdirSync(path.dirname(other),{recursive:true});writeFileSync(other,'其他安装的证据','utf8');
+  t.after(async()=>{if(previous===undefined)delete process.env.AGYBRIDGE_PROCESS_REGISTRY;else process.env.AGYBRIDGE_PROCESS_REGISTRY=previous;await temp.cleanup();});
   const result=await pruneProcessOwnership(home);assert.deepEqual(result.notes,[]);assert.equal(existsSync(other),true);assert.equal(existsSync(root),true);
 });
 
@@ -119,14 +119,9 @@ test('维护回收过期孤立子进程记录和旧日志，保留引用、活�
   t.after(async()=>{for(const record of ownedProcesses(home).records)if(record.identity.pid===process.pid)forgetOwnedProcess(record);await temp.cleanup();});
   const identity=await processIdentity(process.pid),active=randomUUID(),now=Date.now(),old=now-10*86400000;
   await recordOwnedProcess(home,{role:'codex-runtime',identity,proof:{kind:'spawn',launchId:active}});
-  const files=new Map<string,string>();
-  for(const [index,peerId] of ['orphan','referenced','live','active-phase'].entries()){
-    const file=path.join(run,'claude-child-'+(index+1)+'.json');files.set(peerId,file);atomicJson(file,{version:1,peerId,updatedAt:old,phase:peerId==='active-phase'?'active':'released',...(peerId==='live'?{native:identity}:{})});
-  }
   const logs=[active,...Array.from({length:5},()=>randomUUID())].map((id,index)=>{const file=path.join(run,'codex-'+id+'.log');writeFileSync(file,'x'.repeat(200)+'tail','utf8');const stamp=new Date(id===active?old:now-index*1000);utimesSync(file,stamp,stamp);return file;});
   const result=await pruneDeadProcessRecords(home,{referencedPeers:new Set(['referenced']),retention:{logMaxBytes:64}});
-  assert.deepEqual(result.notes,[]);assert.equal(existsSync(files.get('orphan')!),false);
-  for(const id of ['referenced','live','active-phase'])assert.equal(existsSync(files.get(id)!),true);
+  assert.deepEqual(result.notes,[]);
   for(const file of logs.slice(0,4)){assert.equal(existsSync(file),true);assert.ok(statSync(file).size<=64);assert.ok(readFileSync(file,'utf8').endsWith('tail'));}
   for(const file of logs.slice(4))assert.equal(existsSync(file),false);
 });

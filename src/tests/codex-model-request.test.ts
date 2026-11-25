@@ -7,7 +7,6 @@ import { temporary } from './support/temporary.js';
 import { fixture } from './support/broker-fixture.js';
 import { pairIssues } from '../broker/pairing/pair-anomalies.js';
 import { VERSION } from '../version.js';
-import { MOD_REVISION } from '../mod-revision.js';
 
 const row=(code=503,turn='turn',pid=42)=>({ts:1000,ts_nanos:125000000,target:'codex_http_client::client',process_uuid:`pid:${pid}:instance`,feedback_log_body:`turn{turn.id=${turn}}:model_client.stream_responses_api{api.path="/responses"}: Request completed method=POST url=https://secret.example/responses status=${code} Service headers={Authorization:secret} body=private`});
 const terminal=(status:unknown=400,turn='turn',pid=42)=>({...row(200,turn,pid),target:'codex_core::session::turn',feedback_log_body:`turn{turn.id=${turn}}:session_task.run:run_turn: Turn error: ${JSON.stringify({type:'error',status,error:{type:'invalid_request_error',message:'private upstream response'}})}`});
@@ -79,6 +78,6 @@ test('流式请求的终止失败覆盖旧 HTTP 200，排除其他目标或轮�
 });
 test('供应商故障聚合派生告警，只保留具体原因且不唤醒或附加恢复指令',t=>{
   const {store,c,x}=fixture(t),pair=store.pair(c.id,x.id),health=withModelRequest({turnId:'turn',state:'silent',lastProgressAt:1,lastEventAt:1000125,tools:[]},modelRequestLog(row(),'turn',42));
-  const issues=pairIssues({pair,peer:{...x,state:'busy'},endpoint:store.endpoint(x.id),now:2000000,health,version:VERSION,modRevision:MOD_REVISION,integration:{scope:'scope',since:1,turnsWithoutHook:3,lastTurnAt:1},messages:[{...store.accept(pair,c,'任务','call'),updatedAt:1}],replyContractActive:false,transitioning:false,questionPending:false});
+  const issues=pairIssues({pair,peer:{...x,state:'busy'},endpoint:store.endpoint(x.id),now:2000000,health,version:VERSION,integration:{scope:'scope',since:1,turnsWithoutHook:3,lastTurnAt:1},messages:[{...store.accept(pair,c,'任务','call'),updatedAt:1}],replyContractActive:false,transitioning:false,questionPending:false});
   assert.deepEqual(issues.map(issue=>issue.kind),['provider_retry']);assert.match(issues[0]!.message,/503/);assert.doesNotMatch(issues[0]!.message,/recover|resume|hook|doctor|status|继续指令/);
 });

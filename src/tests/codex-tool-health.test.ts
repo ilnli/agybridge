@@ -30,7 +30,7 @@ function native(t:TestContext,foreground=false){
 
 for(const foreground of [false,true])test((foreground?'前台 hook':'App Server')+'：接口漏掉在途工具时显示等待，补查不推进进展时间，完成后不粘住旧工具',async t=>{
   t.mock.timers.enable({apis:['Date'],now:1000000});const f=native(t,foreground),progress=f.health().lastProgressAt;
-                                 
+
   f.pending();t.mock.timers.tick(SILENCE_MS);await f.check();
   assert.equal(f.health().state,'waitingTool');assert.deepEqual(f.health().tools,['hidden']);assert.equal(f.health().lastProgressAt,progress);
   t.mock.timers.tick(15*60000);await f.check();
@@ -39,7 +39,7 @@ for(const foreground of [false,true])test((foreground?'前台 hook':'App Server'
   if(foreground)await assert.rejects(f.broker.dispatch('codex.recover',{preview:true}),{code:'unowned_runtime'});
   else{const preview:any=await f.broker.dispatch('codex.recover',{preview:true});assert.equal(preview.recoveryCommand,null);}
   f.append({type:'function_call_output',call_id:'hidden',output:'等待正常结束'});
-                                          
+
   f.thread.turns[0]!.items=[{id:'different-native-id',type:'sleep',completedAtMs:Date.now()}];
   if(foreground)f.broker.foregroundHealth.observe(f.x,'progress',f.turnId);
   t.mock.timers.tick(30001);await f.check();assert.deepEqual(f.health().tools,[]);assert.equal(f.health().state,'running');

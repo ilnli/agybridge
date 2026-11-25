@@ -86,12 +86,12 @@ test('Linux 进程身份采用原生 starttime，正确解析含空格和括号�
 });
 
 test('Darwin 改名后的后代按内核程序名及真实映像发现，保留原生代次',{skip:process.platform!=='darwin'},async t=>{
-  const root=temporary(t),binary=path.join(root,'claude');copyFileSync(process.execPath,binary);chmodSync(binary,0o700);
+  const root=temporary(t),binary=path.join(root,'agy');copyFileSync(process.execPath,binary);chmodSync(binary,0o700);
   const child=spawn(binary,['-e','process.title="renamed background worker";process.send("ready");setInterval(()=>{},1000)'],{stdio:['ignore','ignore','ignore','ipc']});
   try{
     await new Promise<void>((resolve,reject)=>{child.once('message',()=>resolve());child.once('error',reject);child.once('exit',()=>reject(Error('后代夹具提前退出')));});
-    const native=await nativeDescendant(process.pid,'claude',Date.now()-10000),identity=await processIdentity(child.pid!);
-    assert.equal(native.pid,child.pid);assert.equal(native.name,'claude');assert.equal(native.image,realpathSync(binary));assert.equal(native.startedAt,identity.startedAt);
+    const native=await nativeDescendant(process.pid,'agy',Date.now()-10000),identity=await processIdentity(child.pid!);
+    assert.equal(native.pid,child.pid);assert.equal(native.name,'agy');assert.equal(native.image,realpathSync(binary));assert.equal(native.startedAt,identity.startedAt);
   }finally{child.kill();await new Promise<void>(resolve=>child.exitCode!==null||child.signalCode!==null?resolve():child.once('exit',()=>resolve()));}
 });
 

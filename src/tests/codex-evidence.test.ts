@@ -48,7 +48,7 @@ test('长轮次概要不变时只读取最新一项，持续的新工具进展�
   });t.after(()=>rpc.close());
   const health=new TurnHealthTracker(),read=async()=>health.read('endpoint',await readCodexThread(rpc,'t',{progress:true}));await read();
   for(let i=1;i<=20;i++){t.mock.timers.tick(60000);item={id:String(i),type:'mcpToolCall',status:'completed'};assert.equal((await read())?.state,'running');}
-  const progress=health.get('endpoint','t')!.lastProgressAt;t.mock.timers.tick(60000);item={id:'incoming',type:'functionCallOutput',namespace:'claude',name:'receive_messages'};await read();assert.equal(health.get('endpoint','t')!.lastProgressAt,progress);
+  const progress=health.get('endpoint','t')!.lastProgressAt;t.mock.timers.tick(60000);item={id:'incoming',type:'functionCallOutput',namespace:'agy',name:'receive_messages'};await read();assert.equal(health.get('endpoint','t')!.lastProgressAt,progress);
   assert.equal(requests.filter(request=>request.method==='thread/items/list').length,22);
 });
 

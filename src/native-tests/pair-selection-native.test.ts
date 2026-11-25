@@ -18,14 +18,14 @@ import { NativeTerminal } from './terminal-fixture.js';
 
                                         
 test('实际原生窗口唯一候选仍先确认及配对码：保留原消息，输入码不进入模型', {skip:process.platform!=='win32',timeout:170000},async t=>{
-  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexhome=path.join(root,'codex'),claudehome=path.join(root,'claude');
+  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexhome=path.join(root,'codex'),claudehome=path.join(root,'agy');
   for(const d of [home,codexhome,claudehome])mkdirSync(d,{recursive:true});
   let phase=0;const requests:{host:string;body:any}[]=[],errors:string[]=[],terminals:NativeTerminal[]=[];
   const model=http.createServer(async(req,res)=>{try{
     const raw=await readModelBody(req);
     const anthropic=req.url?.includes('/v1/messages')&&!req.url.includes('count_tokens'),openai=req.url?.includes('/responses');
     if(!anthropic&&!openai){res.writeHead(200,{'content-type':'application/json'});res.end('{"input_tokens":1,"data":[]}');return;}
-    const body=JSON.parse(raw.toString()),host=anthropic?'claude':'codex';requests.push({host,body});
+    const body=JSON.parse(raw.toString()),host=anthropic?'agy':'codex';requests.push({host,body});
     if(openai){
       const id='pair-codex-'+requests.length,item={type:'message',id:'msg-'+id,role:'assistant',status:'completed',content:[{type:'output_text',text:'PAIR_CODEX_DONE'}]};
       res.writeHead(200,{'content-type':'text/event-stream'});
@@ -40,20 +40,20 @@ test('实际原生窗口唯一候选仍先确认及配对码：保留原消息�
     for(const e of [{type:'message_start',message:{...response,content:[],stop_reason:null}},{type:'content_block_start',index:0,content_block:send?{...content,input:{}}:{type:'text',text:''}},{type:'content_block_delta',index:0,delta:send?{type:'input_json_delta',partial_json:JSON.stringify(toolInput)}:{type:'text_delta',text}},{type:'content_block_stop',index:0},{type:'message_delta',delta:{stop_reason:response.stop_reason,stop_sequence:null},usage:{output_tokens:5}},{type:'message_stop'}])res.write('event: '+e.type+'\ndata: '+JSON.stringify(e)+'\n\n');res.end();
   }catch(error){errors.push(String(error));res.writeHead(500);res.end(String(error));}});
   await new Promise<void>(r=>model.listen(0,'127.0.0.1',r));const base=`http://127.0.0.1:${(model.address() as any).port}`;
-  const env={NXBRIDGE_HOME:home,CODEX_HOME:codexhome,CLAUDE_CONFIG_DIR:claudehome,OPENAI_API_KEY:'pair-local-only',ANTHROPIC_API_KEY:'pair-local-only',ANTHROPIC_BASE_URL:base,DISABLE_AUTOUPDATER:'1',DISABLE_TELEMETRY:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'},restoreEnvironment=overrideEnvironment(env);
+  const env={AGYBRIDGE_HOME:home,CODEX_HOME:codexhome,AGY_HOME:claudehome,OPENAI_API_KEY:'pair-local-only',ANTHROPIC_API_KEY:'pair-local-only',ANTHROPIC_BASE_URL:base,DISABLE_AUTOUPDATER:'1',DISABLE_TELEMETRY:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'},restoreEnvironment=overrideEnvironment(env);
   t.after(async()=>{try{for(const terminal of terminals)await terminal.close();try{await brokerCall('shutdown',{releaseOwned:false},{home,start:false});}catch{}await temp.cleanup();}finally{model.closeAllConnections();await new Promise<void>(r=>model.close(()=>r()));restoreEnvironment();}});
-  writeFileSync(path.join(home,'config.json'),JSON.stringify({...DEFAULT_CONFIG,implicit:'never',compatibilityWake:'strict',codexHome:codexhome,claudeHome:claudehome}),'utf8');
-  writeFileSync(path.join(codexhome,'config.toml'),stringify({model:'gpt-5.1-codex',model_provider:'pair_local',approval_policy:'never',sandbox_mode:'read-only',web_search:'disabled',suppress_unstable_features_warning:true,check_for_update_on_startup:false,features:{hooks:true,apps:false,remote_plugin:false,code_mode:{enabled:false,direct_only_tool_namespaces:['claude']},non_prefixed_mcp_tool_names:{enabled:true,server_names:['claude']}},model_providers:{pair_local:{name:'原生配对本地验收',base_url:base+'/v1',wire_api:'responses',requires_openai_auth:false}},projects:{[root]:{trust_level:'trusted'}}}),'utf8');
+  writeFileSync(path.join(home,'config.json'),JSON.stringify({...DEFAULT_CONFIG,implicit:'never',compatibilityWake:'strict',codexHome:codexhome,agyHome:claudehome}),'utf8');
+  writeFileSync(path.join(codexhome,'config.toml'),stringify({model:'gpt-5.1-codex',model_provider:'pair_local',approval_policy:'never',sandbox_mode:'read-only',web_search:'disabled',suppress_unstable_features_warning:true,check_for_update_on_startup:false,features:{hooks:true,apps:false,remote_plugin:false,code_mode:{enabled:false,direct_only_tool_namespaces:['agy']},non_prefixed_mcp_tool_names:{enabled:true,server_names:['agy']}},model_providers:{pair_local:{name:'原生配对本地验收',base_url:base+'/v1',wire_api:'responses',requires_openai_auth:false}},projects:{[root]:{trust_level:'trusted'}}}),'utf8');
   const execute=promisify(execFile),nativeCwd=(await execute(windowsPowerShell(),['-NoProfile','-NonInteractive','-Command','(Get-Location).Path'],{cwd:root,windowsHide:true})).stdout.trim(),shortCwd=(await execute(windowsPowerShell(),['-NoProfile','-NonInteractive','-Command','$fs=New-Object -ComObject Scripting.FileSystemObject; $fs.GetFolder((Get-Location).Path).ShortPath'],{cwd:root,windowsHide:true})).stdout.trim();
   writeFileSync(path.join(claudehome,'.claude.json'),JSON.stringify({hasCompletedOnboarding:true,customApiKeyResponses:{approved:[env.ANTHROPIC_API_KEY.slice(-20)],rejected:[]},projects:Object.fromEntries([root,nativeCwd,shortCwd].map(p=>[p.replaceAll('\\','/'),{hasTrustDialogAccepted:true}]))}),'utf8');
   writeFileSync(path.join(claudehome,'settings.json'),JSON.stringify({crossSessionInbound:'accept',autoUpdatesChannel:'stable',env:{ANTHROPIC_API_KEY:env.ANTHROPIC_API_KEY,ANTHROPIC_BASE_URL:base,CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'}}),'utf8');
-  const marketplace=await preparePlugins(home);await runCli('codex',['plugin','marketplace','add',marketplace,'--json']);await runCli('codex',['plugin','add','nxbridge@nxbridge-local','--json']);(await ensureBroker(home)).close();
-  const launch=async(host:'codex'|'claude')=>{const cli=resolveCli(host),args=host==='codex'?['--no-daemon','--no-alt-screen','--dangerously-bypass-hook-trust']:['--plugin-dir',path.join(marketplace,'plugins/claude'),'--model','claude-sonnet-4-6'];const terminal=await NativeTerminal.start(root,home,cli.command,[...cli.prefix,...args],root,{...process.env,TERM:'xterm-256color',COLORTERM:'truecolor'});terminals.push(terminal);return terminal;};
+  const marketplace=await preparePlugins(home);await runCli('codex',['plugin','marketplace','add',marketplace,'--json']);await runCli('codex',['plugin','add','agybridge@agybridge-local','--json']);(await ensureBroker(home)).close();
+  const launch=async(host:'codex'|'agy')=>{const cli=resolveCli(host),args=host==='codex'?['--no-daemon','--no-alt-screen','--dangerously-bypass-hook-trust']:['--plugin-dir',path.join(marketplace,'plugins/claude'),'--model','claude-sonnet-4-6'];const terminal=await NativeTerminal.start(root,home,cli.command,[...cli.prefix,...args],root,{...process.env,TERM:'xterm-256color',COLORTERM:'truecolor'});terminals.push(terminal);return terminal;};
   const status=()=>brokerCall<any>('status',{}, {home}),codex:NativeTerminal[]=[];
   const addCandidate=async()=>{const terminal=await launch('codex');codex.push(terminal);await terminal.prompt('初始化配对候选 '+codex.length);await terminal.wait(()=>{const output=stripVTControlCharacters(terminal.output),end=output.lastIndexOf('PAIR_CODEX_DONE');return end!==-1&&output.slice(end+'PAIR_CODEX_DONE'.length).includes('Worked for');},'Codex 候选未完成原生初始化',25000);};
   await addCandidate();
   let targets=(await status()).peers.filter((p:any)=>p.host==='codex'&&p.context);assert.equal(targets.length,1);
-  const claude=await launch('claude');await claude.prompt('发送第一条配对验收消息');await claude.wait(()=>{const screen=stripVTControlCharacters(claude.output).replace(/\s+/gu,'');return screen.includes('这个项目里已经开着一个还没配对的Codex窗口')&&screen.includes('Entertoselect');},'唯一候选未完整显示原生选择表单',30000);
+  const claude=await launch('agy');await claude.prompt('发送第一条配对验收消息');await claude.wait(()=>{const screen=stripVTControlCharacters(claude.output).replace(/\s+/gu,'');return screen.includes('这个项目里已经开着一个还没配对的Codex窗口')&&screen.includes('Entertoselect');},'唯一候选未完整显示原生选择表单',30000);
   assert.equal((await status()).pairs.length,0);assert.equal((await status()).messages.length,0);
   await claude.prompt('');await claude.wait(()=>claude.output.includes('PAIR_CLAUDE_DONE_0'),'原生用户选择未完成发信',25000);
   let s=await status();assert.equal(s.pairs.length,1);const first=s.pairs[0],message=s.messages.find((m:any)=>m.body==='PAIR_NATIVE_DRAFT_0');assert.equal(message.to,first.codex);assert.equal(s.messages.length,1);

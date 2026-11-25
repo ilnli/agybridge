@@ -17,6 +17,6 @@ export async function administrativeTarget(args:string[]):Promise<TargetSelector
     result[key]=value;
   }
   if(Object.keys(result).length)return result;
-  const native=(await processAncestors(process.pid,32)).find(value=>/^(?:codex|claude)(?:\.exe)?$/i.test(value.name));
-  return native?{native:{host:/^codex/i.test(native.name)?'codex':'claude',pid:native.pid,procStart:native.startedAt}}:{};
+  const native=(await processAncestors(process.pid,32)).find(value=>/^(?:codex|agy)(?:\.exe)?$/i.test(value.name));
+  return native?{native:{host:/^codex/i.test(native.name)?'codex':'agy',pid:native.pid,procStart:native.startedAt}}:{};
 }

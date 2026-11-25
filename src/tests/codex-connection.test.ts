@@ -50,7 +50,7 @@ for(const stage of ['订阅前','提交后'] as const)test(`系统通知${stage}
   const home=temporary(t),adapter=new CodexAdapter(DEFAULT_CONFIG,home),server=new WebSocketServer({host:'127.0.0.1',port:0}),store=new Store(':memory:');
   t.after(async()=>{adapter.close();for(const socket of server.clients)socket.terminate();await new Promise<void>(resolve=>server.close(()=>resolve()));store.close();});
   await once(server,'listening');
-  const address=`ws://127.0.0.1:${(server.address() as {port:number}).port}`,c=store.register(registration('claude','sender')),x=store.register(registration('codex','target'));store.pair(c.id,x.id);const endpoint={...store.endpoint(x.id)!,address};
+  const address=`ws://127.0.0.1:${(server.address() as {port:number}).port}`,c=store.register(registration('agy','sender')),x=store.register(registration('codex','target'));store.pair(c.id,x.id);const endpoint={...store.endpoint(x.id)!,address};
   endpoint.configHome=home;mkdirSync(path.join(home,'sessions'));
   const file=path.join(home,'sessions','target.jsonl'),settings={permission_profile:{type:'disabled'},approval_policy:'on-request',approvals_reviewer:'user'},line=(type:string,payload:unknown)=>JSON.stringify({type,payload})+'\n';
   writeFileSync(file,line('session_meta',{id:'target'})+line('turn_context',settings),'utf8');
@@ -139,9 +139,9 @@ test('Windows 协调器恢复失效的 Unix 端点时保持可用和原配对', 
   const home=temporary(t),script=path.join(home,'exited-proxy.mjs');
   writeFileSync(script,"process.exitCode=17;",'utf8');
   writeFileSync(path.join(home,'config.json'),JSON.stringify({...DEFAULT_CONFIG,implicit:'never',codexBinary:script,codexHome:home}),'utf8');
-  const store=new Store(path.join(home,'nxbridge.db'));
+  const store=new Store(path.join(home,'agybridge.db'));
   const codex=store.register({host:'codex',sessionId:'stale-codex',cwd:home,kind:'root',endpoint:{mode:'app-server',epoch:'stale',address:'unix://absent.sock',pid:null,procStart:null}});
-  const claude=store.register({host:'claude',sessionId:'stale-claude',cwd:home,kind:'root',endpoint:{mode:'claude-inbox',epoch:'fixture',address:'fixture',pid:null,procStart:null}});
+  const claude=store.register({host:'agy',sessionId:'stale-claude',cwd:home,kind:'root',endpoint:{mode:'agy-acp',epoch:'fixture',address:'fixture',pid:null,procStart:null}});
   const pair=store.pair(claude.id,codex.id);store.close();
   const first=await brokerCall('ping',{}, {home});await delay(1500);
   const next=await brokerCall('ping',{}, {home,start:false});assert.equal(next.pid,first.pid);

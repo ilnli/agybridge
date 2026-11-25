@@ -42,16 +42,16 @@ test('卸载保留用户改过的包装，仍清理未修改的其他 profile',t
 
 test('仅安装包装时不依赖宿主程序仍存在，也可通过完整卸载命令回收',async t=>{
   const home=temporary(t),file=path.join(home,'profile.ps1');installWrapper({home,file,shell:'powershell'});
-  writeFileSync(path.join(home,'config.json'),JSON.stringify({codexCommand:['nxbridge-uninstalled-codex-missing'],claudeCommand:['nxbridge-uninstalled-claude-missing']}),'utf8');
+  writeFileSync(path.join(home,'config.json'),JSON.stringify({codexCommand:['nxbridge-uninstalled-codex-missing'],agyCommand:['nxbridge-uninstalled-claude-missing']}),'utf8');
   const result=await uninstall(home) as {removed:boolean;wrappers:{removed:string[]}};
   assert.equal(result.removed,true);assert.deepEqual(result.wrappers.removed,[file]);assert.equal(existsSync(file),false);
 });
 
 test('兼容旧别名标记，拒绝在残缺或重复标记下改写 profile',t=>{
   const home=temporary(t),file=path.join(home,'profile.sh');
-  const legacy='# 用户内容\n# nxbridge begin\ncodex() { old "$@"; }\n# nxbridge end\n';writeFileSync(file,legacy);
+  const legacy='# 用户内容\n# agybridge begin\ncodex() { old "$@"; }\n# agybridge end\n';writeFileSync(file,legacy);
   installWrapper({home,file,shell:'bash'});assert.equal(removeWrapper({home,file}).removed,true);assert.equal(readFileSync(file,'utf8'),'# 用户内容\n');
-  for(const invalid of ['# nxbridge begin\n用户内容\n','# nxbridge end\n','# nxbridge begin\n# nxbridge begin\n# nxbridge end\n']){
+  for(const invalid of ['# agybridge begin\n用户内容\n','# agybridge end\n','# agybridge begin\n# agybridge begin\n# agybridge end\n']){
     writeFileSync(file,invalid);assert.throws(()=>installWrapper({home,file,shell:'bash'}),/标记/);assert.equal(readFileSync(file,'utf8'),invalid);
   }
   writeFileSync(file,Buffer.from([0xe9,0xff]));assert.throws(()=>installWrapper({home,file,shell:'powershell'}),/编码/);assert.deepEqual(readFileSync(file),Buffer.from([0xe9,0xff]));
@@ -65,7 +65,7 @@ test('自动迁移只更新与记录一致的包装区块，稳定入口不再�
   const current=readFileSync(clean,'utf8');writeFileSync(clean,current.replace(record.block,old),'utf8');record.block=old;writeFileSync(stateFile,JSON.stringify(state),'utf8');
   const user=readFileSync(modified,'utf8').replace('function global:codex {','function global:codex { # 用户修改');writeFileSync(modified,user,'utf8');
   const result=updateInstalledWrappers(home);assert.deepEqual(result.updated,[clean]);assert.equal(result.notes.length,1);
-  assert.ok(readFileSync(clean,'utf8').includes(path.join(home,'bin','nxbridge.cjs')));assert.equal(readFileSync(modified,'utf8'),user);
+  assert.ok(readFileSync(clean,'utf8').includes(path.join(home,'bin','agybridge.cjs')));assert.equal(readFileSync(modified,'utf8'),user);
 });
 
 const psQuote=(value:string)=>"'"+value.replaceAll("'","''")+"'";

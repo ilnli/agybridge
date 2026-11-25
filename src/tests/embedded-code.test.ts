@@ -99,7 +99,7 @@ test('原生源码共享模块保留助手内容与开发版修订号',async()=>
   const identity=rows.find(row=>row.original.includes('public static class NxHookIdentity')),holder=rows.find(row=>row.original.includes('public static class NxJobHolder'));assert.ok(identity&&holder);
   const published=await import(pathToFileURL(path.join(PACKAGE_ROOT,'publish/runtime-native-source.mjs')).href);
   assert.equal(published.windowsHookIdentitySource,identity.compact+holder.compact);
-  for(const entry of ['hook-control','mod-entry','mcp-entry']){
+  for(const entry of ['hook-control','mcp-entry']){
     const source=readFileSync(path.join(PACKAGE_ROOT,'publish',entry+'.mjs'),'utf8');
     assert.doesNotMatch(source,/from\s*["']\.\/runtime-native-source\.mjs["']/);
     assert.match(source,/import\(["']\.\/runtime-native-source\.mjs["']\)/);

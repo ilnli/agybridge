@@ -27,7 +27,7 @@ test('原生后台释放、remote 恢复发现、显式再托管保持同一会�
   const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),codexhome=path.join(temp.directory,'codex');
   mkdirSync(codexhome);await ensureHome(home);
   const config={...DEFAULT_CONFIG,implicit:'never' as const,codexHome:codexhome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};
-  const store=new Store(':memory:'),codex=new CodexAdapter(config,home),broker=new Broker(store,config,{codex,claude:new FakeAdapter()} as unknown as Adapters,home);
+  const store=new Store(':memory:'),codex=new CodexAdapter(config,home),broker=new Broker(store,config,{codex,agy:new FakeAdapter()} as unknown as Adapters,home);
   const transfers=(broker as unknown as {transfers:SessionTransfers}).transfers;
   let requests=0;const model=http.createServer(async(req,res)=>{
     try{
@@ -45,7 +45,7 @@ test('原生后台释放、remote 恢复发现、显式再托管保持同一会�
   const originalConfig=stringify({model:'gpt-5.1-codex',model_reasoning_effort:'low',model_provider:'transfer_test',approval_policy:'on-request',sandbox_mode:'read-only',check_for_update_on_startup:false,web_search:'disabled',analytics:{enabled:false},features:{apps:false,remote_plugin:false,code_mode:false},model_providers:{transfer_test:{name:'隔离托管检查',base_url:'http://127.0.0.1:'+(model.address() as {port:number}).port+'/v1',wire_api:'responses',requires_openai_auth:false}}});
   writeFileSync(path.join(codexhome,'config.toml'),originalConfig,'utf8');
   const wait=async(predicate:()=>boolean|Promise<boolean>)=>{const end=Date.now()+12000;while(!await predicate()){assert.ok(Date.now()<end,'隔离托管检查等待超时');await delay(50);}};
-  const x=store.placeholder('codex',temp.directory),c=store.register(registration('claude','transfer-claude',{cwd:temp.directory})),pair=store.pair(c.id,x.id);
+  const x=store.placeholder('codex',temp.directory),c=store.register(registration('agy','transfer-claude',{cwd:temp.directory})),pair=store.pair(c.id,x.id);
   store.adopt(x.id,await codex.create(x));const peer=store.peer(x.id),id=peer.sessionId!,endpoint=store.endpoint(x.id)!,rpc=await codex.attach(peer,endpoint),completed=new Set<string>();
   rpc.on('notification',m=>{if(m.method==='turn/completed')completed.add(m.params.turn.id);});
   const first=await rpc.request('turn/start',{threadId:id,input:[{type:'text',text:'只返回隔离的原会话答案'}]});

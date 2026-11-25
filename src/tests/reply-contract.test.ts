@@ -10,9 +10,9 @@ import {deliveryHealthKey,type RuntimeNotice} from '../broker/health/contracts.j
 
 test('回复协议分界持久保留，排除启用前已读，同毫秒晚投递仍计入，成员相互独立',async t=>{
   t.mock.timers.enable({apis:['Date'],now:1000000});
-  const temp=temporaryDirectory(),file=path.join(temp.directory,'nxbridge.db');let store=new Store(file);
+  const temp=temporaryDirectory(),file=path.join(temp.directory,'agybridge.db');let store=new Store(file);
   t.after(async()=>{store.close();await temp.cleanup();});
-  const c=store.register(registration('claude','c',{replyContract:undefined})),x=store.register(registration('codex','x',{replyContract:undefined})),pair=store.pair(c.id,x.id);
+  const c=store.register(registration('agy','c',{replyContract:undefined})),x=store.register(registration('codex','x',{replyContract:undefined})),pair=store.pair(c.id,x.id);
   const old=store.accept(pair,c,'历史已读','old'),queued=store.accept(pair,c,'先排队，启用后投递','queued');store.transition(old.id,'contextObserved');
   assert.deepEqual(store.seenUnanswered(pair.id,x.id),[]);
   store.adoptReplyContract(x.id,'mcp');const contract=store.setting('replyContract:'+x.id);
@@ -28,9 +28,9 @@ test('回复协议分界持久保留，排除启用前已读，同毫秒晚投�
 
 test('迟到回执、重复观察、维护和重开不能使启用前已读消息重新进入未回复检测',async t=>{
   t.mock.timers.enable({apis:['Date'],now:1000000});
-  const temp=temporaryDirectory(),file=path.join(temp.directory,'nxbridge.db');let store=new Store(file);
+  const temp=temporaryDirectory(),file=path.join(temp.directory,'agybridge.db');let store=new Store(file);
   t.after(async()=>{store.close();await temp.cleanup();});
-  const c=store.register(registration('claude','c',{replyContract:undefined})),x=store.register(registration('codex','x',{replyContract:undefined})),pair=store.pair(c.id,x.id);
+  const c=store.register(registration('agy','c',{replyContract:undefined})),x=store.register(registration('codex','x',{replyContract:undefined})),pair=store.pair(c.id,x.id);
   const old=store.accept(pair,c,'启用前已读','old'),queued=store.accept(pair,c,'启用前排队，启用后才观察','queued');store.transition(old.id,'contextObserved');
   t.mock.timers.tick(1000);
   const boundary=store.accept(pair,c,'分界同毫秒已读','boundary');store.transition(boundary.id,'contextObserved');
@@ -61,15 +61,12 @@ test('未加载回复协议的旧成员明确告警，已验证的新 MCP 或 Mo
   assert.ok(f.broker.pairAnomalies.issues(x.id).some(issue=>issue.kind==='contract_inactive'));
                                
   assert.equal(f.store.events(0,1000).filter(e=>e.type==='health.pair.alert'&&(e.data as any).kind==='contract_inactive').length,0);assert.equal(f.broker.deliveryHealth.hasPending(pair.id,f.c.id),false);
-  const status:any=f.broker.status({host:'claude',sessionId:'c',callId:'status'});assert.ok(status.integrationIssues.some((issue:any)=>issue.code==='contract_inactive'));
+  const status:any=f.broker.status({host:'agy',sessionId:'c',callId:'status'});assert.ok(status.integrationIssues.some((issue:any)=>issue.code==='contract_inactive'));
   const current=codexIdentity({threadId:'old'},'/project',{pid:process.pid,procStart:'test',appServer:true});assert.equal(current.registration.replyContract,1);
   const registered:any=await f.broker.dispatch('mcp.register',current.registration);assert.equal(registered.id,x.id);assert.ok(f.store.setting('replyContract:'+x.id));
   assert.equal(f.store.endpoint(x.id)!.address,'unix://test-server','能力登记不能改写已验证的原生路由');
   f.broker.pairAnomalies.observe(pair,f.store.peer(x.id));assert.equal(f.broker.pairAnomalies.issues(x.id).some(issue=>issue.kind==='contract_inactive'),false);
   assert.equal(f.broker.deliveryHealth.hasPending(pair.id,f.c.id),false);
-  const c=f.store.register(registration('claude','old-mod',{replyContract:undefined}));
-  for(const modVersion of [undefined,'0.1.0','unknown']){f.broker.pairAnomalies.integration(c,{mod:true,modVersion});assert.equal(f.store.setting('replyContract:'+c.id),undefined);}
-  f.broker.pairAnomalies.integration(c,{mod:true,modVersion:'0.1.1'});assert.ok(f.store.setting('replyContract:'+c.id));
 });
 
 test('升级后的空闲检测不重复历史积压，启用后的真实未回复仍告警并可由关联回复撤销',async t=>{

@@ -3,6 +3,8 @@ dist/
 publish/
 coverage/
 *.tgz
+.agybridge-test/
+agybridge-test-*/
 .nxbridge-test/
 nxbridge-test-*/
 artifacts/

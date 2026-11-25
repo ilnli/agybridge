@@ -7,34 +7,34 @@ import { codexIdentity } from '../integration/mcp/server.js';
 import { threadRegistration } from '../hosts/codex/adapter.js';
 
 test('双向独立发信、宿主调用幂等与关联回复',async t=>{
-  const {store,broker,c,x,claude}=fixture(t);
+  const {store,broker,c,x,agy}=fixture(t);
   store.pair(c.id,x.id);
-  const a=broker.send({actor:{host:'claude',sessionId:'c',callId:'c1'},message:'接口更新'}) as any;
+  const a=broker.send({actor:{host:'agy',sessionId:'c',callId:'c1'},message:'接口更新'}) as any;
   assert.deepEqual(Object.keys(a),['message_id']);
-  const again=broker.send({actor:{host:'claude',sessionId:'c',callId:'c1'},message:'接口更新'}) as any;
+  const again=broker.send({actor:{host:'agy',sessionId:'c',callId:'c1'},message:'接口更新'}) as any;
   assert.equal(a.message_id,again.message_id);
   const b=broker.send({actor:{host:'codex',sessionId:'x',callId:'x1'},message:'测试已更新',in_reply_to:a.message_id}) as any;
   assert.equal(store.message(a.message_id).state,'responded');
   await broker.pump();
-  assert.equal(claude.delivered[0]?.id,b.message_id);
+  assert.equal(agy.delivered[0]?.id,b.message_id);
   assert.equal(store.message(b.message_id).state,'runtimeQueued');
-  assert.throws(()=>broker.send({actor:{host:'claude',sessionId:'c',callId:'c1'},message:'偷偷换正文'}),/同一次工具调用/);
-  assert.equal(store.currentPair()?.claude,c.id);assert.equal(store.currentPair()?.codex,x.id);
+  assert.throws(()=>broker.send({actor:{host:'agy',sessionId:'c',callId:'c1'},message:'偷偷换正文'}),/同一次工具调用/);
+  assert.equal(store.currentPair()?.agy,c.id);assert.equal(store.currentPair()?.codex,x.id);
 });
 
 test('暂停时仍持久化；恢复后双忙会话均能独立投递',async t=>{
-  const {store,broker,c,x,codex,claude}=fixture(t);store.pair(c.id,x.id);store.setPaused(true);
+  const {store,broker,c,x,codex,agy}=fixture(t);store.pair(c.id,x.id);store.setPaused(true);
   store.updatePeer(c.id,{state:'busy'});store.updatePeer(x.id,{state:'busy'});
-  broker.send({actor:{host:'claude',sessionId:'c',callId:'c1'},message:'A'});
+  broker.send({actor:{host:'agy',sessionId:'c',callId:'c1'},message:'A'});
   broker.send({actor:{host:'codex',sessionId:'x',callId:'x1'},message:'B'});
-  await broker.pump();assert.equal(codex.delivered.length+claude.delivered.length,0);
-  store.setPaused(false);await broker.pump();assert.equal(codex.delivered.length,0);assert.equal(claude.delivered.length,1);
+  await broker.pump();assert.equal(codex.delivered.length+agy.delivered.length,0);
+  store.setPaused(false);await broker.pump();assert.equal(codex.delivered.length,0);assert.equal(agy.delivered.length,1);
   assert.equal((broker.receive({host:'codex',sessionId:'x',callId:'busy-pickup'}) as any).messages[0].message,'A');
 });
 
 test('多候选不猜测；新窗口不抢当前配对',t=>{
   const {store,broker,c,x}=fixture(t);const x2=store.register(registration('codex','x2'));
-  assert.throws(()=>broker.send({actor:{host:'claude',sessionId:'c',callId:'c1'},message:'问题'}),{code:'selection_required'});
+  assert.throws(()=>broker.send({actor:{host:'agy',sessionId:'c',callId:'c1'},message:'问题'}),{code:'selection_required'});
   assert.equal(store.currentPair(),undefined);
   store.pair(c.id,x.id);
   assert.throws(()=>broker.send({actor:{host:'codex',sessionId:'x2',callId:'x2-1'},message:'抢配对'}),{code:'partner_missing'});
@@ -74,9 +74,9 @@ test('MCP 登记不能覆盖 App Server 核验的身份和端点',async t=>{
 test('唤醒回执丢失不认领正文，真实取件仍可消费且不重放',async t=>{
   const {store,broker,c,x,codex}=fixture(t);store.pair(c.id,x.id);codex.fail=new DeliveryError('lost','远端可能已接受',true);
   const peer=store.find('codex','x')!;store.saveEndpoint({...store.endpoint(peer.id)!,address:'ws://remote-test'});
-  const response=broker.send({actor:{host:'claude',sessionId:'c',callId:'call'},message:'不能重发'}) as any;
+  const response=broker.send({actor:{host:'agy',sessionId:'c',callId:'call'},message:'不能重发'}) as any;
   await broker.pump();assert.equal(store.message(response.message_id).state,'accepted');assert.equal(store.pending().length,1);
-  assert.deepEqual(broker.send({actor:{host:'claude',sessionId:'c',callId:'call'},message:'不能重发'}),{message_id:response.message_id});
+  assert.deepEqual(broker.send({actor:{host:'agy',sessionId:'c',callId:'call'},message:'不能重发'}),{message_id:response.message_id});
   const received=broker.receive({host:'codex',sessionId:'x',callId:'pickup'}) as any;assert.equal(received.messages[0].message_id,response.message_id);assert.equal(store.message(response.message_id).state,'unknown');
 });
 
@@ -89,7 +89,7 @@ test('崩溃恢复仅将提交中的消息标为不确定',t=>{
 test('embedded 取件独占消费，取件重试复用原结果',t=>{
   const {store,broker,c,x}=fixture(t);store.deactivate(x.id);
   store.register(registration('codex','x',{endpoint:{mode:'embedded',address:'',epoch:'embedded-x',pid:process.pid,procStart:'test'}}));store.pair(c.id,x.id);
-  const send=broker.send({actor:{host:'claude',sessionId:'c',callId:'s'},message:'只在工具结果出现'}) as any;
+  const send=broker.send({actor:{host:'agy',sessionId:'c',callId:'s'},message:'只在工具结果出现'}) as any;
   const actor={host:'codex' as const,sessionId:'x',callId:'receive-1'};
   const first=broker.receive(actor) as any;assert.equal(first.messages[0].message_id,send.message_id);
   assert.deepEqual(broker.receive(actor),first);
@@ -98,15 +98,15 @@ test('embedded 取件独占消费，取件重试复用原结果',t=>{
 });
 
 test('同一 ID 的多个活端点拒绝模糊路由',t=>{
-  const {store,c}=fixture(t);store.register(registration('claude','c',{endpoint:{mode:'claude-inbox',address:'another-inbox',epoch:'second-instance',pid:process.ppid,procStart:'second'}}));
+  const {store,c}=fixture(t);store.register(registration('agy','c',{endpoint:{mode:'agy-acp',address:'another-inbox',epoch:'second-instance',pid:process.ppid,procStart:'second'}}));
   assert.throws(()=>store.endpoint(c.id),/多个存活端点/);
-  store.deactivate(c.id,'second-instance');assert.equal(store.endpoint(c.id)?.address,'test-inbox');
+  store.deactivate(c.id,'second-instance');assert.equal(store.endpoint(c.id)?.address,'acp:test:c');
 });
 
 test('用户中断阻止唤醒和取件，不以收到消息解除暂停',async t=>{
   const {store,broker,c,x,codex}=fixture(t);store.pair(c.id,x.id);
   await broker.dispatch('hook',{session_id:'x',hook_event_name:'Interrupt'});
-  broker.send({actor:{host:'claude',sessionId:'c',callId:'s'},message:'暂停期间保留'});
+  broker.send({actor:{host:'agy',sessionId:'c',callId:'s'},message:'暂停期间保留'});
   await broker.pump();assert.equal(codex.delivered.length,0);assert.equal(store.pending(x.id).length,1);
   assert.equal((broker.receive({host:'codex',sessionId:'x',callId:'r'}) as any).status,'paused');
 });

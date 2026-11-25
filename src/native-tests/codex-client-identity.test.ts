@@ -74,14 +74,14 @@ test('官方 TUI 与已记录原生启动环境的专用后台 UA 逐字一致�
   const readOnly=await connectAppServer(endpoint,profileConfig,undefined,home,{readOnly:true});
   try{await readOnly.request('thread/loaded/list');}finally{await readOnly.close();}
   const afterReadOnly=await turn('IDENTITY_AFTER_READ_ONLY');await rpc!.close();rpc=undefined;
-  const claudeFirstHome=path.join(root,'claude-first'),claudeHome=path.join(root,'claude');mkdirSync(claudeFirstHome);mkdirSync(claudeHome);
-  const claudeLaunch=selectHostLaunch('claude',{...DEFAULT_CONFIG,claudeHome},{home:claudeFirstHome,cwd:root});
+  const claudeFirstHome=path.join(root,'claude-first'),agyHome=path.join(root,'agy');mkdirSync(claudeFirstHome);mkdirSync(agyHome);
+  const claudeLaunch=selectHostLaunch('agy',{...DEFAULT_CONFIG,agyHome},{home:claudeFirstHome,cwd:root});
   claudeLaunch.env.DISABLE_AUTOUPDATER='1';
   for(const key of codexTerminalVariables){delete claudeLaunch.env[key];if(env[key]!==undefined)claudeLaunch.env[key]=env[key];}
   const claude=spawnSelectedHost(claudeLaunch,['--print','--input-format','stream-json','--output-format','stream-json','--verbose'],{stdio:['pipe','ignore','pipe']});
-  claude.stderr!.on('data',chunk=>output=(output+chunk.toString()).slice(-3500));await rememberOwnedHost(home,claude,'claude','host-control',launchId,claudeHome);
-  const claudeNative=await nativeDescendant(claude.pid!,'claude',0),claudePeer=store.register(registration('claude','identity-claude-first',{cwd:root}));
-  await captureUserLaunch(claudeFirstHome,{host:'claude',sessionId:claudePeer.sessionId!,nativePid:claudeNative.pid,nativeGeneration:claudeNative.startedAt,sourcePid:claudeNative.pid,sourceGeneration:claudeNative.startedAt,env:Object.fromEntries(Object.entries(claudeLaunch.env).filter((v):v is [string,string]=>v[1]!==undefined))},claudePeer,claudeNative.pid);
+  claude.stderr!.on('data',chunk=>output=(output+chunk.toString()).slice(-3500));await rememberOwnedHost(home,claude,'agy','host-control',launchId,agyHome);
+  const claudeNative=await nativeDescendant(claude.pid!,'agy',0),claudePeer=store.register(registration('agy','identity-claude-first',{cwd:root}));
+  await captureUserLaunch(claudeFirstHome,{host:'agy',sessionId:claudePeer.sessionId!,nativePid:claudeNative.pid,nativeGeneration:claudeNative.startedAt,sourcePid:claudeNative.pid,sourceGeneration:claudeNative.startedAt,env:Object.fromEntries(Object.entries(claudeLaunch.env).filter((v):v is [string,string]=>v[1]!==undefined))},claudePeer,claudeNative.pid);
   assert.equal(profileState(claudeFirstHome).profiles.some(value=>value.host==='codex'),false);
   const firstLaunch=selectHostLaunch('codex',config,{home:claudeFirstHome,cwd:root,requesterSession:claudePeer.sessionId!}),firstAddress='unix://'+path.join(run,'claude-first.sock');
   const firstChild=spawnSelectedHost(firstLaunch,['app-server','--listen',firstAddress],{stdio:'ignore'});await rememberOwnedHost(home,firstChild,'codex','codex-runtime',launchId,codexHome);

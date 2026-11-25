@@ -33,7 +33,7 @@ test('旧 nxbridge 身份的真实后台：忙碌状态如实恢复、已结束�
   const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexHome=path.join(root,'codex'),launchId=randomUUID();
   mkdirSync(codexHome);await ensureHome(home);
   const config={...DEFAULT_CONFIG,codexHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};
-  const codex=new CodexAdapter(config,home),store=new Store(':memory:'),broker=new Broker(store,config,{codex,claude:new FakeAdapter()} as unknown as Adapters,home);
+  const codex=new CodexAdapter(config,home),store=new Store(':memory:'),broker=new Broker(store,config,{codex,agy:new FakeAdapter()} as unknown as Adapters,home);
   const requests:{ua:string;body:any}[]=[],errors:string[]=[];let release!:()=>void,old:RpcClient|undefined;
   const held=new Promise<void>(resolve=>release=resolve);
   const model=http.createServer(async(req,res)=>{try{
@@ -85,7 +85,7 @@ test('旧 nxbridge 身份的真实后台：忙碌状态如实恢复、已结束�
   const cutoff=requests.length,placeholder=store.placeholder('codex',root),native=await nativeDescendant(child.pid!,'codex',0);
   saveManagedRuntime(home,{id:launchId,peerId:placeholder.id,owner:managedMarker(home),kind:'owned',state:'ready',createdAt:Date.now(),endpoint:address,pid:native.pid,procStart:native.startedAt,configHome:codexHome,executable:launch.executable.command,...(token?{authenticatedLoopback:true}:{})});
   const peer=store.adopt(placeholder.id,registration('codex',thread.id,{cwd:root,state:'busy',endpoint:{mode:'app-server',address,epoch:address,pid:native.pid,procStart:native.startedAt,configHome:codexHome}}));
-  const partner=store.register(registration('claude','migration-source',{cwd:root})),pair=store.pair(partner.id,peer.id),message=store.accept(pair,partner,'迁移后只投递一次','upgrade');
+  const partner=store.register(registration('agy','migration-source',{cwd:root})),pair=store.pair(partner.id,peer.id),message=store.accept(pair,partner,'迁移后只投递一次','upgrade');
   const stranded=store.accept(pair,partner,'旧任务已由其他请求处理，绝不重发','stranded');store.claim(stranded.id);store.transition(stranded.id,'runtimeQueued','升级前中断留下的排队状态');
                                 
   store.deactivate(peer.id);store.updatePeer(peer.id,{state:'offline'});

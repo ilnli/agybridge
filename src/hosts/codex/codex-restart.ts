@@ -24,7 +24,7 @@ interface Runtime {endpoint:string;pid:number;procStart?:string}
 export function restartArguments(args:string[]):RestartSelector{
   if(args.length===2&&args[0]==='codex'&&args[1]==='--partner')return{partner:true};
   const flags={'--session':'session_id','--member':'peer_id','--pair':'pair_id'} as const,key=flags[args[1] as keyof typeof flags];
-  if(args[0]!=='codex'||![1,3].includes(args.length)||(args.length===3&&(!key||!args[2]||args[2].startsWith('-'))))throw new BridgeError('invalid_arguments','用法：nxbridge restart codex [--partner | --session <会话ID> | --member <成员ID> | --pair <配对ID>]；--partner 仅供当前 Claude 窗口重启自己的托管搭档。');
+  if(args[0]!=='codex'||![1,3].includes(args.length)||(args.length===3&&(!key||!args[2]||args[2].startsWith('-'))))throw new BridgeError('invalid_arguments','用法：agybridge restart codex [--partner | --session <会话ID> | --member <成员ID> | --pair <配对ID>]；--partner 仅供当前 AGY 窗口重启自己的托管搭档。');
   return args.length===3?{[key!]:args[2]}:{};
 }
 
@@ -131,14 +131,14 @@ export async function stopCodexRuntime(options:{
   profile?:SessionProfile;inspect?:(address:string)=>Promise<RpcClient>;verifyDelivery?:(thread:any)=>Promise<void>;observeThread?:(thread:any)=>void;onStopped?:()=>void;
 }):Promise<{oldPid:number;notes:string[];profile:SessionProfile}>{
   const {peer,endpoint,home,connect,guard}=options,id=peer.sessionId!,record=runtimeFor(home,{endpoint:endpoint.address});
-  if(!record)throw new BridgeError('unowned_runtime','没有 nxbridge 托管运行时记录，未执行重启；用户 daemon 或远程宿主需要原生重载。');
+  if(!record)throw new BridgeError('unowned_runtime','没有 agybridge 托管运行时记录，未执行重启；用户 daemon 或远程宿主需要原生重载。');
   const filename=record.file,saved=record.value;
   if(saved.pid&&saved.procStart&&await ownedProcessState({pid:saved.pid,startedAt:saved.procStart})==='alive')await verifyDedicatedCodex(saved.endpoint,await processIdentity(saved.pid));
-  if(ownedProcesses(home).records.some(r=>r.releasedToUser&&(r.identity.pid===saved.pid||r.proof.launchId===saved.id||r.proof.launchId===saved.endpoint)))throw new BridgeError('shared_runtime','这个 App Server 还有你的窗口在用，nxbridge 不会重启它。请在对应的 Codex 窗口里退出后重新打开。');
+  if(ownedProcesses(home).records.some(r=>r.releasedToUser&&(r.identity.pid===saved.pid||r.proof.launchId===saved.id||r.proof.launchId===saved.endpoint)))throw new BridgeError('shared_runtime','这个 App Server 还有你的窗口在用，agybridge 不会重启它。请在对应的 Codex 窗口里退出后重新打开。');
   const verify=async()=>{
     const current=existsSync(filename)?readJson<Runtime>(filename):undefined;
     if(!current||current.pid!==saved.pid||current.procStart!==saved.procStart||current.endpoint!==saved.endpoint)throw new BridgeError('runtime_changed','运行时归属记录已经变化，未执行重启。');
-    if(saved.endpoint!==endpoint.address||!saved.pid||!saved.procStart||!liveProcess(saved.pid))throw new BridgeError('unowned_runtime','目标不是当前可核验的 nxbridge 托管进程，未执行重启。');
+    if(saved.endpoint!==endpoint.address||!saved.pid||!saved.procStart||!liveProcess(saved.pid))throw new BridgeError('unowned_runtime','目标不是当前可核验的 agybridge 托管进程，未执行重启。');
     const identity=await processIdentity(saved.pid);
     if(identity.startedAt!==saved.procStart||!/^codex(?:\.exe)?$/i.test(identity.name))throw new BridgeError('unowned_runtime','无法核验托管 App Server 的进程代次，未执行重启。');
   };

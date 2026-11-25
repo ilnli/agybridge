@@ -124,7 +124,7 @@ export class WindowRecovery {
   }
   assertUnbound(peer:Peer):void{
     if(this.managedConflicts(peer.id).length)throw new BridgeError('lineage_choice','原后台仍有同一会话，请先选择继续使用哪个窗口。');
-    if(this.related(peer).length)throw new BridgeError('lineage_choice','这个窗口之前的搭档状态无法确认，请用 nxbridge pair 选择要配对的窗口。');
+    if(this.related(peer).length)throw new BridgeError('lineage_choice','这个窗口之前的搭档状态无法确认，请用 agybridge pair 选择要配对的窗口。');
   }
   async retry(send:(input:SendIntent)=>unknown):Promise<void>{
     for(const peer of this.store.peers()){

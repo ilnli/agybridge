@@ -43,7 +43,7 @@ function irrelevantLargeLine(head:string,cache:Cache):boolean{
     if(rowType==='response_item'&&fields.type){
       if(!['function_call','function_call_output'].includes(fields.type))return true;
       if(fields.call_id?.startsWith('nxbridge-'))return false;
-      if(fields.type==='function_call'&&fields.name)return !['receive_messages','mcp__claude__receive_messages'].includes(fields.name);
+      if(fields.type==='function_call'&&fields.name)return !['receive_messages','mcp__agy__receive_messages'].includes(fields.name);
       if(fields.type==='function_call_output'&&fields.call_id){const call=cache.calls.get(fields.call_id);if(call)return !call.receive;}
     }
   }
@@ -61,7 +61,7 @@ function outputMessages(output:unknown,skipPlainText=false):any[]{
   if(Array.isArray(value.messages)||Array.isArray(value.notices))return[...(value.messages??[]),...(value.notices??[]).map((notice:any)=>({message_id:notice?.notice_id}))];
   return Array.isArray(value.content)?value.content.filter((item:any)=>item?.type==='text').flatMap((item:any)=>outputMessages(item.text,skipPlainText)):[];
 }
-const receiveCall=(item:any)=>item.type==='function_call'&&(item.name==='mcp__claude__receive_messages'||item.name==='receive_messages'&&item.namespace==='claude');
+const receiveCall=(item:any)=>item.type==='function_call'&&(item.name==='mcp__agy__receive_messages'||item.name==='receive_messages'&&item.namespace==='agy');
 function accept(cache:Cache,line:string,sessionId:string):void{
   if(!line.trim())return;
                                               
@@ -75,7 +75,7 @@ function accept(cache:Cache,line:string,sessionId:string):void{
   const item=row.payload;if(!item||typeof item!=='object'){cache.invalid=true;return;}
   if(item.type!=='function_call'&&item.type!=='function_call_output'||typeof item.call_id!=='string'||!item.call_id)return;
   if(item.type==='function_call'){const old=cache.calls.get(item.call_id);cache.calls.set(item.call_id,{count:(old?.count??0)+1,receive:receiveCall(item),turnId:cache.turnId});return;}
-  const old=cache.outputs.get(item.call_id),call=cache.calls.get(item.call_id),valid=(item.name===undefined||['receive_messages','mcp__claude__receive_messages'].includes(item.name))&&(item.namespace===undefined||item.namespace==='claude');
+  const old=cache.outputs.get(item.call_id),call=cache.calls.get(item.call_id),valid=(item.name===undefined||['receive_messages','mcp__agy__receive_messages'].includes(item.name))&&(item.namespace===undefined||item.namespace==='agy');
   cache.outputs.set(item.call_id,{count:(old?.count??0)+1,afterCall:cache.calls.has(item.call_id),itemId:typeof item.id==='string'?item.id:item.call_id,ids:valid?outputMessages(item.output,call?.count===1&&!call.receive&&!old).flatMap(message=>typeof message?.message_id==='string'&&message.message_id?[message.message_id]:[]):[]});
 }
                                                          

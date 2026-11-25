@@ -84,11 +84,11 @@ export class CommunicationTips {
             if(source.text.length<300)continue;
             budget-=source.text.length;if(budget<0)break;
             const matched=matchedChars(chars,Array.from(source.text),lookup);if(!matched)continue;
-            kind='reuse';tip=`nxbridge tip (auto match check, not judgment: ${matched} chars match ${source.kind} ${source.id}; if verbatim intended, keep going): reuse -> nxref:${source.kind}:${source.id} saves output tokens`;break;
+            kind='reuse';tip=`agybridge tip (auto match check, not judgment: ${matched} chars match ${source.kind} ${source.id}; if verbatim intended, keep going): reuse -> nxref:${source.kind}:${source.id} saves output tokens`;break;
           }
         }
         if(!tip&&channel==='partner'&&chars.length>2200&&eligible('report')){
-          kind='report';tip=`nxbridge tip (auto length check, not judgment: msg ${chars.length} chars; if you intended, keep going): thorough work != thorough report: lead w/ outcome + what reader must decide/do; detail worth keeping -> notes file + path`;
+          kind='report';tip=`agybridge tip (auto length check, not judgment: msg ${chars.length} chars; if you intended, keep going): thorough work != thorough report: lead w/ outcome + what reader must decide/do; detail worth keeping -> notes file + path`;
         }
       }
       if(kind){sample.tip=kind;state.firings[kind]++;state.lastFired[kind]=sequence;state.firedContext={...state.firedContext,[kind]:context};state.lastTip={kind,sequence};if(turnId){state.turns.push(turnId);state.turns=state.turns.slice(-64);}this.store.event('communication.tip',{peerId:peer.id,kind,sequence,chars:chars.length,channel});}

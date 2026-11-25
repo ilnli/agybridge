@@ -12,10 +12,9 @@ export function resolveNodeRuntime(pinned:string,env=persistentEnvironment()):st
     if(!existsSync(file))continue;
     try{if(supportedNode(execFileSync(file,['--version'],{encoding:'utf8',windowsHide:true,timeout:3000,env})))return file;}catch{}
   }
-  throw new BridgeError('node_missing','记录的 Node.js 已不存在，系统 PATH 中也没有 Node.js 24～26；请安装兼容版本，再用新 Node 运行私有目录 bin/nxbridge.cjs update 修复。');
+  throw new BridgeError('node_missing','记录的 Node.js 已不存在，系统 PATH 中也没有 Node.js 24～26；请安装兼容版本，再用新 Node 运行私有目录 bin/agybridge.cjs update 修复。');
 }
 
-                                              
 export function windowsNodeDiscovery():string{
   return [
     "$ErrorActionPreference='Stop'; $nxVars=@{}; $nxPaths=@();",
@@ -23,7 +22,7 @@ export function windowsNodeDiscovery():string{
     "foreach($nxName in @('USERPROFILE','SystemRoot','APPDATA','LOCALAPPDATA')){if(!$nxVars.ContainsKey($nxName)){$nxVars[$nxName]=[Environment]::GetEnvironmentVariable($nxName)}};",
     "function Expand-NxPath([string]$nxText){for($nxI=0;$nxI -lt 10;$nxI++){$nxNext=[regex]::Replace($nxText,'%([^%]+)%',{param($nxMatch) $nxName=$nxMatch.Groups[1].Value;if($nxVars.ContainsKey($nxName)){[string]$nxVars[$nxName]}else{$nxMatch.Value}});if($nxNext -eq $nxText){break};$nxText=$nxNext};return $nxText};",
     "$nxSearch='';foreach($nxPart in $nxPaths){$nxPart=Expand-NxPath ($nxPart -replace '(?i)%PATH%',$nxSearch);$nxSearch=(@($nxSearch,$nxPart)|Where-Object{$_}) -join ';'};",
-    "foreach($nxDir in $nxSearch.Split(';')){if(!$nxDir){continue};$nxFile=Join-Path $nxDir.Trim('\"') 'node.exe';if(Test-Path -LiteralPath $nxFile -PathType Leaf){try{$nxVersion=& $nxFile --version;if($LASTEXITCODE -eq 0 -and $nxVersion -match '^v(24|25|26)\\.'){[Console]::WriteLine($nxFile);exit 0}}catch{}}};throw '系统保存的 PATH 中没有 Node.js 24～26；请安装兼容版本，再运行私有目录 bin/nxbridge.cjs update。';",
+    "foreach($nxDir in $nxSearch.Split(';')){if(!$nxDir){continue};$nxFile=Join-Path $nxDir.Trim('\"') 'node.exe';if(Test-Path -LiteralPath $nxFile -PathType Leaf){try{$nxVersion=& $nxFile --version;if($LASTEXITCODE -eq 0 -and $nxVersion -match '^v(24|25|26)\\.'){[Console]::WriteLine($nxFile);exit 0}}catch{}}};throw '系统保存的 PATH 中没有 Node.js 24～26；请安装兼容版本，再运行私有目录 bin/agybridge.cjs update。';",
   ].join(' ');
 }
 export function encodedNodeDiscovery():string{return Buffer.from(windowsNodeDiscovery(),'utf16le').toString('base64');}

@@ -33,8 +33,8 @@ test('后续同方向上下文证据结束旧传输告警但保留历史未知�
 });
 
 test('上下文切换通知只读不领取，最终提交保留未知且不在每个 hook 重放',async t=>{
-  const f=fixture(t),endpoint={mode:'claude-inbox' as const,address:'inbox',epoch:'before',pid:123,procStart:'generation',configHome:path.resolve('/isolated','claude')},c=f.store.register(registration('claude','before',{endpoint}));f.store.pair(c.id,f.x.id);
-  f.store.register(registration('claude','after',{endpoint:{...endpoint,epoch:'after'},contextStart:true,contextReason:'reset'}));
+  const f=fixture(t),endpoint={mode:'agy-tui' as const,address:'inbox',epoch:'before',pid:123,procStart:'generation',configHome:path.resolve('/isolated','agy')},c=f.store.register(registration('agy','before',{endpoint}));f.store.pair(c.id,f.x.id);
+  f.store.register(registration('agy','after',{endpoint:{...endpoint,epoch:'after'},contextStart:true,contextReason:'reset'}));
   const actor={host:'codex' as const,sessionId:f.x.sessionId!,callId:'monitor'},context_key='receipt-context';f.store.setSetting('hookContext:'+context_key,actor.sessionId);
   for(let i=0;i<2;i++){const r=await f.broker.dispatch('health.monitor',{actor,context_key,admit:false}) as any;assert.equal(r.notices.filter((n:any)=>n.source==='context_rotation').length,1);}
   const first=await f.broker.dispatch('health.monitor',{actor,context_key}) as any;assert.equal(first.notices.filter((n:any)=>n.source==='context_rotation').length,1);

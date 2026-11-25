@@ -133,7 +133,7 @@ test('明确退出的旧后台线程先完成运行中的任务，再由轮询�
 });
 
 for(const changed of [false,true])test('退出意图跨协调器重启保留，且只适用于原运行时代次：'+changed,async t=>{
-  const home=temporary(t),store=new Store(':memory:'),codex=new FakeAdapter(),adapters={codex,claude:new FakeAdapter()} as unknown as Adapters;
+  const home=temporary(t),store=new Store(':memory:'),codex=new FakeAdapter(),adapters={codex,agy:new FakeAdapter()} as unknown as Adapters;
   let broker=new Broker(store,DEFAULT_CONFIG,adapters,home);
   t.after(async()=>{await broker.stop();store.close();});
   const peer=store.register(registration('codex','restart-close')),endpoint=store.endpoint(peer.id)!,runtime={id:randomUUID(),owner:managedMarker(home),kind:'owned' as const,state:'ready' as const,endpoint:endpoint.address,createdAt:Date.now(),pid:process.pid,procStart:'原代次'};
@@ -167,7 +167,7 @@ test('用户轮次的全局忙碌通知恢复观察，补回轮次健康和切�
   store.transition(message.id,'runtimeQueued','原生已接受');
   let subscriptions=0,finish!:()=>void;const waiting=new Promise<void>(resolve=>finish=resolve);
   codex.observeActive=async()=>{subscriptions++;await waiting;};
-  codex.injectionState=async()=>({thread:{id:x.sessionId!,cwd:x.cwd,status:{type:'active'},turns:[{id:'user-turn',status:'inProgress',items:[{id:'output',type:'functionCallOutput',namespace:'claude',name:'receive_messages',output:JSON.stringify({messages:[{message_id:message.id}]})},{id:'command',type:'commandExecution',status:'inProgress'}]}]},history:{status:'supported',receipts:[],calls:[]}} as any);
+  codex.injectionState=async()=>({thread:{id:x.sessionId!,cwd:x.cwd,status:{type:'active'},turns:[{id:'user-turn',status:'inProgress',items:[{id:'output',type:'functionCallOutput',namespace:'agy',name:'receive_messages',output:JSON.stringify({messages:[{message_id:message.id}]})},{id:'command',type:'commandExecution',status:'inProgress'}]}]},history:{status:'supported',receipts:[],calls:[]}} as any);
   codex.emit('state',x.sessionId,'busy',endpoint.address);codex.emit('state',x.sessionId,'needsHuman',endpoint.address);finish();
   await Promise.all((broker as any).codexObservationChecks.values());
   assert.equal(subscriptions,1);assert.equal(store.message(message.id).state,'contextObserved');assert.equal((broker as any).health.get(endpoint.address,x.sessionId).turnId,'user-turn');
@@ -183,7 +183,7 @@ for(const [state,completed] of [['busy',false],['needsHuman',false],['busy',true
   codex.observeActive=async()=>{observations++;};
   codex.injectionState=async()=>{
     if(++reads===1){entered();await pending;return{thread:{id:x.sessionId!,cwd:x.cwd,status:{type:'idle'},turns:[{id:'old-turn',status:'completed',items:[]}]},history:{status:'supported',receipts:[],calls:[]}} as any;}
-    return{thread:{id:x.sessionId!,cwd:x.cwd,status:{type:completed?'idle':'active'},turns:[{id:'new-turn',status:completed?'completed':'inProgress',items:[{id:'new-receipt',type:'functionCallOutput',namespace:'claude',name:'receive_messages',output:JSON.stringify({messages:[{message_id:message.id}]})}]}]},history:{status:'supported',receipts:[],calls:[]}} as any;
+    return{thread:{id:x.sessionId!,cwd:x.cwd,status:{type:completed?'idle':'active'},turns:[{id:'new-turn',status:completed?'completed':'inProgress',items:[{id:'new-receipt',type:'functionCallOutput',namespace:'agy',name:'receive_messages',output:JSON.stringify({messages:[{message_id:message.id}]})}]}]},history:{status:'supported',receipts:[],calls:[]}} as any;
   };
   codex.emit('state',x.sessionId,'busy',endpoint.address);await reading;
   codex.emit('state',x.sessionId,'ready',endpoint.address);codex.emit('state',x.sessionId,state,endpoint.address);
@@ -218,9 +218,9 @@ test('零宽限期退订后另一个窗口仍订阅同一线程才恢复投递',
 });
 
 for(const restart of [false,true])test('终端强退没有 finally 时仍阻止排队消息唤醒，且窗口记录跨重启：'+restart,async t=>{
-  const home=temporary(t),store=new Store(':memory:'),codex=new FakeAdapter(),adapters={codex,claude:new FakeAdapter()} as unknown as Adapters;
+  const home=temporary(t),store=new Store(':memory:'),codex=new FakeAdapter(),adapters={codex,agy:new FakeAdapter()} as unknown as Adapters;
   let broker=new Broker(store,DEFAULT_CONFIG,adapters,home);t.after(async()=>{await broker.stop();store.close();});
-  const peer=store.register(registration('codex','closed-console')),partner=store.register(registration('claude','console-partner')),pair=store.pair(partner.id,peer.id),endpoint=store.endpoint(peer.id)!;
+  const peer=store.register(registration('codex','closed-console')),partner=store.register(registration('agy','console-partner')),pair=store.pair(partner.id,peer.id),endpoint=store.endpoint(peer.id)!;
   store.saveEndpoint({...endpoint,procStart:runtimeIdentity.startedAt});saveManagedRuntime(home,{id:randomUUID(),owner:managedMarker(home),kind:'owned',state:'ready',endpoint:endpoint.address,createdAt:Date.now(),threadUnloadDelaySecs:0});
   const pending=store.accept(pair,partner,'原窗口回来后再处理','console-pending');let unloaded=false;
   codex.releaseIdle=async(_peer,_endpoint,guard,closing)=>{assert.equal(guard(),true);assert.equal(closing,true);return unloaded?'unloaded':'retained';};
@@ -238,6 +238,6 @@ test('刚解除配对的专属后台不返回直接接入端点，正常用户�
   let owned=true;(codex as any).loadedRuntime=async()=>({endpoint:endpoint.address,...(owned?{peerId:x.id}:{})});
   const input={session_id:x.sessionId,home:'/original-home',loaded_only:true};
   const ready=await broker.dispatch('hosting.resolve',input) as any;assert.equal(ready.member_id,x.id);
-  store.unpair(pair.id);const result=await broker.dispatch('hosting.resolve',input) as any;assert.equal(result.endpoint,undefined);assert.match(result.unavailable,/稍等.*nxbridge status/);
+  store.unpair(pair.id);const result=await broker.dispatch('hosting.resolve',input) as any;assert.equal(result.endpoint,undefined);assert.match(result.unavailable,/稍等.*agybridge status/);
   owned=false;assert.equal((await broker.dispatch('hosting.resolve',input) as any).endpoint,endpoint.address);
 });

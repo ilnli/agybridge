@@ -1,14 +1,10 @@
 import net from 'node:net';
 import WebSocket from 'ws';
-import path from 'node:path';
-import {createHash} from 'node:crypto';
 import {probeProcesses} from '../../process/process.js';
-import {readJson} from '../../shared/files.js';
 import {type Endpoint,type Peer} from '../../types.js';
 import {runtimeFor,assertManagedRuntimeEndpoint,type ManagedRuntime} from '../../hosts/managed-runtimes.js';
 import {remainingTime} from '../../shared/time-budget.js';
 import {type RuntimeAvailability} from './contracts.js';
-import {verifyClaudeInbox} from '../../hosts/claude/claude-inbox.js';
 export async function probeSocket(address:string,timeout=600):Promise<boolean>{
   return new Promise(resolve=>{
     const socket=net.createConnection(address),finish=(ok:boolean)=>{clearTimeout(timer);socket.destroy();resolve(ok);};
@@ -18,7 +14,6 @@ export async function probeSocket(address:string,timeout=600):Promise<boolean>{
 }
 export async function probeAppServer(address:string,token?:string,timeout=750):Promise<boolean|undefined>{
   if(address.startsWith('unix://')){
-                                                         
     if(process.platform==='win32')return undefined;
     return probeSocket(address.slice(7),timeout);
   }
@@ -43,39 +38,16 @@ export async function probePeerRuntime(peer:Peer,endpoint:Endpoint|undefined,hom
   const native=endpoint.native??(endpoint.pid?{pid:endpoint.pid,procStart:endpoint.procStart??''}:undefined);
   if(native)identities.push({label:'native host',...native});
   if(endpoint.mode==='embedded'&&!endpoint.daemon&&endpoint.bridge)identities.push({label:'MCP bridge',...endpoint.bridge});
-                                                   
   if(home&&peer.host==='codex'){
     try{ownedRuntime=runtimeFor(home,{endpoint:endpoint.address})?.value;if(ownedRuntime?.pid)identities.push({label:'owned App Server',pid:ownedRuntime.pid,procStart:ownedRuntime.procStart??''});}catch{unknown.push('owned runtime evidence unreadable');}
   }
-  if(home&&peer.owner==='nxbridge'&&peer.host==='claude'){
-    const id=createHash('sha256').update(peer.id).digest('hex').slice(0,16);
-    try{
-      const child=readJson<{peerId:string;sessionId:string;phase:string;worker?:{pid:number;startedAt:string};address:string}>(path.join(home,'run','claude-child-'+id+'.json'));
-      if(child.peerId===peer.id&&child.sessionId===peer.sessionId&&['active','starting','failed'].includes(child.phase)){
-        if(child.worker)identities.push({label:'owned Claude worker',pid:child.worker.pid,procStart:child.worker.startedAt});
-        if(child.phase==='failed')reasons.push('owned Claude worker failed');
-        if(child.address&&!await probeSocket(child.address,remainingTime(deadline,600)))reasons.push('owned Claude worker endpoint unreachable');
-      }
-    }catch{                             }
-  }
   const results=await probeProcesses(identities,remainingTime(deadline,1500));
   for(let i=0;i<results.length;i++)if(results[i]==='dead')reasons.push(identities[i]!.label+' exited or PID generation changed');else if(results[i]==='unknown')unknown.push(identities[i]!.label+' PID generation unverifiable');
-  let deliveryIssue:RuntimeAvailability['deliveryIssue'];
-  if(endpoint.mode==='claude-inbox'){
-    let valid=true;
-    if(process.platform!=='win32'&&native&&results[0]==='alive')try{verifyClaudeInbox(endpoint.address);}catch(error){
-      valid=false;const code=(error as {code?:string}).code;
-      if(code==='claude_inbox_missing')deliveryIssue=code;
-      reasons.push(code==='claude_inbox_missing'?'Claude native process alive; inbox socket pathname missing':code==='invalid_inbox'?'Claude inbox is not a trusted Unix socket':'Claude inbox pathname could not be verified');
-    }
-    if(valid&&!await probeSocket(endpoint.address,remainingTime(deadline,600)))reasons.push('Claude inbox endpoint unreachable');
-  }
   if(endpoint.mode==='app-server'&&results.every(result=>result==='alive')){
-                                                
     if(home&&peer.host==='codex')await assertManagedRuntimeEndpoint(home,endpoint.address,ownedRuntime?.pid&&ownedRuntime.procStart?{pid:ownedRuntime.pid,procStart:ownedRuntime.procStart}:undefined);
     const reachable=await(appServerProbe?appServerProbe():probeAppServer(endpoint.address,undefined,remainingTime(deadline,750)));
     if(reachable===false)reasons.push('App Server endpoint unreachable');else if(reachable===undefined)unknown.push('App Server endpoint reachability unverified');
   }
   if(!endpoint.active)reasons.push('delivery endpoint not connected/registered');
-  return{state:reasons.length?'blocked':unknown.length?'unknown':'reachable',...(native?{nativeState:results[0]}:{}),...(deliveryIssue?{deliveryIssue}:{}),reasons:[...reasons,...unknown],checked_at:now};
+  return{state:reasons.length?'blocked':unknown.length?'unknown':'reachable',...(native?{nativeState:results[0]}:{}),reasons:[...reasons,...unknown],checked_at:now};
 }

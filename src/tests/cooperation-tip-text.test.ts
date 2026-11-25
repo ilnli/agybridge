@@ -7,7 +7,7 @@ const words=(text:string)=>text.split(/\s+/).length;
 
 test('协作提醒只写关键原因和可做的事，允许独自完成，不断言忘了协作，不带数字明细',()=>{
   const first=cooperationTipText({...base,partnerIdleMinutes:18,silence:{ordinal:1}});
-  assert.equal(first,"nxbridge tip: partner idle 18m, no contact 20m; recheck split per nxbridge routing + any extra user rules: hand off partner-fit work or brief sync; solo ok if right");
+  assert.equal(first,"agybridge tip: partner idle 18m, no contact 20m; recheck split per agybridge routing + any extra user rules: hand off partner-fit work or brief sync; solo ok if right");
   assert.doesNotMatch(first,/forg[eo]t/i);assert.ok(words(first)<=30,first);
 });
 
@@ -17,7 +17,7 @@ test('重复提醒注明次数，第 3 次说明是本段最后一次',()=>{
 });
 
 test('未配对、长上下文、欠回复与对方空闲可以合成一条，编号最多列 3 条，上下文不写数字',()=>{
-  assert.match(cooperationTipText({...base,unpaired:true,silence:{ordinal:1}}),/^nxbridge tip: no partner yet, solo 20m; first partner msg pairs on demand; recheck split/);
+  assert.match(cooperationTipText({...base,unpaired:true,silence:{ordinal:1}}),/^agybridge tip: no partner yet, solo 20m; first partner msg pairs on demand; recheck split/);
   const context=cooperationTipText({...base,context:{tokens:612345,threshold:600000}});
   assert.match(context,/no contact 20m, long context; recheck pending partner tasks \+ CURRENT; recheck split/);assert.doesNotMatch(context,/\d+k/);
   const owed=cooperationTipText({...base,owedMessageIds:['a','b','c','d','e']});
@@ -26,5 +26,5 @@ test('未配对、长上下文、欠回复与对方空闲可以合成一条，�
   const idle=cooperationTipText({...base,partnerIdleMinutes:5,idleMessageIds:['m1']});
   assert.match(idle,/expected reply still pending: m1 -> check if it still blocks you/);
   const combined=cooperationTipText({...base,partnerIdleMinutes:12,silence:{ordinal:2},context:{tokens:400100,threshold:400000},idleMessageIds:['m1']});
-  assert.equal((combined.match(/nxbridge tip:/g)??[]).length,1);assert.ok(words(combined)<=55,combined);
+  assert.equal((combined.match(/agybridge tip:/g)??[]).length,1);assert.ok(words(combined)<=55,combined);
 });

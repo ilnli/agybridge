@@ -1,10 +1,10 @@
 import {embeddedSource} from "../../shared/embedded-source.js";
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { mkdtempSync, unlinkSync, rmdirSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import {BridgeError} from '../../shared/errors.js';
-import { persistentSocketDirectory } from './persistent-socket-directory.js';
 
                                      
 export const posixSupervisorSource=                                 embeddedSource("javascript", `
@@ -90,7 +90,7 @@ export async function watchPosixNative(child:ChildProcess,identity:{pid:number;s
 }
 
                                                               
-export function spawnPosixSupervisor(command:string,args:string[],options:SpawnOptions&({waitForNative?:false;home?:never}|{waitForNative:boolean;home:string})={}):ChildProcess{
+export function spawnPosixSupervisor(command:string,args:string[],options:SpawnOptions&{waitForNative?:boolean}={}):ChildProcess{
   const source=                                 embeddedSource("javascript", `
 import {spawn,execFile} from 'node:child_process';
 import {Socket,createServer} from 'node:net';
@@ -157,9 +157,8 @@ child.once('exit',async(code,signal)=>{
 });
 }
 `);
-  const {waitForNative,home,...settings}=options,mode=settings.stdio??'pipe',stdio=typeof mode==='string'?[mode,mode,mode]:mode;
-  const directory=waitForNative?mkdtempSync(path.join(persistentSocketDirectory(home,'ps-XXXXXX/native.sock'),'ps-')):undefined;
-  const posixControl=directory?path.join(directory,'native.sock'):undefined;
+  const {waitForNative,...settings}=options,mode=settings.stdio??'pipe',stdio=typeof mode==='string'?[mode,mode,mode]:mode;
+  const directory=waitForNative?mkdtempSync(path.join(tmpdir(),'nxbridge-supervisor-')):undefined,posixControl=directory?path.join(directory,'native.sock'):undefined;
   const child=spawn(process.execPath,['--input-type=module','-e',source,Buffer.from(JSON.stringify({command,args,waitForNative,posixControl,supervisorModule:'data:text/javascript;base64,'+Buffer.from(posixSupervisorSource).toString('base64')})).toString('base64')],{...settings,detached:true,stdio:[...stdio.slice(0,3),'pipe'],shell:false});
   if(posixControl){const value={posixControl,registered:false};metadata.set(child,value);child.once('close',()=>{if(value.registered)return;try{unlinkSync(posixControl);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')process.stderr.write(String(error)+'\n');}try{rmdirSync(directory!);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')process.stderr.write(String(error)+'\n');}});}
   let buffer='';const status=child.stdio[3];

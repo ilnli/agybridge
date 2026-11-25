@@ -14,7 +14,7 @@ import { temporary } from './support/temporary.js';
 
 function activation(t:Parameters<typeof temporary>[0]){
   const directory=temporary(t),home=path.join(directory,'中文 安装'),bin=path.join(directory,'bin');mkdirSync(home,{recursive:true});mkdirSync(bin);
-  const plan=planShim(home,{directories:[bin],pathValue:bin,entry:path.join(home,'runtime','新版','nxbridge.mjs')});
+  const plan=planShim(home,{directories:[bin],pathValue:bin,entry:path.join(home,'runtime','新版','agybridge.mjs')});
   const files=[...plan.launcher,...plan.files],old=files.map(file=>({...file,content:file.content+'\n'}));
   for(const file of old){mkdirSync(path.dirname(file.file),{recursive:true});writeFileSync(file.file,file.content,'utf8');}
   const state={version:1,marketplace:path.join(home,'marketplace'),managedFiles:old};
@@ -96,8 +96,8 @@ test('恢复记录解析失败或协议版本与归属不匹配时保留意图�
 });
 
 function cache(t:Parameters<typeof temporary>[0]){
-  const directory=temporary(t),home=path.join(directory,'bridge'),hostHome=path.join(directory,'官方清单目录'),source=path.join(home,'marketplace','plugins','codex'),target=path.join(hostHome,'plugins','cache','nxbridge-local','nxbridge',VERSION);
-  for(const root of [source,target]){mkdirSync(path.join(root,'.codex-plugin'),{recursive:true});atomicJson(path.join(root,'.codex-plugin','plugin.json'),{name:'nxbridge'});atomicJson(path.join(root,'runtime.json'),{home});}
+  const directory=temporary(t),home=path.join(directory,'bridge'),hostHome=path.join(directory,'官方清单目录'),source=path.join(home,'marketplace','plugins','codex'),target=path.join(hostHome,'plugins','cache','agybridge-local','agybridge',VERSION);
+  for(const root of [source,target]){mkdirSync(path.join(root,'.codex-plugin'),{recursive:true});atomicJson(path.join(root,'.codex-plugin','plugin.json'),{name:'agybridge'});atomicJson(path.join(root,'runtime.json'),{home});}
   atomicJson(path.join(home,'setup-state.json'),{hostHomes:{codex:path.join(directory,'不同的启动目录')}});
   writeFileSync(path.join(source,'changed.bin'),Buffer.from([0,255,23,87]));writeFileSync(path.join(target,'changed.bin'),Buffer.from([0,1]));
   writeFileSync(path.join(source,'new.txt'),'新增完整内容','utf8');writeFileSync(path.join(target,'obsolete.txt'),'删除的旧内容','utf8');
@@ -111,7 +111,7 @@ test('提交前缓存归属冲突直接报告配置目录问题，不引用不�
     const before=fileHashes(f.target);
     await assert.rejects(commitCache(f.home,'codex',f.hostHome,f.source,f.target),error=>{
       assert.equal((error as any).code,'cache_conflict');const message=(error as Error).message;
-      assert.ok(message.includes(f.target)&&message.includes(f.home));assert.match(message,/NXBRIDGE_HOME.*配置目录/);assert.doesNotMatch(message,/setup-pending\.json|中断的安装/);return true;
+      assert.ok(message.includes(f.target)&&message.includes(f.home));assert.match(message,/AGYBRIDGE_HOME.*配置目录/);assert.doesNotMatch(message,/setup-pending\.json|中断的安装/);return true;
     });
     assert.deepEqual(fileHashes(f.target),before);assert.equal(existsSync(f.pending),false);
   }

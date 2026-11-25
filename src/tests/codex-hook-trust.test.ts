@@ -7,10 +7,9 @@ import {DEFAULT_CONFIG} from '../config/defaults.js';
 import { codexInitializeResult } from './support/registration.js';
 import { fixture } from './support/broker-fixture.js';
 import { temporary } from './support/temporary.js';
-import { MOD_REVISION } from '../mod-revision.js';
 
 const approval='plugin contents changed; hook approval required';
-const nativeHook=(trustStatus:string)=>({pluginId:'nxbridge@nxbridge-local',enabled:true,trustStatus,currentHash:'sha256:current/sha256:script'});
+const nativeHook=(trustStatus:string)=>({pluginId:'agybridge@agybridge-local',enabled:true,trustStatus,currentHash:'sha256:current/sha256:script'});
 
 test('当前磁盘信任按原生校验区分缺失、内容变更和已信任；未知结果不推断需要重启',()=>{
   for(const trust of ['untrusted','modified'])assert.equal(hookTrustFromList([nativeHook('trusted'),nativeHook(trust)]),'required');
@@ -55,16 +54,16 @@ test('原生失败区分重新信任与旧会话重启，状态和通知包含�
   f.store.saveEndpoint({...f.store.endpoint(f.x.id)!,configHome:home});f.store.savePeer({...f.x,owner:'nxbridge'});
   let trust:'required'|'trusted'='required',checks=0;
   t.mock.method((f.broker as any).hookTrust,'check',async()=>{checks++;return trust;});
-  const emit=(status:string,error=approval)=>f.codex.emit('native',{address:f.store.endpoint(f.x.id)!.address,message:{method:'hook/completed',params:{threadId:'x',run:{source:'plugin',sourcePath:'nxbridge/hooks',eventName:'postToolUse',status,entries:[{kind:'error',text:error}]}}}});
+  const emit=(status:string,error=approval)=>f.codex.emit('native',{address:f.store.endpoint(f.x.id)!.address,message:{method:'hook/completed',params:{threadId:'x',run:{source:'plugin',sourcePath:'agybridge/hooks',eventName:'postToolUse',status,entries:[{kind:'error',text:error}]}}}});
   const settle=async()=>{await Promise.allSettled([(f.broker as any).runtimeHealth.waitForIdle()]);};
   emit('failed');await settle();
   let status:any=f.broker.status({host:'codex',sessionId:'x',callId:'check'});
-  assert.match(status.integrationIssues.find((issue:any)=>issue.code==='hooks_trust_required').message,/\/hooks.*nxbridge/);
+  assert.match(status.integrationIssues.find((issue:any)=>issue.code==='hooks_trust_required').message,/\/hooks.*agybridge/);
   trust='trusted';(f.broker as any).runtimeHealth.refreshNoticeConditions(pair);await settle();
   status=f.broker.status({host:'codex',sessionId:'x',callId:'check2'});
-  const restart=status.integrationIssues.find((issue:any)=>issue.code==='hooks_restart_required');assert.ok(restart);assert.equal(restart.owner,'nxbridge');assert.match(restart.message,/'restart' 'codex' '--partner'/);assert.match(restart.message,/paired Claude.*safe idle moment/);
+  const restart=status.integrationIssues.find((issue:any)=>issue.code==='hooks_restart_required');assert.ok(restart);assert.equal(restart.owner,'nxbridge');assert.match(restart.message,/'restart' 'codex' '--partner'/);assert.match(restart.message,/paired AGY.*safe idle moment/);
   assert.match(hookTrustMessage({...f.x,owner:'nxbridge'},'hooks_restart_required',true),new RegExp('空闲.*Codex 之外.*--member '+f.x.id));
-  assert.match(hookTrustMessage(f.x,'hooks_trust_required',true),/\/hooks.*nxbridge/);
+  assert.match(hookTrustMessage(f.x,'hooks_trust_required',true),/\/hooks.*agybridge/);
   assert.equal(status.integrationIssues.some((issue:any)=>issue.code==='hooks_trust_required'||issue.code==='hooks_blocked'),false);
   const notice=f.broker.deliveryHealth.peek(pair.id,f.c.id)[0]!;assert.match(notice.message,/'restart' 'codex' '--partner'/);assert.match(notice.message,/no polling\/restart loop/);
   emit('completed');await settle();assert.equal(f.broker.pairAnomalies.evidence(f.x).hookTrustIssue,undefined);assert.equal(f.broker.deliveryHealth.hasPending(pair.id,f.c.id),false);
@@ -72,17 +71,18 @@ test('原生失败区分重新信任与旧会话重启，状态和通知包含�
   f.broker.pairAnomalies.observe(pair,f.x);assert.equal(f.broker.pairAnomalies.issues(f.x.id)[0]!.kind,'hooks_blocked');assert.equal(checks,2);
 });
 
-test('普通状态及 Mod 只读状态按故障成员的归属提供重启提示，其他告警不扩展归属字段',async t=>{
+test('普通状态按故障成员的归属提供重启提示，其他告警不扩展归属字段',async t=>{
   const f=fixture(t);f.store.pair(f.c.id,f.x.id);
-  const binding=f.store.bindings.activate({host:'claude',configHome:path.resolve('/owner-status'),pid:101,procStart:'native'},f.c.id,'c','verified');
-  const endpoint={...f.store.endpoint(f.c.id)!,pid:binding.pid,procStart:binding.procStart,modRevision:MOD_REVISION};f.store.saveEndpoint(endpoint);
-  const actor={host:'claude' as const,sessionId:'c',callId:'owner-status',binding:{key:binding.key,epoch:binding.epoch}},receipt={sessionId:'c',native:{pid:binding.pid,procStart:binding.procStart},revision:MOD_REVISION};
+  const base=f.store.endpoint(f.c.id)!;
+  const binding=f.store.bindings.activate({host:'agy',configHome:path.resolve('/owner-status'),pid:101,procStart:'native'},f.c.id,'c','verified');
+  const endpoint={...base,mode:'agy-tui' as const,pid:binding.pid,procStart:binding.procStart};f.store.saveEndpoint(endpoint);
+  const actor={host:'agy' as const,sessionId:'c',callId:'owner-status',binding:{key:binding.key,epoch:binding.epoch}};
   const codes=['hooks_restart_required','contract_inactive','hooks_missing'];
   for(const owner of ['nxbridge','user'] as const){
     f.store.updatePeer(f.x.id,{owner});f.store.updatePeer(f.c.id,{owner:owner==='user'?'nxbridge':'user'});
     f.store.setSetting('pairIssues:'+f.x.id,{issues:codes.map(kind=>({kind,message:kind}))});
-    const scoped:any=f.broker.status(actor),all:any=f.broker.status(),fast:any=await(f.broker as any).modRead(actor,'status',receipt,endpoint.epoch);
-    for(const issues of [scoped.integrationIssues,all.capabilities.integrationIssues,fast.integrationIssues]){
+    const scoped:any=f.broker.status(actor),all:any=f.broker.status();
+    for(const issues of [scoped.integrationIssues,all.capabilities.integrationIssues]){
       const partner=issues.filter((issue:any)=>issue.peerId===f.x.id);assert.equal(partner.length,3);
       for(const issue of partner)if(issue.code==='hooks_missing')assert.equal(Object.hasOwn(issue,'owner'),false);else assert.equal(issue.owner,owner);
     }
@@ -93,14 +93,14 @@ test('人工窗口重启提示不指向托管重启；检查迟到不能覆盖�
   for(const change of ['success','generation','user'] as const){
     const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),home=temporary(t);f.store.saveEndpoint({...f.store.endpoint(f.x.id)!,configHome:home});
     let release!:(trust:'trusted')=>void;t.mock.method((f.broker as any).hookTrust,'check',()=>new Promise(resolve=>{release=resolve;}));
-    const emit=(status:string)=>f.codex.emit('native',{address:f.store.endpoint(f.x.id)!.address,message:{method:'hook/completed',params:{threadId:'x',run:{source:'plugin',sourcePath:'nxbridge/hooks',status,entries:[{kind:'error',text:approval}]}}}});
+    const emit=(status:string)=>f.codex.emit('native',{address:f.store.endpoint(f.x.id)!.address,message:{method:'hook/completed',params:{threadId:'x',run:{source:'plugin',sourcePath:'agybridge/hooks',status,entries:[{kind:'error',text:approval}]}}}});
     emit('failed');
     if(change==='success')emit('completed');
     if(change==='generation')f.store.saveEndpoint({...f.store.endpoint(f.x.id)!,procStart:'new-generation'});
     release('trusted');await Promise.allSettled([(f.broker as any).runtimeHealth.waitForIdle()]);
     if(change==='user'){
       f.broker.pairAnomalies.observe(pair,f.x);const issue=f.broker.pairAnomalies.issues(f.x.id).find(issue=>issue.kind==='hooks_restart_required')!;
-      assert.match(issue.message,/same session id.*reopens/);assert.doesNotMatch(issue.message,/nxbridge restart codex/);
+      assert.match(issue.message,/same session id.*reopens/);assert.doesNotMatch(issue.message,/agybridge restart codex/);
       assert.match(hookTrustMessage(f.x,'hooks_restart_required',true),/原会话 ID.*重新打开/);
     }else assert.equal(f.broker.pairAnomalies.evidence(f.x).hookTrustIssue,undefined,change);
   }

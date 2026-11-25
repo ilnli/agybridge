@@ -20,7 +20,7 @@ test('原生 Codex：nxref 首请求展开、短父调用、模型覆盖、最�
   mkdirSync(home,{recursive:true});mkdirSync(codexhome,{recursive:true});
   const config={...DEFAULT_CONFIG,codexHome:codexhome,implicit:'never' as const,compatibilityWake:'strict' as const,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};
   writeFileSync(path.join(home,'config.json'),JSON.stringify(config),'utf8');
-  const env={NXBRIDGE_HOME:home,CODEX_HOME:codexhome,CLAUDE_CONFIG_DIR:path.join(temp.directory,'claude'),OPENAI_API_KEY:'not-a-real-key'};
+  const env={AGYBRIDGE_HOME:home,CODEX_HOME:codexhome,AGY_HOME:path.join(temp.directory,'agy'),OPENAI_API_KEY:'not-a-real-key'};
   const restoreEnvironment=overrideEnvironment(env);
   let phase='valid',sourceId='',childId='',rootId='',logs='',schemaV2=false,waitCount=0,expanded:any;const requests:{phase:string;body:any;child:boolean}[]=[];
   const full='完整引用正文 NATIVE_REF_FULL '+ '中文内容 '.repeat(3000);
@@ -37,9 +37,9 @@ test('原生 Codex：nxref 首请求展开、短父调用、模型覆盖、最�
       else if(!outputs.length){
         const status:any=await brokerCall('status'),registered=status.peers.findLast((p:any)=>p.host==='codex'&&p.kind==='root');
         assert.ok(registered,'首请求前缺少 SessionStart 登记；请求字段 '+Object.keys(body).join(',')+'；'+JSON.stringify(status));rootId=registered.sessionId;
-        const root=status.peers.find((p:any)=>p.sessionId===rootId),peer:any=await brokerCall('register',{host:'claude',sessionId:'fixture',cwd:temp.directory,kind:'root',endpoint:{mode:'claude-inbox',address:'fixture',epoch:'fixture',pid:process.pid,procStart:'fixture'}});
-        await brokerCall('pair',{claude:peer.id,codex:root.id,replace:true});
-        const source:any=await brokerCall('send',{actor:{host:'claude',sessionId:'fixture',callId:phase},message:full});sourceId=source.message_id;
+        const root=status.peers.find((p:any)=>p.sessionId===rootId),peer:any=await brokerCall('register',{host:'agy',sessionId:'fixture',cwd:temp.directory,kind:'root',endpoint:{mode:'agy-acp',address:'fixture',epoch:'fixture',pid:process.pid,procStart:'fixture'}});
+        await brokerCall('pair',{agy:peer.id,codex:root.id,replace:true});
+        const source:any=await brokerCall('send',{actor:{host:'agy',sessionId:'fixture',callId:phase},message:full});sourceId=source.message_id;
         const spawn=tool(body,/^(?:.*[.])?spawn_agent$/);assert.ok(spawn,'原生工具没有 spawn_agent');
         const parameters=spawn.parameters??spawn.input_schema??{},v2=parameters.required?.includes('task_name');
         schemaV2=v2===true;
@@ -71,7 +71,7 @@ test('原生 Codex：nxref 首请求展开、短父调用、模型覆盖、最�
     await temp.cleanup();
   });
   const marketplace=await preparePlugins(home);
-  await runCli('codex',['plugin','marketplace','add',marketplace,'--json'],{config});await runCli('codex',['plugin','add','nxbridge@nxbridge-local','--json'],{config});
+  await runCli('codex',['plugin','marketplace','add',marketplace,'--json'],{config});await runCli('codex',['plugin','add','agybridge@agybridge-local','--json'],{config});
   const control=await configClient(config);try{const hooks=await control.request('hooks/list',{cwds:[temp.directory]});assert.equal(hooks.data[0].hooks.length,9);}finally{control.close();}
   const service=await ensureBroker(home);service.close();
   const option=(key:string,value:unknown)=>['-c',`${key}=${JSON.stringify(value)}`];
@@ -96,7 +96,7 @@ test('原生 Codex：nxref 首请求展开、短父调用、模型覆盖、最�
       assert.ok(expanded,'原生父轮结束前未取得子代理最终引用；'+logs.slice(-3500));
       assert.equal(expanded.text,`[nxref agent:${childId}]\nNATIVE_REF_CHILD_FINAL 子代理最终答案\n[/nxref]`);
       t.diagnostic(JSON.stringify({schemaV2,spawnResultId:childId,rootId,capture:true}));
-      const store=new Store(path.join(home,'nxbridge.db'));try{assert.equal(store.message(sourceId).body,full);}finally{store.close();}
+      const store=new Store(path.join(home,'agybridge.db'));try{assert.equal(store.message(sourceId).body,full);}finally{store.close();}
     }else{assert.equal(children.length,0);assert.match(JSON.stringify(own.at(-1)!.body.input),/nxref not expanded: nxref not found: msg must be in current pair/);}
   }
   t.diagnostic('真实原生 CLI + 回环假模型；真实模型调用 0。');

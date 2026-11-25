@@ -7,12 +7,12 @@ import {BridgeError} from '../shared/errors.js';
 export { disabledMember, type MemberContext } from './member-state.js';
 
 const filename=(home:string)=>path.join(home,'member-control.json');
-export const memberOffResult={enabled:false,disabled:true,code:'member_disabled',message:'此窗口的 nxbridge 已关闭；窗口与配对保留。用户可在任一窗口亲自输入 nxbridge on（Claude 使用 /nxbridge on），或在独立终端执行 nxbridge on <宿主> --member <成员 ID>。'} as const;
+export const memberOffResult={enabled:false,disabled:true,code:'member_disabled',message:'此窗口的 agybridge 已关闭；窗口与配对保留。用户可在任一窗口亲自输入 agybridge on，或在独立终端执行 agybridge on <宿主> --member <成员 ID>。'} as const;
 export function memberOffResultFor(peer:Pick<Peer,'host'|'id'>){
-  const enable_command=`nxbridge on ${peer.host} --member ${peer.id}`;
-  return{...memberOffResult,enable_command,message:`${peer.host} 成员 ${peer.id} 的 nxbridge 已关闭；窗口、配对和已排队消息保留。用户可亲自在窗口输入 nxbridge on ${peer.host}（Claude 使用 /nxbridge on ${peer.host}），或在独立终端执行 ${enable_command}。`};
+  const enable_command=`agybridge on ${peer.host} --member ${peer.id}`;
+  return{...memberOffResult,enable_command,message:`${peer.host} 成员 ${peer.id} 的 agybridge 已关闭；窗口、配对和已排队消息保留。用户可亲自在窗口输入 agybridge on ${peer.host}，或在独立终端执行 ${enable_command}。`};
 }
-export const MEMBER_CONTROL_TOOL={name:'set_enabled',description:'disable nxbridge only on explicit user request (enabled=false), target=self or partner; keep windows, pair and pending msgs; never starts a replacement background partner. AI cannot enable either side; user must type nxbridge on in a native window (/nxbridge on in Claude), or run nxbridge on <host> --member <member ID> in an independent terminal',inputSchema:{type:'object' as const,properties:{target:{type:'string',enum:['self','partner']},enabled:{type:'boolean'},user_requested:{type:'boolean',const:true}},required:['target','enabled','user_requested'],additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false}};
+export const MEMBER_CONTROL_TOOL={name:'set_enabled',description:'disable agybridge only on explicit user request (enabled=false), target=self or partner; keep windows, pair and pending msgs; never starts a replacement background partner. AI cannot enable either side; user must type agybridge on in a native window, or run agybridge on <host> --member <member ID> in an independent terminal',inputSchema:{type:'object' as const,properties:{target:{type:'string',enum:['self','partner']},enabled:{type:'boolean'},user_requested:{type:'boolean',const:true}},required:['target','enabled','user_requested'],additionalProperties:false},annotations:{readOnlyHint:false,destructiveHint:false,openWorldHint:false}};
 
 export function writeMemberControls(home:string,store:Store):void{
   const records=store.peers().map(peer=>({peer,record:{peerId:peer.id,host:peer.host,sessionId:peer.sessionId,windows:store.endpoints(peer.id).flatMap(endpoint=>{

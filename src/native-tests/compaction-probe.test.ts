@@ -11,7 +11,7 @@ import { NativeTerminal } from './terminal-fixture.js';
 import {delay} from '../shared/time.js';
 
 test('安装版 Codex TUI：压缩事件与下轮上下文注入能力',{skip:process.platform!=='win32',timeout:150000},async t=>{
-  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexhome=path.join(root,'codex'),claudehome=path.join(root,'claude'),events=path.join(root,'events.jsonl');
+  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexhome=path.join(root,'codex'),claudehome=path.join(root,'agy'),events=path.join(root,'events.jsonl');
   for(const d of [home,codexhome,claudehome])mkdirSync(d,{recursive:true});
   const requests:any[]=[],model=http.createServer(async(req,res)=>{
     try{
@@ -31,7 +31,7 @@ test('安装版 Codex TUI：压缩事件与下轮上下文注入能力',{skip:pr
   const readEvents=()=>existsSync(events)?readFileSync(events,'utf8').trim().split('\n').filter(Boolean).map(v=>JSON.parse(v)):[];
   let terminal:NativeTerminal|undefined;
   t.after(async()=>{try{await terminal?.close();await runCli('codex',['app-server','daemon','stop'],{env:{CODEX_HOME:codexhome},timeout:15000}).catch(e=>t.diagnostic('隔离 daemon 收尾：'+String(e)));t.diagnostic(JSON.stringify({events:readEvents().map(e=>({event:e.hook_event_name,source:e.source,trigger:e.trigger})),requests:requests.map(r=>({url:r.url,grounded:JSON.stringify(r.body).includes('NX_COMPACT_GROUNDING_PROBE')})),errors:terminal?.errors}));}finally{model.closeAllConnections();await new Promise<void>(r=>model.close(()=>r()));await temp.cleanup();}});
-  const exe=resolveCli('codex');terminal=await NativeTerminal.start(root,home,exe.command,[...exe.prefix,'--no-alt-screen','--dangerously-bypass-hook-trust'],root,{...process.env,TERM:'xterm-256color',COLORTERM:'truecolor',NXBRIDGE_HOME:home,CODEX_HOME:codexhome,CLAUDE_CONFIG_DIR:claudehome,OPENAI_API_KEY:'local-probe-only'});
+  const exe=resolveCli('codex');terminal=await NativeTerminal.start(root,home,exe.command,[...exe.prefix,'--no-alt-screen','--dangerously-bypass-hook-trust'],root,{...process.env,TERM:'xterm-256color',COLORTERM:'truecolor',AGYBRIDGE_HOME:home,CODEX_HOME:codexhome,AGY_HOME:claudehome,OPENAI_API_KEY:'local-probe-only'});
   await terminal.prompt('first native compaction probe');await terminal.wait(()=>readEvents().some(e=>e.hook_event_name==='Stop'),'首轮未完成',30000);
   const initial=readEvents().find(e=>e.hook_event_name==='SessionStart'),before=requests.length;
   await terminal.prompt('/compact');

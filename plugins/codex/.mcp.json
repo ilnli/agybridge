@@ -1,9 +1,10 @@
 {
   "mcpServers": {
-    "claude": {
+    "agy": {
       "command": "node",
       "env_vars": [
-        "CODEX_HOME"
+        "CODEX_HOME",
+        "AGYBRIDGE_HOME"
       ],
       "args": [
         "${CODEX_PLUGIN_ROOT}/bridge.cjs",

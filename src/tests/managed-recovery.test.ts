@@ -10,23 +10,22 @@ test('恢复步骤直接对用户说当前这一步，只写用到的目录、�
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),recovery=new ManagedRecovery(f.store);
   const families:[string[],RegExp][]=[
     [['workspace_untrusted','trust_required'],/打开一次.*接受目录信任提示/],
-    [['bootstrap_policy_unsupported'],/更新.*nxbridge setup --codex-command/],
+    [['bootstrap_policy_unsupported'],/更新.*agybridge setup --codex-command/],
     [['launch_proxy_unavailable'],/本机代理/],
     [['launch_profile_missing'],/重新安装或更新.*会自动重试.*config set hosts\./],
     [['launch_command_missing','launch_command_invalid'],/改正.*\.command.*config get/],
     [['launch_probe_unavailable'],/暂时没能核验.*会自动重试.*doctor/],
     [['launch_provenance_missing'],/指定原安装渠道.*会话 ID/],
-    [['launch_image_ambiguous'],/等 Claude 桌面端更新完成.*config set/],
+    [['launch_image_ambiguous'],/等程序更新完成.*config set/],
     [['profile_version_unsupported','dedicated_mode_unsupported'],/更新到支持这个会话的版本.*重新打开会话/],
     [['original_home_changed','cwd_mismatch'],/改回原来的.*有意迁移.*重新打开会话/],
     [['session_not_found','session_ambiguous','session_invalid','resume_not_found','rollout_not_found'],/找回会话.*历史记录.*另选搭档/],
     [['invalid_config'],/修复.*配置文件/],
-    [['foreground_active','claude_foreground_active'],/回到正在接手这个会话的窗口/],
-    [['claude_background_unavailable','claude_bypass_consent_required','claude_bypass_disabled','claude_inbound_restricted','claude_policy_unverified'],/确认后台运行、审批和收信设置/],
-    [['session_changed','future_precondition'],/^运行 nxbridge status 查看原因$/]
+    [['foreground_active'],/回到正在接手这个会话的窗口/],
+    [['session_changed','future_precondition'],/^运行 agybridge status 查看原因$/]
   ];
-  for(const host of ['claude','codex'] as const){
-    const peer={...(host==='claude'?f.c:f.x),cwd:`Q:/原工程/${host} workspace`},
+  for(const host of ['agy','codex'] as const){
+    const peer={...(host==='agy'?f.c:f.x),cwd:`Q:/原工程/${host} workspace`},
       incident=recovery.observe(peer,pair,undefined,{configHome:`Q:/原配置/${host} home`,executable:`Q:/原入口/${host} wrapper.cmd`});
     incident.state='blocked';
     for(const [codes,expected] of families)for(const code of codes){
@@ -45,10 +44,10 @@ test('恢复步骤直接对用户说当前这一步，只写用到的目录、�
 test('未知启动结果覆盖陈旧前置失败，非阻塞状态清除用户步骤且不虚构路径',t=>{
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),incident=new ManagedRecovery(f.store).observe(f.x,pair);
   incident.state='blocked';incident.preconditionCode='bootstrap_required';
-  assert.equal(recoveryUserStep(f.x,incident),'Claude 会先试着运行一次；不行的话，在 Claude/Codex 之外的普通 PowerShell 里运行 nxbridge bootstrap');
-  assert.equal(recoveryUserStep(f.c,incident),'在 Claude/Codex 之外的普通 PowerShell 里运行 nxbridge bootstrap');
+  assert.equal(recoveryUserStep(f.x,incident),'AGY 会先试着运行一次；不行的话，在 AGY/Codex 之外的普通 PowerShell 里运行 agybridge bootstrap');
+  assert.equal(recoveryUserStep(f.c,incident),'在 AGY/Codex 之外的普通 PowerShell 里运行 agybridge bootstrap');
   incident.state='unknown';
-  const unknown=recoveryUserStep(f.x,incident)!;assert.match(unknown,/nxbridge status 核对上次启动结果.*不要再次启动或恢复会话/);assert.doesNotMatch(unknown,/bootstrap/);
+  const unknown=recoveryUserStep(f.x,incident)!;assert.match(unknown,/agybridge status 核对上次启动结果.*不要再次启动或恢复会话/);assert.doesNotMatch(unknown,/bootstrap/);
   for(const state of ['pending','recovering','ready','exhausted','closed'] as const){incident.state=state;assert.equal(recoveryUserStep(f.x,incident),undefined);}
   incident.state='blocked';incident.preconditionCode='launch_profile_missing';incident.configHome='';delete incident.proof.executable;
   const missing=recoveryUserStep(f.x,incident)!;assert.match(missing,/原来的 codex 启动方式/);assert.doesNotMatch(missing,/undefined|~\//);
@@ -167,7 +166,7 @@ test('仅发给 Claude 的 bootstrap 阻塞可被动取件，状态更新清除�
   publish('等待独立启动');
   let notice=f.broker.deliveryHealth.peek(pair.id,f.c.id)[0]!;
   assert.equal(notice.tier,3);assert.equal(notice.wake,false);assert.equal(notice.recovery!.wake,false);
-  assert.match(notice.recovery!.ai_action!,/attempt nxbridge bootstrap once.*verifies independent launch before handover.*originating window.*ordinary PowerShell outside Claude\/Codex.*do not resend/);
+  assert.match(notice.recovery!.ai_action!,/attempt agybridge bootstrap once.*verifies independent launch before handover.*originating window.*ordinary PowerShell outside AGY\/Codex.*do not resend/);
   assert.equal(f.broker.deliveryHealth.prepare(pair.id,f.c.id,notice.id,notice.scope,false,true),undefined);
   assert.equal(engine.get(peer.id)!.noticeAdmitted,undefined);
   for(const [state,code] of [['blocked','workspace_untrusted'],['unknown','bootstrap_required'],['pending','bootstrap_required'],['ready','bootstrap_required']] as const){
@@ -175,7 +174,7 @@ test('仅发给 Claude 的 bootstrap 阻塞可被动取件，状态更新清除�
     assert.equal(current().tier,undefined);assert.equal(f.broker.deliveryHealth.get(pair.id,f.c.id,incident.noticeId)!.tier,1);
     assert.equal(current().recovery!.ai_action,undefined);assert.equal(f.broker.deliveryHealth.peek(pair.id,f.c.id).length,0);
     if(state==='pending'||state==='ready')assert.equal(Object.hasOwn(current().recovery!,'user_step'),false);
-    if(state==='unknown')assert.match(current().recovery!.user_step!,/nxbridge status/);
+    if(state==='unknown')assert.match(current().recovery!.user_step!,/agybridge status/);
     assert.deepEqual(current().recovery!.interrupted,interrupted);assert.equal(current().recovery!.happened,happened);
   }
   incident.state='blocked';publish('仍待独立启动');notice=f.broker.deliveryHealth.peek(pair.id,f.c.id)[0]!;

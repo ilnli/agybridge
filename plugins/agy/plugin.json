@@ -1,0 +1,6 @@
+{
+  "name": "agybridge",
+  "version": "0.1.1",
+  "description": "Antigravity CLI (AGY) <-> Codex equal peer partner bridge",
+  "logo": "assets/logo.svg"
+}

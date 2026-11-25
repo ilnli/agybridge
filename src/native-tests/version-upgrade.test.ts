@@ -26,7 +26,7 @@ const execute=promisify(execFile),previousPublish=process.env.NXBRIDGE_TEST_PREV
 
                                          
 test('实际旧构建安装升级：两端缓存、原生重载、运行时保留和故障期间普通输入',{skip:process.platform!=='win32'||!previousPublish,timeout:170000},async t=>{
-  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),claudehome=path.join(root,'claude'),codexhome=path.join(root,'codex'),bin=path.join(root,'bin'),oldSource=path.join(root,'old-publish');
+  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),claudehome=path.join(root,'agy'),codexhome=path.join(root,'codex'),bin=path.join(root,'bin'),oldSource=path.join(root,'old-publish');
   for(const directory of [home,claudehome,codexhome,bin,oldSource])mkdirSync(directory,{recursive:true});
   const oldManifest=verifyPublish(previousPublish!),sameVersion=oldManifest.version===VERSION;
   assert.ok(oldManifest.version==='0.1.0'||sameVersion,'仅接受已支持的旧发布版本');
@@ -48,7 +48,7 @@ test('实际旧构建安装升级：两端缓存、原生重载、运行时保�
     for(const event of [{type:'message_start',message:{...reply,content:[],stop_reason:null}},{type:'content_block_start',index:0,content_block:toolUse?{...content,input:{}}:{type:'text',text:''}},{type:'content_block_delta',index:0,delta:toolUse?{type:'input_json_delta',partial_json:JSON.stringify(input)}:{type:'text_delta',text}},{type:'content_block_stop',index:0},{type:'message_delta',delta:{stop_reason:reply.stop_reason,stop_sequence:null},usage:{output_tokens:5}},{type:'message_stop'}])res.write('event: '+event.type+'\ndata: '+JSON.stringify(event)+'\n\n');res.end();
   }catch(error){errors.push(String(error));res.writeHead(500);res.end(String(error));}});
   await new Promise<void>(resolve=>model.listen(0,'127.0.0.1',resolve));
-  const overrides={NXBRIDGE_HOME:home,CLAUDE_CONFIG_DIR:claudehome,CODEX_HOME:codexhome,ANTHROPIC_API_KEY:'nxbridge-local-upgrade-key',ANTHROPIC_BASE_URL:`http://127.0.0.1:${(model.address() as any).port}`,DISABLE_AUTOUPDATER:'1',DISABLE_TELEMETRY:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'},restoreEnvironment=overrideEnvironment(overrides);
+  const overrides={AGYBRIDGE_HOME:home,AGY_HOME:claudehome,CODEX_HOME:codexhome,ANTHROPIC_API_KEY:'agybridge-local-upgrade-key',ANTHROPIC_BASE_URL:`http://127.0.0.1:${(model.address() as any).port}`,DISABLE_AUTOUPDATER:'1',DISABLE_TELEMETRY:'1',CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'},restoreEnvironment=overrideEnvironment(overrides);
   t.after(async()=>{try{
     if(!completed){
       let status;try{status=await brokerCall('status',{}, {home,start:false,timeout:2000});}catch(error){status=String(error);}
@@ -57,26 +57,26 @@ test('实际旧构建安装升级：两端缓存、原生重载、运行时保�
     }
     await terminal?.close();try{await brokerCall('shutdown',{releaseOwned:false},{home,start:false});}catch{}await temp.cleanup();
   }finally{model.closeAllConnections();await new Promise<void>(resolve=>model.close(()=>resolve()));restoreEnvironment();}});
-  writeFileSync(path.join(home,'config.json'),JSON.stringify({...DEFAULT_CONFIG,implicit:'never',compatibilityWake:'strict',claudeHome:claudehome,codexHome:codexhome}),'utf8');
+  writeFileSync(path.join(home,'config.json'),JSON.stringify({...DEFAULT_CONFIG,implicit:'never',compatibilityWake:'strict',agyHome:claudehome,codexHome:codexhome}),'utf8');
   writeFileSync(path.join(claudehome,'.claude.json'),JSON.stringify({hasCompletedOnboarding:true,customApiKeyResponses:{approved:[overrides.ANTHROPIC_API_KEY.slice(-20)],rejected:[]},projects:{[root.replaceAll('\\','/')]:{hasTrustDialogAccepted:true}}}),'utf8');
   writeFileSync(path.join(claudehome,'settings.json'),JSON.stringify({crossSessionInbound:'accept',autoUpdatesChannel:'stable',env:{ANTHROPIC_API_KEY:overrides.ANTHROPIC_API_KEY,ANTHROPIC_BASE_URL:overrides.ANTHROPIC_BASE_URL,CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1'}}),'utf8');
   writeFileSync(path.join(codexhome,'config.toml'),'# 跨版本保留用户设置\nmodel_verbosity = "low"\n','utf8');
   const env=publishEnvironment(home,bin),run=async(entry:string,args:string[],cwd=root)=>JSON.parse((await execute(process.execPath,['--no-warnings',entry,...args],{cwd,env,windowsHide:true,timeout:75000,maxBuffer:8*1024*1024})).stdout);
-  const installed=await run(path.join(oldSource,'nxbridge.mjs'),['setup','--bin-dir',bin]);assert.equal(installed.runtime.buildId,oldManifest.buildId);
-  const launcher=path.join(home,'bin','nxbridge.cjs'),before=activeRuntime(home)!;
-  const inventory=async(host:'claude'|'codex')=>{const value=JSON.parse(await runCli(host,['plugin','list','--json'],{home}));return Array.isArray(value)?value:value.installed;};
-  const baseline=await Promise.all(['claude','codex'].map(async host=>({host,plugins:await inventory(host as 'claude'|'codex')})));
-  for(const host of ['claude','codex'] as const){const caches=installedCacheDirectories(host==='claude'?claudehome:codexhome,host);assert.ok(caches.some(directory=>path.basename(directory)===oldManifest.version));}
-  const cli=resolveCli('claude');terminal=await NativeTerminal.start(root,home,cli.command,[...cli.prefix,'--model','claude-sonnet-4-6','--debug-file',nativeLog],root,{...env,TERM:'xterm-256color',COLORTERM:'truecolor'});
+  const installed=await run(path.join(oldSource,'agybridge.mjs'),['setup','--bin-dir',bin]);assert.equal(installed.runtime.buildId,oldManifest.buildId);
+  const launcher=path.join(home,'bin','agybridge.cjs'),before=activeRuntime(home)!;
+  const inventory=async(host:'agy'|'codex')=>{const value=JSON.parse(await runCli(host,['plugin','list','--json'],{home}));return Array.isArray(value)?value:value.installed;};
+  const baseline=await Promise.all(['agy','codex'].map(async host=>({host,plugins:await inventory(host as 'agy'|'codex')})));
+  for(const host of ['agy','codex'] as const){const caches=installedCacheDirectories(host==='agy'?claudehome:codexhome,host);assert.ok(caches.some(directory=>path.basename(directory)===oldManifest.version));}
+  const cli=resolveCli('agy');terminal=await NativeTerminal.start(root,home,cli.command,[...cli.prefix,'--model','claude-sonnet-4-6','--debug-file',nativeLog],root,{...env,TERM:'xterm-256color',COLORTERM:'truecolor'});
                                                   
-  const oldStartupAt=Date.now();await terminal.wait(()=>existsSync(nativeLog)&&/nxbridge@nxbridge-local session\.start settled/.test(readFileSync(nativeLog,'utf8')),'旧构建的原生 Mod 初始化未完成',35000);const oldNativeStartupMs=Date.now()-oldStartupAt;
+  const oldStartupAt=Date.now();await terminal.wait(()=>existsSync(nativeLog)&&/agybridge@agybridge-local session\.start settled/.test(readFileSync(nativeLog,'utf8')),'旧构建的原生 Mod 初始化未完成',35000);const oldNativeStartupMs=Date.now()-oldStartupAt;
   const turn=async(text:string,timeout=20000)=>{const offset=terminal!.output.length;await terminal!.prompt(text);await terminal!.wait(()=>terminal!.output.slice(offset).includes('VERSION_UPGRADE_DONE_'+phase),'原生升级验收轮次未完成',timeout);};
   await turn('初始化旧版安装的原生插件');assert.ok(requests.some(body=>body.tools?.some((tool:any)=>tool.name==='mcp__nxbridge__answer_question')));
   const oldNative=terminal.identity;
-  const oldStatus=await brokerCall('status',{}, {home}),oldClaude=oldStatus.peers.find((peer:any)=>peer.host==='claude'),counterpart=await processIdentity(process.pid);
+  const oldStatus=await brokerCall('status',{}, {home}),oldClaude=oldStatus.peers.find((peer:any)=>peer.host==='agy'),counterpart=await processIdentity(process.pid);
   assert.ok(oldClaude);
   const codex=await brokerCall('register',{host:'codex',sessionId:'version-upgrade-counterpart',cwd:root,kind:'root',permission:'prompting',endpoint:{mode:'embedded',address:'',epoch:'upgrade-counterpart',pid:counterpart.pid,procStart:counterpart.startedAt}},{home});
-  const pair=await brokerCall('pair',{claude:oldClaude.id,codex:codex.id},{home});
+  const pair=await brokerCall('pair',{agy:oldClaude.id,codex:codex.id},{home});
   const reload=async()=>{const offset=terminal!.output.length;await terminal!.prompt('/reload-plugins');await terminal!.wait(()=>/Reloaded:/.test(stripVTControlCharacters(terminal!.output.slice(offset))),'原生重载未返回');};
   const newModTurn=async(text:string)=>{
     await reload();phase++;const first=requests.length;discover=true;try{await turn(text);}finally{discover=false;}
@@ -91,18 +91,18 @@ test('实际旧构建安装升级：两端缓存、原生重载、运行时保�
     legacyModLoaded=await newModTurn('旧命令更新后检查实际插件加载');
   }
   const codexBefore=Object.fromEntries(installedCacheDirectories(codexhome,'codex').map(directory=>[directory,fileHashes(directory)]));
-  const delivery=path.join(PACKAGE_ROOT,'publish'),updated=await run(path.join(delivery,'nxbridge.mjs'),['update','--from','.','--bin-dir',bin],delivery);assert.equal(updated.installed,true,JSON.stringify(updated));
+  const delivery=path.join(PACKAGE_ROOT,'publish'),updated=await run(path.join(delivery,'agybridge.mjs'),['update','--from','.','--bin-dir',bin],delivery);assert.equal(updated.installed,true,JSON.stringify(updated));
   const current=activeRuntime(home)!;assert.equal(current.version,VERSION);assert.equal(current.previous?.buildId,before.buildId);assert.ok(existsSync(before.entry));
   assert.equal((await execute(process.execPath,[launcher,'--version'],{env,windowsHide:true,timeout:10000})).stdout.trim(),'nxbridge '+VERSION);
-  const caches=Object.fromEntries((['claude','codex'] as const).map(host=>[host,installedCacheDirectories(host==='claude'?claudehome:codexhome,host)]));
-  for(const host of ['claude','codex'] as const){assert.ok(caches[host]!.length);assert.ok(caches[host]!.some(directory=>path.basename(directory)===VERSION));for(const directory of caches[host]!){
+  const caches=Object.fromEntries((['agy','codex'] as const).map(host=>[host,installedCacheDirectories(host==='agy'?claudehome:codexhome,host)]));
+  for(const host of ['agy','codex'] as const){assert.ok(caches[host]!.length);assert.ok(caches[host]!.some(directory=>path.basename(directory)===VERSION));for(const directory of caches[host]!){
     if(host==='codex'&&codexBefore[directory]&&!sameVersion)assert.deepEqual(fileHashes(directory),codexBefore[directory],'仍被旧宿主引用的低版本缓存不能同步成新字节');
     else{
-      assert.equal(readJson<any>(path.join(directory,host==='claude'?'.claude-plugin':'.codex-plugin','plugin.json')).version,VERSION);
+      assert.equal(readJson<any>(path.join(directory,host==='agy'?'.claude-plugin':'.codex-plugin','plugin.json')).version,VERSION);
       if(sameVersion){const actual=fileHashes(directory);for(const [relative,hash]of Object.entries(fileHashes(path.join(home,'marketplace','plugins',host))))assert.equal(actual[relative],hash,'同版本缓存必须同步已生成运行时路径的发布字节：'+relative);}
     }
   }}
-  for(const {host,plugins} of baseline){const after=await inventory(host as 'claude'|'codex'),old=plugins.find((plugin:any)=>(plugin.id??plugin.pluginId)==='nxbridge@nxbridge-local'),fresh=after.find((plugin:any)=>(plugin.id??plugin.pluginId)==='nxbridge@nxbridge-local');assert.ok(old&&fresh);assert.equal(fresh.enabled,old.enabled,host);assert.equal(fresh.version,VERSION,host+' '+JSON.stringify(fresh));}
+  for(const {host,plugins} of baseline){const after=await inventory(host as 'agy'|'codex'),old=plugins.find((plugin:any)=>(plugin.id??plugin.pluginId)==='agybridge@agybridge-local'),fresh=after.find((plugin:any)=>(plugin.id??plugin.pluginId)==='agybridge@agybridge-local');assert.ok(old&&fresh);assert.equal(fresh.enabled,old.enabled,host);assert.equal(fresh.version,VERSION,host+' '+JSON.stringify(fresh));}
   assert.equal(readJson<any>(path.join(home,'marketplace','.claude-plugin','marketplace.json')).plugins[0].version,VERSION);
   if(!legacyUpdate){
     phase++;const first=requests.length;legacySend=true;try{await turn('重载之前使用旧 Mod 向原搭档发送消息');}finally{legacySend=false;}

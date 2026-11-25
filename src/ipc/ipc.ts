@@ -74,7 +74,7 @@ const brokerStarts=new Map<string,Promise<void>>();
 type BrokerStartOptions={bootstrap?:boolean;reserved?:boolean;deadline?:number};
 export async function ensureBroker(home=bridgeHome(),options:BrokerStartOptions={}):Promise<RpcClient>{
   if(options.bootstrap||options.reserved)return ensureBrokerNow(home,options);
-  if(!installationEnabled(home))throw new BridgeError('uninstalled','nxbridge 已卸载；运行 setup 后重新启用。');
+  if(!installationEnabled(home))throw new BridgeError('uninstalled','agybridge 已卸载；运行 setup 后重新启用。');
   try{return await pingBroker(home,2000,options.deadline);}catch(error){if((error as {code?:string}).code==='ipc_token_invalid')throw error;}
   remainingTime(options.deadline,2000);
   const key=path.resolve(home);let work=brokerStarts.get(key);
@@ -88,7 +88,7 @@ export async function ensureBroker(home=bridgeHome(),options:BrokerStartOptions=
 }
 async function ensureBrokerNow(home:string,options:BrokerStartOptions):Promise<RpcClient>{
   const budget=(limit:number)=>remainingTime(options.deadline,limit);
-  if(!installationEnabled(home))throw new BridgeError('uninstalled','nxbridge 已卸载；运行 setup 后重新启用。');
+  if(!installationEnabled(home))throw new BridgeError('uninstalled','agybridge 已卸载；运行 setup 后重新启用。');
                                                
   for(let attempt=0;attempt<40;attempt++){
     try{return await pingBroker(home,2000,options.deadline);}
@@ -104,7 +104,7 @@ async function ensureBrokerNow(home:string,options:BrokerStartOptions):Promise<R
     const deadline=Date.now()+WINDOWS_BACKGROUND_TIMEOUT_MS+WINDOWS_BACKGROUND_EXIT_TIMEOUT_MS+BROKER_READY_ATTEMPTS*BROKER_READY_POLL_MS;
     for(let poll=1;Date.now()<deadline;poll++){
       await delay(budget(BROKER_READY_POLL_MS));
-      if(!installationEnabled(home))throw new BridgeError('uninstalled','nxbridge 已卸载；运行 setup 后重新启用。');
+      if(!installationEnabled(home))throw new BridgeError('uninstalled','agybridge 已卸载；运行 setup 后重新启用。');
       requireBackgroundRetry(home);
       try{return await pingBroker(home,500,options.deadline);}catch{}
                                               
@@ -117,9 +117,9 @@ async function ensureBrokerNow(home:string,options:BrokerStartOptions):Promise<R
   const origin=await serviceOrigin(budget(10000));
   if(process.platform==='win32')requireBackgroundRetry(home,options.bootstrap,backgroundRetryContext(origin));
                                        
-  if(!installationEnabled(home))throw new BridgeError('uninstalled','nxbridge 已卸载；运行 setup 后重新启用。');
+  if(!installationEnabled(home))throw new BridgeError('uninstalled','agybridge 已卸载；运行 setup 后重新启用。');
   await prepareProcessRegistry(home);
-  if(!installationEnabled(home))throw new BridgeError('uninstalled','nxbridge 已卸载；运行 setup 后重新启用。');
+  if(!installationEnabled(home))throw new BridgeError('uninstalled','agybridge 已卸载；运行 setup 后重新启用。');
   let releaseStartup:StartupReservation|undefined;
   if(process.platform==='win32'&&!options.reserved){
     const caller=origin.find(value=>value.pid===process.pid);
@@ -138,7 +138,7 @@ async function ensureBrokerNow(home:string,options:BrokerStartOptions):Promise<R
   budget(2000);
   const runtime=installedEntry(home);
   const startupToken=process.platform==='win32'?await currentStartupToken(home):undefined;
-  const environment=neutralEnvironment({NXBRIDGE_HOME:home,NXBRIDGE_SERVICE_ORIGIN:JSON.stringify(origin),NXBRIDGE_BROKER_STARTUP_TOKEN:startupToken},true);
+  const environment=neutralEnvironment({AGYBRIDGE_HOME:home,AGYBRIDGE_SERVICE_ORIGIN:JSON.stringify(origin),AGYBRIDGE_BROKER_STARTUP_TOKEN:startupToken},true);
   let launchError:unknown;
   if(process.platform==='win32'){
     requireBackgroundRetry(home,options.bootstrap);
@@ -159,7 +159,7 @@ async function ensureBrokerNow(home:string,options:BrokerStartOptions):Promise<R
   for(let attempt=0;attempt<BROKER_READY_ATTEMPTS;attempt++){
     await delay(budget(BROKER_READY_POLL_MS));
     if(launchError){last=launchError;break;}
-    if(!installationEnabled(home))throw new BridgeError('uninstalled','nxbridge 已卸载；运行 setup 后重新启用。');
+    if(!installationEnabled(home))throw new BridgeError('uninstalled','agybridge 已卸载；运行 setup 后重新启用。');
     try{return await pingBroker(home,500,options.deadline);}catch(e){last=e;}
   }
   throw new BridgeError('broker_start_failed',`协调器未能启动：${describeError(last)}。请检查 ${logfile}`);
@@ -169,20 +169,20 @@ async function ensureBrokerNow(home:string,options:BrokerStartOptions):Promise<R
 export async function detachService():Promise<void> {
                                                     
   const runtime=installedEntry(bridgeHome());
-  const child=spawn(runtime.node,['--no-warnings',runtime.entry,'service'],{env:neutralEnvironment({NXBRIDGE_HOME:bridgeHome(),NXBRIDGE_SERVICE_ORIGIN:process.env.NXBRIDGE_SERVICE_ORIGIN}).env,detached:true,windowsHide:true,stdio:['ignore',process.stdout,process.stderr]});
+  const child=spawn(runtime.node,['--no-warnings',runtime.entry,'service'],{env:neutralEnvironment({AGYBRIDGE_HOME:bridgeHome(),AGYBRIDGE_SERVICE_ORIGIN:process.env.AGYBRIDGE_SERVICE_ORIGIN}).env,detached:true,windowsHide:true,stdio:['ignore',process.stdout,process.stderr]});
   child.on('error',error=>{process.stderr.write(describeError(error)+'\n');process.exitCode=1;});
   child.unref();await rememberOwnedChild(bridgeHome(),child,'broker');
 }
 
                                                
-function brokerRequestTimeout(method:string,timeout?:number):number|undefined{return timeout??(['send','pair.selection.resolve','pair.selection.commit'].includes(method)?120000:undefined);}
-export async function brokerCall<T=any>(method:string,params:unknown={},options:{home?:string;start?:boolean;timeout?:number;mutation?:boolean;reserved?:boolean;deadline?:number}={}):Promise<T>{
-  const c=options.start===false?await connectBroker(options.home,remainingTime(options.deadline,Math.min(options.timeout??2000,2000))):await ensureBroker(options.home,{reserved:options.reserved,deadline:options.deadline});
+function brokerRequestTimeout(method:string,timeout?:number):number|undefined{return timeout??(method==='agy.wait'?0:['send','pair.selection.resolve','pair.selection.commit'].includes(method)?120000:undefined);}
+export async function brokerCall<T=any>(method:string,params:unknown={},options:{home?:string;start?:boolean;timeout?:number;mutation?:boolean;reserved?:boolean;deadline?:number;signal?:AbortSignal}={}):Promise<T>{
+  const connectLimit=options.timeout&&options.timeout>0?Math.min(options.timeout,2000):2000;
+  const c=options.start===false?await connectBroker(options.home,remainingTime(options.deadline,connectLimit)):await ensureBroker(options.home,{reserved:options.reserved,deadline:options.deadline});
   const timeout=brokerRequestTimeout(method,options.timeout);
-  try{return await c.request<T>(method,params,{timeout:options.deadline===undefined?timeout:remainingTime(options.deadline,timeout??2000),mutation:options.mutation});}finally{c.close();}
+  try{return await c.request<T>(method,params,{timeout:options.deadline===undefined?timeout:remainingTime(options.deadline,timeout??2000),mutation:options.mutation,signal:options.signal});}finally{c.close();}
 }
 
-                                           
 export class BrokerSession extends EventEmitter {
   private rpc?:RpcClient;
   private opening?:Promise<RpcClient>;
@@ -191,14 +191,14 @@ export class BrokerSession extends EventEmitter {
   get connected():boolean{return!!this.rpc&&!this.rpc.closed;}
   connect():Promise<RpcClient>{
     if(this.closed)return Promise.reject(new DeliveryError('disconnected','本地协议连接已关闭。'));
-    if(!installationEnabled(this.home))return Promise.reject(new BridgeError('uninstalled','nxbridge 已卸载；运行 setup 后重新启用。'));
+    if(!installationEnabled(this.home))return Promise.reject(new BridgeError('uninstalled','agybridge 已卸载；运行 setup 后重新启用。'));
     if(this.rpc&&!this.rpc.closed)return Promise.resolve(this.rpc);
     return this.opening??=this.open().then(rpc=>{
       if(this.closed){rpc.close();throw new DeliveryError('disconnected','本地协议连接已关闭。');}
       this.rpc=rpc;rpc.once('disconnected',()=>{if(this.rpc!==rpc)return;this.rpc=undefined;if(!this.closed)this.emit('disconnected');});return rpc;
     }).finally(()=>{this.opening=undefined;});
   }
-  async request<T=any>(method:string,params:unknown={},options:{timeout?:number;mutation?:boolean}={}):Promise<T>{
+  async request<T=any>(method:string,params:unknown={},options:{timeout?:number;mutation?:boolean;signal?:AbortSignal}={}):Promise<T>{
     return(await this.connect()).request<T>(method,params,{...options,timeout:brokerRequestTimeout(method,options.timeout)});
   }
   close():void{this.closed=true;this.rpc?.close();this.rpc=undefined;}

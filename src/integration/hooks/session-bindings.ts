@@ -28,7 +28,7 @@ export function hookContextMatches(key:string,sessionId:string,native:{pid:numbe
 export function registrationWindow(input: RegisterInput): WindowIdentity | undefined {
   const e = input.endpoint;
   if(e.daemon&&input.kind!=='subagent'&&input.kind!=='unknown'&&e.pid&&e.procStart&&e.configHome)return{host:input.host,configHome:normalizedHome(e.configHome),pid:e.pid,procStart:e.procStart,threadId:e.daemon.rootSessionId??input.sessionId};
-  if (input.kind === 'subagent' || input.kind === 'unknown' || e.mode === 'app-server' || e.processKind==='app-server' || !e.pid || !e.procStart || !e.configHome) return undefined;
+  if (input.kind === 'subagent' || input.kind === 'unknown' || e.mode === 'app-server' || e.mode === 'agy-acp' || e.processKind==='app-server' || !e.pid || !e.procStart || !e.configHome) return undefined;
   return { host: input.host, configHome: normalizedHome(e.configHome), pid: e.pid, procStart: e.procStart };
 }
 
@@ -74,7 +74,7 @@ export class SessionBindings {
   related(host: WindowIdentity['host'], sessionId: string, except?:string):SessionBinding[]{
                                                  
     const rows = statement(this.db,`SELECT DISTINCT b.data FROM session_lineage l JOIN window_bindings b ON b.peer_id=l.peer_id AND b.active=1
-      JOIN pairs p ON (p.archived=0 OR EXISTS(SELECT 1 FROM settings s WHERE s.key='pairLoss:'||l.peer_id AND s.value<>'null')) AND (p.claude=l.peer_id OR p.codex=l.peer_id)
+      JOIN pairs p ON (p.archived=0 OR EXISTS(SELECT 1 FROM settings s WHERE s.key='pairLoss:'||l.peer_id AND s.value<>'null')) AND (p.agy=l.peer_id OR p.codex=l.peer_id)
       WHERE l.host=? AND l.session_id=?`).all(host, sessionId);
     return rows.map(row=>JSON.parse(row.data as string) as SessionBinding).filter(binding=>binding.peerId!==except);
   }

@@ -84,7 +84,7 @@ public sealed class NxBackground : IDisposable {
       input=CreateFileW("NUL",0x80000000,7,ref security,3,0x80,IntPtr.Zero);
       if(input==new IntPtr(-1))throw new Win32Exception(Marshal.GetLastWin32Error());
       StartupEx startup=new StartupEx();startup.startup.cb=Marshal.SizeOf(typeof(StartupEx));startup.startup.flags=0x100;startup.startup.input=input;startup.startup.output=log;startup.startup.error=log;
-      JobName="Global\\\\nxbridge-job-"+Guid.NewGuid().ToString("N");
+      JobName="Global\\\\agybridge-job-"+Guid.NewGuid().ToString("N");
       guard=CreateJobObjectW(IntPtr.Zero,JobName);if(guard==IntPtr.Zero)throw new Win32Exception(Marshal.GetLastWin32Error());GuardLimits(true);
       IntPtr size=IntPtr.Zero;InitializeProcThreadAttributeList(IntPtr.Zero,1,0,ref size);
       attributes=Marshal.AllocHGlobal(size);
@@ -184,7 +184,7 @@ export function windowsArgument(value:string):string{
                                               
 export async function probeIndependentWindows(executable:string,env:NodeJS.ProcessEnv):Promise<void>{
   if(process.platform!=='win32')return;
-  const tempDirectory=mkdtempSync(path.join(tmpdir(),'nxbridge-context-probe-')),logfile=path.join(tempDirectory,'probe.log');
+  const tempDirectory=mkdtempSync(path.join(tmpdir(),'agybridge-context-probe-')),logfile=path.join(tempDirectory,'probe.log');
   const helper=spawn(windowsPowerShell(),['-NoLogo','-NoProfile','-NonInteractive','-Command',script],{windowsHide:true,stdio:['pipe','pipe','pipe']});
   let stdout='',stderr='',expired=false;
   helper.stdout.on('data',chunk=>{if(stdout.length<16384)stdout+=chunk.toString('utf8');});helper.stderr.on('data',chunk=>{if(stderr.length<8192)stderr+=chunk.toString('utf8');});helper.stdin.on('error',()=>{});
@@ -193,7 +193,7 @@ export async function probeIndependentWindows(executable:string,env:NodeJS.Proce
   try{
     helper.stdin.end(JSON.stringify({probe:true,source:windowsBackgroundSource,tempDirectory,executable,command:[executable,'-e',''].map(windowsArgument).join(' '),cwd:tempDirectory,environment:env,logfile})+'\n');
     const code=await ended,proof=stdout.split(/\r?\n/).filter(Boolean).map(line=>{try{return JSON.parse(line);}catch{return undefined;}}).find(value=>value?.independent&&value.stopped);
-    if(code!==0||!proof||expired)throw new BridgeError('bootstrap_context_unavailable','当前环境无法启动独立后台，原协调器未改变。请在 Claude/Codex 之外的普通 PowerShell 执行 nxbridge bootstrap。原因：'+(stderr.trim()||stdout.trim()||'启动环境核验超时'));
+    if(code!==0||!proof||expired)throw new BridgeError('bootstrap_context_unavailable','当前环境无法启动独立后台，原协调器未改变。请在 AGY/Codex 之外的普通 PowerShell 执行 agybridge bootstrap。原因：'+(stderr.trim()||stdout.trim()||'启动环境核验超时'));
   }finally{
     clearTimeout(timer);
     try{unlinkSync(logfile);}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}

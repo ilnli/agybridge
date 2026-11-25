@@ -6,14 +6,14 @@ import type { Actor, Peer } from '../types.js';
 import { fixture } from './support/broker-fixture.js';
 import { registration } from './support/registration.js';
 
-const cx:Actor={host:'codex',sessionId:'x',callId:'codex'},cc:Actor={host:'claude',sessionId:'c',callId:'claude'};
+const cx:Actor={host:'codex',sessionId:'x',callId:'codex'},cc:Actor={host:'agy',sessionId:'c',callId:'agy'};
 const questions=[{id:'scope',header:'范围',question:'处理哪些内容？'}];
-const claudeQuestions=[{header:'范围',question:'处理哪些内容？',options:[{label:'甲',description:'第一项'},{label:'乙',description:'第二项'}],multiSelect:false}];
+const claudeQuestions=[{id:'q1',header:'范围',question:'处理哪些内容？',options:[{label:'甲',description:'第一项'},{label:'乙',description:'第二项'}],multiSelect:false}];
 
 test('MCP 使用登记后的真实种类，元数据不能提升子代理，独立 fork 保留自己的配对',async t=>{
   const f=fixture(t);f.store.pair(f.c.id,f.x.id);
   const fork=f.store.register(threadRegistration({id:'fork',cwd:f.x.cwd,forkedFromId:'x',threadSource:'user'},'unix://test-server')!);
-  const other=f.store.register(registration('claude','fork-partner'));f.store.pair(other.id,fork.id);
+  const other=f.store.register(registration('agy','fork-partner'));f.store.pair(other.id,fork.id);
   f.store.register(threadRegistration({id:'child',cwd:f.x.cwd,parentThreadId:'x',threadSource:'subagent'},'unix://test-server')!);
   for(const id of ['x','fork','child']){
     const identity=codexIdentity({threadId:id,sessionId:id==='child'?id:'metadata-parent',callId:id},f.x.cwd,{pid:process.pid,procStart:'test',appServer:true});
@@ -41,7 +41,7 @@ for(const subagentSend of ['allow-verified','deny'] as const)test('Codex 子代�
     await assert.rejects(f.broker.dispatch('question.create',{actor,questions}),{code:'subagent_denied'});
   }
   assert.equal(f.store.peers().length,initialPeers);assert.equal(f.store.pairs().length,0);
-  assert.equal(f.store.messages().length,0);assert.equal(f.store.questions().length,0);assert.equal(f.claude.created.length,0);
+  assert.equal(f.store.messages().length,0);assert.equal(f.store.questions().length,0);assert.equal(f.agy.created.length,0);
 });
 
 test('Codex 回答、用户回答及取消旁路均拒绝子代理，根会话仍能正常回答',async t=>{
@@ -108,15 +108,15 @@ test('缺失、未核验、伪造成员和过期租约不能绕过 Codex 出站�
 
 for(const subagentSend of ['allow-verified','deny'] as const)test('Claude 子代理继续遵守全局 '+subagentSend+'，Codex 根会话不受影响',async t=>{
   const f=fixture(t,{subagentSend});f.store.pair(f.c.id,f.x.id);
-  f.store.register(registration('claude','claude-child',{kind:'subagent',parentId:'c'}));
-  const actor:Actor={host:'claude',sessionId:'claude-child',callId:'child'},created=await f.broker.dispatch('question.create',{actor:cx,questions}) as {request_id:string};
-  const input={request_id:created.request_id,answers:{'处理哪些内容？':'甲'},rationale:'子代理核对完成。'};
+  f.store.register(registration('agy','agy-acp',{kind:'subagent',parentId:'c'}));
+  const actor:Actor={host:'agy',sessionId:'agy-acp',callId:'child'},created=await f.broker.dispatch('question.create',{actor:cx,questions}) as {request_id:string};
+  const input={request_id:created.request_id,answers:{[questions[0]!.id]:'甲'},rationale:'子代理核对完成。'};
   if(subagentSend==='deny'){
     assert.throws(()=>f.broker.send({actor,message:'子代理结果'},false),{code:'subagent_denied'});
     await assert.rejects(f.broker.dispatch('question.answer',{actor,input}),{code:'subagent_denied'});
   }else{
     const sent=f.broker.send({actor,message:'子代理结果'},false),message=f.store.message(sent.message_id);
-    assert.equal(message.from,f.c.id);assert.equal(message.to,f.x.id);assert.equal(message.via,'claude-child');
+    assert.equal(message.from,f.c.id);assert.equal(message.to,f.x.id);assert.equal(message.via,'agy-acp');
     assert.equal((await f.broker.dispatch('question.answer',{actor,input}) as {status:string}).status,'answered');
   }
   const sent=f.broker.send({actor:{...cx,callId:'root-send'},message:'根会话继续工作'},false);assert.equal(f.store.message(sent.message_id).from,f.x.id);

@@ -22,7 +22,7 @@ test('明确接受暂不配对选项才取消草稿',async t=>{
 
 test('多个窗口原生表单只选类别，保留草稿等待用户在对话中明确选定',async t=>{
   const f=fixture(t,{compatibilityWake:'strict'}),next=f.store.register(registration('codex','second-window'));
-  const actor={host:'claude' as const,sessionId:f.c.sessionId!,callId:'category-picker'},intent={actor,message:'待用户选窗口的正文'};
+  const actor={host:'agy' as const,sessionId:f.c.sessionId!,callId:'category-picker'},intent={actor,message:'待用户选窗口的正文'};
   const initial=await f.broker.dispatch('send',intent) as any,calls:string[]=[];
   const server={getClientCapabilities:()=>({elicitation:{form:{}}}),elicitInput:async(request:any)=>{
     const choices=request.requestedSchema.properties.choice.oneOf;
@@ -41,7 +41,7 @@ test('多个窗口原生表单只选类别，保留草稿等待用户在对话�
 
 test('已配对时类别表单保留当前搭档标题、解除和保持；单候选直接提交用户选择',async t=>{
   const f=fixture(t,{compatibilityWake:'strict'}),old=f.store.pair(f.c.id,f.x.id),next=f.store.register(registration('codex','replacement'));
-  const actor={host:'claude' as const,sessionId:f.c.sessionId!,callId:'change-category'},initial=await f.broker.dispatch('pair.code',{actor}) as any;
+  const actor={host:'agy' as const,sessionId:f.c.sessionId!,callId:'change-category'},initial=await f.broker.dispatch('pair.code',{actor}) as any;
   const result=await elicitPartner({getClientCapabilities:()=>({elicitation:{form:{}}}),elicitInput:async(request:any)=>{
     assert.ok(request.message.includes(f.x.name));const choices=request.requestedSchema.properties.choice.oneOf;
     assert.ok(choices.some((value:any)=>value.const==='unpair'));assert.ok(choices.some((value:any)=>value.const==='cancel'));
@@ -54,7 +54,7 @@ test('已配对时类别表单保留当前搭档标题、解除和保持；单�
 for(const mode of ['previous','merged','single'] as const)test('历史后台选择保持类别规则和四项上限：'+mode,async()=>{
   const previous=[{key:'old-a',member_id:'old-a',owner:'nxbridge',former_partner:true,label:'之前甲',description:'原项目'},{key:'old-b',member_id:'old-b',owner:'nxbridge',former_partner:true,label:'之前乙',description:'原项目'}];
   const candidates=mode==='single'?previous.slice(0,1):mode==='merged'?[{key:'live',member_id:'live',owner:'user',label:'运行窗口'},...previous]:previous;
-  const view={status:'selection_required',selection_id:'history-form',host:'claude',expires_at:Date.now()+60000,candidates,allowed_actions:mode==='merged'?['choose','create','unpair','cancel']:['choose','create','cancel'],...(mode==='merged'?{mode:'change',current_partner:{name:'当前'}}:{})},calls:{method:string;params:any}[]=[];
+  const view={status:'selection_required',selection_id:'history-form',host:'agy',expires_at:Date.now()+60000,candidates,allowed_actions:mode==='merged'?['choose','create','unpair','cancel']:['choose','create','cancel'],...(mode==='merged'?{mode:'change',current_partner:{name:'当前'}}:{})},calls:{method:string;params:any}[]=[];
   const result=await elicitPartner({getClientCapabilities:()=>({elicitation:{form:{}}}),elicitInput:async(request:any)=>{
     const choices=request.requestedSchema.properties.choice.oneOf;assert.ok(choices.length<=4);
     const option=choices.find((value:any)=>value.const===(mode==='merged'?'existing_or_previous':mode==='single'?'old-a':'previous'));

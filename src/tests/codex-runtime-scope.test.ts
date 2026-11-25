@@ -77,7 +77,7 @@ function bridge(t:TestContext){
 }
 
 for(const partner of [false,true])test((partner?'搭档':'普通')+'重启接受自有空闲子代理，停止时只停用原宿主代次',async t=>{
-  const f=bridge(t),input=partner?{actor:{host:'claude',sessionId:'c',callId:'restart'},partner:true}:{};
+  const f=bridge(t),input=partner?{actor:{host:'agy',sessionId:'c',callId:'restart'},partner:true}:{};
   f.store.updatePeer(f.first.id,{state:'paused'});
   (f.codex as any).restart=async(peer:Peer,endpoint:Endpoint,guard:()=>void)=>{
     guard();f.codex.emit('runtimeStopped',endpoint);
@@ -118,7 +118,7 @@ for(const partner of [false,true])test((partner?'搭档':'普通')+'重启兼容
   adapter.connect=async()=>rpc;adapter.on('register',(input,memberId)=>f.codex.emit('register',input,memberId));adapter.on('state',(...args)=>f.codex.emit('state',...args));
   f.codex.observe=(peer,endpoint)=>adapter.observe(peer,endpoint);
   (f.codex as any).restart=async(peer:Peer,endpoint:Endpoint,guard:()=>void)=>{guard();f.codex.emit('runtimeStopped',endpoint);f.store.adopt(peer.id,registration('codex','x',{endpoint:{...endpoint,address:'replacement',epoch:'replacement'}}));return{endpoint:'replacement',oldPid:1,pid:2,resumed:{model:'test'}};};
-  const input=partner?{actor:{host:'claude',sessionId:'c',callId:'restart'},partner:true}:{};
+  const input=partner?{actor:{host:'agy',sessionId:'c',callId:'restart'},partner:true}:{};
   assert.equal((await f.broker.dispatch('codex.restart',input) as any).restarted,true);
   for(const peer of [f.first,f.second,third]){assert.equal(f.store.endpoint(peer.id),undefined);assert.equal(f.store.peer(peer.id).state,'offline');}
   assert.deepEqual([f.store.message(unknown.id),f.store.message(childUnknown.id)],before);

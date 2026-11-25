@@ -4,13 +4,13 @@ interface PendingTool {id:string;at:number}
 export interface CodexPendingTools {calls:PendingTool[];complete:boolean}
 const HEADER_BYTES=2*1024*1024,HEADER_CHUNK=64*1024,TAIL_BYTES=1024*1024;
 
-                                              
+
 export async function readCodexPendingTools(file:unknown,sessionId:string,turnId:string):Promise<CodexPendingTools|undefined>{
   if(typeof file!=='string'||!file)return;
   const fd=await open(file,'r').catch(()=>undefined);if(!fd)return;
   try{
     const stat=await fd.stat(),chunks:Buffer[]=[];let offset=0,headerEnd=-1;
-                                                           
+
     while(offset<HEADER_BYTES&&headerEnd<0){
       const head=Buffer.allocUnsafe(Math.min(HEADER_CHUNK,HEADER_BYTES-offset)),{bytesRead}=await fd.read(head,0,head.length,offset);
       if(!bytesRead)break;
@@ -52,7 +52,7 @@ export async function readCodexPendingTools(file:unknown,sessionId:string,turnId
         if(closed||scope!==turnId||typeof p.call_id!=='string'||!p.call_id)continue;
         matched=true;
         const at=Date.parse(row.timestamp);if(!Number.isFinite(at)){complete=false;continue;}
-                                                                
+
         pending.set(p.call_id,{id:p.call_id,at});
       }else if((p.type==='function_call_output'||p.type==='custom_tool_call_output')&&(explicitScope===undefined||explicitScope===turnId))pending.delete(p.call_id);
       else if(typeof p.type==='string'&&p.type.endsWith('_call'))complete=false;

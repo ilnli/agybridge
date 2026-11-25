@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import path from 'node:path';
-import { mkdirSync } from 'node:fs';
 import { WebSocketServer } from 'ws';
 import { CodexAdapter } from '../hosts/codex/adapter.js';
 import { Broker, type Adapters } from '../broker/coordinator.js';
@@ -13,8 +11,6 @@ import { FakeAdapter } from './support/fake-adapter.js';
 import {fixture, lifecycle} from './support/broker-fixture.js';
 import { registration } from './support/registration.js';
 import { temporary } from './support/temporary.js';
-import {atomicJson} from '../shared/files.js';
-import { claudeChildFile } from '../hosts/claude/claude-child.js';
 
 async function completePump(work:Promise<unknown>):Promise<void>{
   let timer:NodeJS.Timeout|undefined;try{await Promise.race([work,new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>reject(Error('慢恢复阻塞了独立消息泵')),5000);})]);}finally{clearTimeout(timer);}
@@ -28,7 +24,7 @@ for(const pending of [false,true])test('统一恢复调度'+(pending?'有待发�
   let attempts=0;t.mock.method(lifecycle(f.broker),'recover',async()=>{attempts++;f.store.saveEndpoint({...endpoint,active:true});f.store.updatePeer(f.c.id,{state:'ready'});return true;});
   await Promise.all([lifecycle(f.broker).observeManagedExits(),f.broker.pump()]);
   assert.equal(attempts,1);assert.equal(f.store.message(unknown.id).state,'unknown');
-  assert.deepEqual(f.claude.delivered.map(message=>message.id),queued?[queued.id]:[]);
+  assert.deepEqual(f.agy.delivered.map(message=>message.id),queued?[queued.id]:[]);
 });
 
 for(const backoff of ['protocol','transient','delivery-clock'] as const)test('待发成员掉线后恢复不等待投递退避：'+backoff,async t=>{
@@ -70,7 +66,7 @@ for(const stage of ['pending_windows','pump'])test('路由阶段退避不阻止�
 });
 
 test('一组配对恢复未结束时事件重入不扫描，定时调度仍恢复另一组且合并同成员',async t=>{
-  const f=fixture(t),other=f.store.register(registration('claude','other')),otherPartner=f.store.register(registration('codex','other-partner'));f.store.pair(other.id,otherPartner.id);f.store.pair(f.c.id,f.x.id);f.store.updatePeer(other.id,{owner:'nxbridge'});f.store.updatePeer(f.c.id,{owner:'nxbridge',state:'offline'});f.store.deactivate(f.c.id);
+  const f=fixture(t),other=f.store.register(registration('agy','other')),otherPartner=f.store.register(registration('codex','other-partner'));f.store.pair(other.id,otherPartner.id);f.store.pair(f.c.id,f.x.id);f.store.updatePeer(other.id,{owner:'nxbridge'});f.store.updatePeer(f.c.id,{owner:'nxbridge',state:'offline'});f.store.deactivate(f.c.id);
   let entered!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>entered=resolve),gate=new Promise<void>(resolve=>release=resolve),attempts:string[]=[];
   t.mock.method(lifecycle(f.broker),'recover',async(peer:{id:string})=>{attempts.push(peer.id);if(peer.id===f.c.id){entered();await gate;}return false;});
   t.mock.method((f.broker as any).windowRecovery,'retry',async()=>{await gate;});
@@ -86,11 +82,11 @@ test('一组配对恢复未结束时事件重入不扫描，定时调度仍恢�
 });
 
 test('一组配对有待发消息且恢复缓慢时消息泵仍处理新来信，恢复后自动投递原消息一次',async t=>{
-  const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),endpoint=f.store.endpoint(f.c.id)!,other=f.store.register(registration('claude','other')),sender=f.store.register(registration('codex','other-sender')),otherPair=f.store.pair(other.id,sender.id);
+  const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),endpoint=f.store.endpoint(f.c.id)!,other=f.store.register(registration('agy','other')),sender=f.store.register(registration('codex','other-sender')),otherPair=f.store.pair(other.id,sender.id);
   const queued=f.store.accept(pair,f.x,'等待慢恢复的原消息','slow');f.store.updatePeer(f.c.id,{owner:'nxbridge',state:'offline'});f.store.deactivate(f.c.id);
   let release!:()=>void,delivered!:()=>void;const gate=new Promise<void>(resolve=>release=resolve),resumed=new Promise<void>(resolve=>delivered=resolve);let attempts=0;
   t.mock.method(lifecycle(f.broker),'recover',async()=>{attempts++;await gate;f.store.saveEndpoint({...endpoint,active:true});f.store.updatePeer(f.c.id,{state:'ready'});return true;});
-  const deliver=f.claude.deliver.bind(f.claude);t.mock.method(f.claude,'deliver',async(...args:Parameters<typeof deliver>)=>{const result=await deliver(...args);if(args[2].id===queued.id)delivered();return result;});
+  const deliver=f.agy.deliver.bind(f.agy);t.mock.method(f.agy,'deliver',async(...args:Parameters<typeof deliver>)=>{const result=await deliver(...args);if(args[2].id===queued.id)delivered();return result;});
   const first=f.broker.pump(),recovery=lifecycle(f.broker).recoveryWork(f.c.id);let second:Promise<void>|undefined;
   try{
     await completePump(first);assert.equal((f.broker as any).pumping,undefined);assert.equal(f.store.message(queued.id).state,'accepted');assert.equal(f.store.message(queued.id).attempts,0);
@@ -98,7 +94,7 @@ test('一组配对有待发消息且恢复缓慢时消息泵仍处理新来信�
     assert.equal(f.store.message(incoming.id).state,'runtimeQueued');assert.equal(attempts,1);assert.equal(f.store.message(queued.id).attempts,0);
     assert.equal(lifecycle(f.broker).retryPending(f.c.id),false);assert.equal((f.broker as any).incidents.current(f.store.peer(f.c.id),endpoint),undefined);
     release();await completePump(resumed);await(f.broker as any).pumping;assert.equal(f.store.message(queued.id).state,'runtimeQueued');assert.equal(lifecycle(f.broker).isRestoring(f.c.id),false);
-    assert.deepEqual(f.claude.delivered.map(message=>message.id),[incoming.id,queued.id]);
+    assert.deepEqual(f.agy.delivered.map(message=>message.id),[incoming.id,queued.id]);
   }finally{release();await Promise.all([first,second,recovery]);}
 });
 
@@ -124,15 +120,8 @@ for(const unpaired of [false,true])test('路由期间新出现的在线目标不
   });
   await completePump(f.broker.pump());await new Promise<void>(resolve=>setImmediate(resolve));
   assert.equal(pump.mock.callCount(),1,'空检查不能自行追加消息泵');assert.equal(defer.mock.callCount(),0);assert.equal(lifecycle(f.broker).isRestoring(f.c.id),false);
-  assert.equal(f.store.message(messageId).state,unpaired?'accepted':'runtimeQueued');assert.equal(f.claude.delivered.length,unpaired?0:1);
+  assert.equal(f.store.message(messageId).state,unpaired?'accepted':'runtimeQueued');assert.equal(f.agy.delivered.length,unpaired?0:1);
   if(unpaired){await completePump(f.broker.pump());await new Promise<void>(resolve=>setImmediate(resolve));assert.equal(pump.mock.callCount(),2);assert.equal(f.store.message(messageId).attempts,0);}
-});
-
-for(const phase of ['stopped','handoff','user'] as const)test('统一恢复准入按 Claude 前台状态处理：'+phase,{skip:process.platform!=='linux'},async t=>{
-  const f=fixture(t);f.store.pair(f.c.id,f.x.id);f.store.updatePeer(f.c.id,{owner:'nxbridge',state:'offline'});f.store.deactivate(f.c.id);
-  mkdirSync(path.join(f.broker.home,'run'),{recursive:true});atomicJson(claudeChildFile(f.broker.home,f.c.id),{version:1,peerId:f.c.id,sessionId:f.c.sessionId,cwd:f.c.cwd,address:'test',phase,hasSession:true,updatedAt:Date.now()});
-  let attempts=0;t.mock.method(lifecycle(f.broker),'recover',async()=>{attempts++;return false;});
-  await(lifecycle(f.broker) as any).recoverPairedPeer(f.c.id,false);assert.equal(attempts,phase==='stopped'?1:0);
 });
 
 for(const state of ['paused','needsHuman'] as const)test('统一恢复准入保留人工暂停：'+state,async t=>{
@@ -161,10 +150,10 @@ test('notLoaded 清除订阅缓存，恢复合并并发，断线重连沿用原�
     const result=request.method==='initialize'?{userAgent:'codex-tui/0.166.0 (test; test) test (codex-tui; 0.166.0)'}:request.method==='thread/loaded/list'?{data:[]}:request.method==='thread/resume'?{thread:{id:'same-thread',cwd:process.cwd(),status:{type:'idle'}}}:request.method==='thread/read'?{thread:{id:'same-thread',cwd:process.cwd(),status:{type:'active'}}}:{};
     socket.send(JSON.stringify({jsonrpc:'2.0',id:request.id,result}));
   }));
-  const home=temporary(t),config={...DEFAULT_CONFIG,implicit:'never' as const},store=new Store(':memory:'),codex=new CodexAdapter(config,home),claude=new FakeAdapter();
-  const broker=new Broker(store,config,{codex,claude} as unknown as Adapters,home);
+  const home=temporary(t),config={...DEFAULT_CONFIG,implicit:'never' as const},store=new Store(':memory:'),codex=new CodexAdapter(config,home),agy=new FakeAdapter();
+  const broker=new Broker(store,config,{codex,agy} as unknown as Adapters,home);
   t.after(async()=>{await broker.stop();store.close();for(const socket of server.clients)socket.terminate();await new Promise<void>(r=>server.close(()=>r()));});
-  const c=store.register(registration('claude','c')),x=store.register(registration('codex','same-thread',{cwd:process.cwd(),endpoint:{address,epoch:address,mode:'app-server',pid:null,procStart:null}}));
+  const c=store.register(registration('agy','c')),x=store.register(registration('codex','same-thread',{cwd:process.cwd(),endpoint:{address,epoch:address,mode:'app-server',pid:null,procStart:null}}));
   store.updatePeer(x.id,{owner:'nxbridge'});const pair=store.pair(c.id,x.id),endpoint=store.endpoint(x.id)!;
                                       
   const restoreMember=async()=>{const pumping=broker.pump(),recovering=lifecycle(broker).recoveryWork(x.id);await Promise.all([pumping,recovering]);};

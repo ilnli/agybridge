@@ -1,16 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ownedClaudeArgs, ownedCodexPolicy, startOwnedCodex } from '../hosts/owned-launch-policy.js';
+import { ownedCodexPolicy, startOwnedCodex } from '../hosts/owned-launch-policy.js';
 import type { RpcClient } from '../ipc/rpc.js';
 
 const result=(reviewer='user',approval='never',sandbox='dangerFullAccess')=>({thread:{id:'new-owned'},approvalsReviewer:reviewer,approvalPolicy:approval,sandbox:{type:sandbox}});
-test('新后台按来源类别选择无人审批策略；Claude 仅为跨类或未知发送方开启本会话接收',()=>{
+test('新后台按来源类别选择无人审批策略',()=>{
   for(const source of ['prompting','unknown'] as const)assert.equal(ownedCodexPolicy(source).approvalsReviewer,'auto_review');
   assert.equal(ownedCodexPolicy('bypass').approvalPolicy,'never');assert.equal(ownedCodexPolicy('bypass').sandbox,'danger-full-access');
-  assert.deepEqual(ownedClaudeArgs('bypass'),['--permission-mode','bypassPermissions']);
-  for(const source of ['prompting','unknown'] as const)assert.equal(JSON.parse(ownedClaudeArgs(source).at(-1)!).crossSessionInbound,'accept');
-  assert.deepEqual(JSON.parse(ownedClaudeArgs('prompting',{model:'opus',effort:'high'}).at(-1)!),{crossSessionInbound:'accept',model:'opus',effortLevel:'high'});
-  assert.deepEqual(JSON.parse(ownedClaudeArgs('bypass',{model:'sonnet'}).at(-1)!),{model:'sonnet'});
 });
 test('原生审核能力未采用时只回收本次空线程，再核验新后台实际完整访问',async()=>{
   const calls:{method:string;params:any}[]=[];let starts=0;

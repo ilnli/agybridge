@@ -29,7 +29,7 @@ test('消息已进入上下文但明确回复仍在等待时，最终通知复�
   health.observe(pair,f.c,f.x,emptyDeliveryCounts(),unknown(),true,undefined,true);t.mock.timers.tick(300001);
   health.observe(pair,f.c,f.x,emptyDeliveryCounts(),unknown(),true,undefined,true);
   const notice=health.peek(pair.id,f.c.id)[0]!;assert.ok(notice);
-  const prepared=await(f.broker as any).runtimeHealth.prepareNotices({host:'claude',sessionId:'c',callId:'final-review'},[notice.id],false);
+  const prepared=await(f.broker as any).runtimeHealth.prepareNotices({host:'agy',sessionId:'c',callId:'final-review'},[notice.id],false);
   assert.equal(prepared.some((entry:any)=>entry.id===notice.id),true);
   assert.equal(health.get(pair.id,f.c.id,notice.id)?.state,'pending');
 });
@@ -79,7 +79,7 @@ test('后续已确认的投递不让历史 unknown 计入新依赖年龄；只�
 test('短暂故障恢复后，已经送达但尚未回复的长任务不冒充投递故障',t=>{
   t.mock.timers.enable({apis:['Date'],now:1000000});
   const f=fixture(t),pair=f.store.pair(f.c.id,f.x.id),health=f.broker.deliveryHealth;
-  const task=f.broker.send({actor:{host:'claude',sessionId:'c',callId:'long-task'},message:'需要长时间处理的任务',reply_expected:true},false);
+  const task=f.broker.send({actor:{host:'agy',sessionId:'c',callId:'long-task'},message:'需要长时间处理的任务',reply_expected:true},false);
   f.store.transition(task.message_id,'contextObserved');assert.equal(f.store.expectedReplyFacts(pair.id,f.x.id).length,1);
   health.observe(pair,f.c,f.x,emptyDeliveryCounts(),unknown(),true,undefined,true);assert.equal(health.active(pair.id,f.c.id),true);
   t.mock.timers.tick(360000);health.observe(pair,f.c,f.x,emptyDeliveryCounts(),{state:'reachable',reasons:[],checked_at:Date.now()},true,undefined,true);

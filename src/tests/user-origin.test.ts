@@ -26,9 +26,9 @@ test('独立终端矩阵按实际父链和结束原因判定，不依赖 shell �
     {name:'iTerm2 自定义 shell',evidence:ancestry(['xonsh','iTerm2','launchd'],'root'),allowed:true},
                                             
     {name:'start 另开终端且启动器已退出',evidence:ancestry(['cmd.exe'],'parent_missing'),allowed:true},
-    {name:'Claude 直接工具调用',evidence:ancestry(['bash','claude','Terminal'],'root'),allowed:false},
+    {name:'Claude 直接工具调用',evidence:ancestry(['bash','agy','Terminal'],'root'),allowed:false},
     {name:'Codex 经自定义 shell 调用',evidence:ancestry(['xonsh','codex.exe','Code.exe'],'root'),allowed:false},
-    {name:'start 启动器尚存且仍能观察到宿主',evidence:ancestry(['cmd.exe','cmd.exe','claude.exe'],'root'),allowed:false},
+    {name:'start 启动器尚存且仍能观察到宿主',evidence:ancestry(['cmd.exe','cmd.exe','agy.exe'],'root'),allowed:false},
     {name:'父链权限不足',evidence:ancestry(['cmd.exe'],'access',false),allowed:false},
     {name:'父链查询失败',evidence:ancestry(['zsh'],'query',false),allowed:false},
     {name:'父链深度耗尽',evidence:ancestry(['ksh'],'depth',false),allowed:false},
@@ -58,7 +58,7 @@ test('缺少交互来源不查询父链，查询异常也不能授予用户写�
 });
 
 test('可选终端能力对宿主调用或未知来源只返回否，不阻断普通操作也不授予人工恢复权限',async()=>{
-  const hosted=ancestry(['bash','claude'],'root'),unknown=ancestry(['cmd.exe'],'access',false);
+  const hosted=ancestry(['bash','agy'],'root'),unknown=ancestry(['cmd.exe'],'access',false);
   for(const evidence of [hosted,unknown]){
     let queries=0;
     const allowed=await isExternalTerminal(origin,async()=>{queries++;return evidence;});
@@ -76,7 +76,7 @@ test('打开现有会话时无效的可选终端凭据不阻断普通打开，�
 test('当前平台原生定点父链核验调用方代次，并按同一规则决定终端来源',async t=>{
   const current=await processIdentity(process.pid),evidence=await processAncestry(process.pid,32);
   assert.equal(evidence.ancestors[0]?.pid,current.pid);assert.equal(evidence.ancestors[0]?.startedAt,current.startedAt);
-  const request={pid:current.pid,procStart:current.startedAt,tty:true as const},allowed=evidence.complete&&!evidence.ancestors.some(row=>/^(?:claude|codex)(?:\.exe)?$/i.test(row.name));
+  const request={pid:current.pid,procStart:current.startedAt,tty:true as const},allowed=evidence.complete&&!evidence.ancestors.some(row=>/^(?:agy|codex)(?:\.exe)?$/i.test(row.name));
                                  
   if(allowed)await requireExternalTerminal(request,async()=>evidence);
   else await assert.rejects(requireExternalTerminal(request,async()=>evidence),{code:'user_terminal_required'});

@@ -101,7 +101,7 @@ for(const mode of ['remote','user','unproven','shared'] as const)test('身份冲
   (f.codex as any).restart=async()=>assert.fail('不能停止非独占已证明归属的宿主');
   const message=f.store.accept(pair,f.c,'保留直到安全重载','hold');await f.broker.pump();
   assert.equal(f.store.message(message.id).state,'accepted');assert.equal(f.store.message(message.id).attempts,0);assert.equal(f.codex.injected.length,0);assert.equal(f.codex.woken.length,0);
-  const status=await f.broker.dispatch('status',{actor:{host:'claude',sessionId:'c',callId:'status'},model_view:true}) as any;
+  const status=await f.broker.dispatch('status',{actor:{host:'agy',sessionId:'c',callId:'status'},model_view:true}) as any;
   assert.ok(status.integrationIssues.some((issue:any)=>issue.code==='codex_identity_conflict'&&issue.message.includes('投递已暂停')));
 });
 
@@ -112,14 +112,14 @@ test('真实 WebSocket 远程端点固定旧 originator 时只握手，不发业
     const message=JSON.parse(raw.toString());methods.push(message.method);
     if(message.id!==undefined)socket.send(JSON.stringify({id:message.id,result:{userAgent:'nxbridge/0.166.0 (test; test) test (codex-tui; 0.166.0)'}}));
   }));
-  const home=temporary(t),store=new Store(':memory:'),codex=new CodexAdapter(DEFAULT_CONFIG,home),broker=new Broker(store,DEFAULT_CONFIG,{codex,claude:new FakeAdapter()} as unknown as Adapters,home);
+  const home=temporary(t),store=new Store(':memory:'),codex=new CodexAdapter(DEFAULT_CONFIG,home),broker=new Broker(store,DEFAULT_CONFIG,{codex,agy:new FakeAdapter()} as unknown as Adapters,home);
   t.after(async()=>{await broker.stop();store.close();for(const socket of server.clients)socket.terminate();await new Promise<void>(resolve=>server.close(()=>resolve()));});
-  const c=store.register(registration('claude','remote-source')),x=store.register(registration('codex','remote-target',{endpoint:{mode:'app-server',address,epoch:address,pid:null,procStart:null}})),pair=store.pair(c.id,x.id),message=store.accept(pair,c,'远程不能重启时保留','remote-real');
+  const c=store.register(registration('agy','remote-source')),x=store.register(registration('codex','remote-target',{endpoint:{mode:'app-server',address,epoch:address,pid:null,procStart:null}})),pair=store.pair(c.id,x.id),message=store.accept(pair,c,'远程不能重启时保留','remote-real');
   store.updatePeer(x.id,{owner:'nxbridge'});await broker.pump();
   assert.equal(store.message(message.id).state,'accepted');assert.equal(store.message(message.id).attempts,0);
   assert.deepEqual(methods,['initialize','initialized','initialize']);
-  const result=await broker.dispatch('status',{actor:{host:'claude',sessionId:c.sessionId,callId:'status'},model_view:true}) as any;
+  const result=await broker.dispatch('status',{actor:{host:'agy',sessionId:c.sessionId,callId:'status'},model_view:true}) as any;
   assert.ok(result.integrationIssues.some((issue:any)=>issue.code==='codex_identity_conflict'&&issue.message.includes('投递已暂停')));
   assert.match(formatGlobalStatus(broker.status()),/投递已暂停/);
-  assert.match(formatStatus(broker.status({host:'claude',sessionId:c.sessionId!,callId:'status'})),/投递已暂停/);
+  assert.match(formatStatus(broker.status({host:'agy',sessionId:c.sessionId!,callId:'status'})),/投递已暂停/);
 });

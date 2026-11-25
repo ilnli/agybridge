@@ -44,7 +44,7 @@ export class WindowsIdentitySession {
       return child;
     }).finally(()=>{this.opening=undefined;});
   }
-  async read(pid:number,timeout=2000,skipOrigin=false,host:'codex'|'claude'='codex'):Promise<WindowsHostIdentity>{
+  async read(pid:number,timeout=2000,skipOrigin=false,host:'codex'|'agy'='codex'):Promise<WindowsHostIdentity>{
     return this.request(pid,timeout,skipOrigin?host+'-hook':host);
   }
                                            

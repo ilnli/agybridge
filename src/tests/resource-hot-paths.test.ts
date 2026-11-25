@@ -43,9 +43,9 @@ test('连续原生文本增量不查询成员 SQL，轮次与 hook 完成仍更�
   assert.equal(peerReads.mock.callCount(),0);assert.equal(endpointReads.mock.callCount(),0);
   emit('turn/started',{turn:{id:'resource-turn'}});assert.ok(peerReads.mock.callCount()>0);
   const key='integration:'+f.x.id;assert.equal(f.store.setting<any>(key).turnsWithoutHook,1);
-  emit('hook/completed',{run:{source:'plugin',sourcePath:'nxbridge/hooks',status:'completed'}});
+  emit('hook/completed',{run:{source:'plugin',sourcePath:'agybridge/hooks',status:'completed'}});
   assert.equal(f.store.setting<any>(key).turnsWithoutHook,0);assert.equal(f.store.currentPair()!.id,pair.id);
-  emit('hook/completed',{run:{source:'plugin',sourcePath:'nxbridge/hooks',status:'failed',eventName:'postToolUse',startedAt:1000,completedAt:4000,durationMs:3000,entries:[{kind:'error',text:'hook timed out after 3s'},{kind:'stdout',text:'不应保存的命令正文'}]}});
+  emit('hook/completed',{run:{source:'plugin',sourcePath:'agybridge/hooks',status:'failed',eventName:'postToolUse',startedAt:1000,completedAt:4000,durationMs:3000,entries:[{kind:'error',text:'hook timed out after 3s'},{kind:'stdout',text:'不应保存的命令正文'}]}});
   const failed=f.store.events(0,1000).filter(row=>row.type==='hook.native.failed');assert.equal(failed.length,1);
   assert.deepEqual(failed[0]!.data,{peerId:f.x.id,sessionId:f.x.sessionId,turnId:'resource-turn',event:'postToolUse',startedAt:1000,completedAt:4000,durationMs:3000});
   t.diagnostic(JSON.stringify({nativeDeltas:10000,deltaPeerQueries:0,deltaEndpointQueries:0,wallMs:performance.now()-began,cpuMs:(used.user+used.system)/1000,scope:'native progress remains observed; lifecycle/hook evidence still resolves current member'}));

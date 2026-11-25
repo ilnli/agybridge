@@ -12,16 +12,12 @@ import { frozenProfiles } from '../broker/profiles/frozen-profile.js';
 import { ownedCodexPolicy, startOwnedCodex } from '../hosts/owned-launch-policy.js';
 import type { RpcClient } from '../ipc/rpc.js';
 import { CodexAdapter } from '../hosts/codex/adapter.js';
-import { ClaudeAdapter } from '../hosts/claude/adapter.js';
 import { saveManagedRuntime } from '../hosts/managed-runtimes.js';
 import { managedMarker } from '../install/installation.js';
 import { randomUUID } from 'node:crypto';
-import {atomicJson} from '../shared/files.js';
-import { claudeChild, claudeChildFile, type ClaudeChildRecord } from '../hosts/claude/claude-child.js';
 import { formatPartnerProfile } from '../app/commands/partner-profile-command.js';
-import { mkdirSync } from 'node:fs';
 
-const actor={host:'claude' as const,sessionId:'c',callId:'profile'};
+const actor={host:'agy' as const,sessionId:'c',callId:'profile'};
 function owned(t:Parameters<typeof fixture>[0]){
   const f=fixture(t);f.store.pair(f.c.id,f.x.id);f.store.updatePeer(f.x.id,{owner:'nxbridge',state:'ready',model:'old',effort:'low'});
   const calls:ModelProfile[]=[];
@@ -63,7 +59,7 @@ test('待生效的模型选择不允许取走新消息；用户接管后不再�
 
 test('投递异步核验期间新增模型选择，最后提交边界仍保留原消息',async t=>{
   const f=owned(t);f.store.updatePeer(f.c.id,{owner:'nxbridge',state:'ready'});let checked=false;
-  f.claude.deliver=async(_peer,_endpoint,message)=>{
+  f.agy.deliver=async(_peer,_endpoint,message)=>{
     await Promise.resolve();f.broker.profiles.set(f.store.peer(f.c.id),{model:'next'});checked=true;
     assert.equal(await message.beforeSubmit!(),false);return{state:'expired',evidence:'模型选择等待核验'};
   };
@@ -98,15 +94,12 @@ test('设置回读期间关闭成员不确认过期结果，失败后释放跨�
   assert.equal(applied.status,'applied');assert.equal(applied.effective.model,'fresh');
 });
 
-test('拒绝用户窗口、子代理、自身宿主与不支持的 Claude 会话变更',async t=>{
+test('拒绝用户窗口、子代理与自身宿主会话变更',async t=>{
   const f=owned(t);
   f.store.updatePeer(f.x.id,{owner:'user'});
   await assert.rejects(f.broker.dispatch('partner.profile',{actor,action:'set',model:'x'}),{code:'process_owned_by_user'});
   await assert.rejects(f.broker.dispatch('partner.profile',{actor:{...actor,via:'child'},action:'set',model:'x'}),{code:'subagent_denied'});
-  await assert.rejects(f.broker.dispatch('partner.profile',{actor,host:'claude',action:'set',model:'x'}),{code:'invalid_target'});
-  f.store.updatePeer(f.c.id,{owner:'nxbridge'});
-  await assert.rejects(f.broker.dispatch('partner.profile',{host:'claude',peer_id:f.c.id,action:'set',model:'next'}),{code:'profile_change_unsupported'});
-  assert.equal(f.broker.profiles.intent(f.store.peer(f.c.id)),undefined);
+  await assert.rejects(f.broker.dispatch('partner.profile',{actor,host:'agy',action:'set',model:'x'}),{code:'invalid_target'});
 });
 
 test('新建默认配置只解析一次；冻结仅采集新后台的同事件配置',t=>{
@@ -141,29 +134,6 @@ test('Claude 别名保留原请求并以已核验解析结果判断观察，偏�
   assert.deepEqual(f.broker.profiles.requested(peer),{model:'opus',effort:'high'});assert.equal(f.broker.profiles.view(f.store.peer(peer.id)).status,'applied');
   f.broker.profiles.observed(f.store.peer(peer.id),{model:'claude-opus-current',effort:'high'});assert.equal(f.broker.profiles.blocks(peer),false);
   f.broker.profiles.observed(f.store.peer(peer.id),{model:'other'});assert.equal(f.broker.profiles.blocks(peer),true);
-});
-
-test('新 Claude 的请求先等待原生回读，不能把任意首个模型当成别名解析结果',async t=>{
-  const f=owned(t),peer=f.store.placeholder('claude',f.c.cwd);
-  f.broker.profiles.set(peer,{model:'opus',effort:'high'});
-  f.store.adopt(peer.id,registration('claude','new-profile',{model:'different',effort:'low'}));
-  const current=f.store.peer(peer.id);f.broker.profiles.observed(current,{model:'different',effort:'low'});
-  assert.equal(f.broker.profiles.intent(current)?.resolved,undefined);assert.equal(f.broker.profiles.view(current).status,'pending');assert.equal(f.broker.profiles.blocks(current),true);
-  await (f.broker as any).profileCoordination.verifyInitial(current);
-  assert.equal(f.broker.profiles.view(current).status,'pending');assert.equal(f.broker.profiles.blocks(current),true);
-  f.store.saveEndpoint({...f.store.endpoint(peer.id)!,nativeProfile:{model:'claude-opus-current',flag:{model:'opus',effort:'high'},effective:{model:'opus',effort:'high'},observedAt:Date.now()}});
-  await (f.broker as any).profileCoordination.verifyInitial(current);
-  assert.equal(f.broker.profiles.view(f.store.peer(peer.id)).status,'applied');assert.equal(f.broker.profiles.blocks(current),false);assert.equal(f.store.peer(peer.id).model,'claude-opus-current');
-});
-
-test('新 Claude 原生设置或环境覆盖与选择冲突时，首份任务保持暂缓',async t=>{
-  for(const profile of [{flag:{model:'different',effort:'high'},effective:{model:'different',effort:'high'}},{flag:{model:'opus',effort:'high'},effective:{model:'policy',effort:'high'}},{flag:{model:'opus',effort:'high'},effective:{model:'opus',effort:'high'},effortOverride:'low'}]){
-    const f=owned(t),peer=f.store.placeholder('claude',f.c.cwd);f.broker.profiles.set(peer,{model:'opus',effort:'high'});
-    f.store.adopt(peer.id,registration('claude','conflict'));
-    f.store.saveEndpoint({...f.store.endpoint(peer.id)!,nativeProfile:{model:'claude-opus-current',...profile,observedAt:Date.now()}});
-    await (f.broker as any).profileCoordination.verifyInitial(f.store.peer(peer.id));
-    const view=f.broker.profiles.view(f.store.peer(peer.id));assert.equal(view.status,'failed');assert.equal(view.delivery_held,true);assert.equal(view.requested?.model,'opus');
-  }
 });
 
 test('新 Codex 启动和安全权限降级都保留模型与 effort；不采用请求时清理空线程',async()=>{
@@ -236,28 +206,6 @@ test('失败后的部分事件不能借用旧成员字段解除暂停',t=>{
   f.broker.profiles.failed(peer,new DeliveryError('profile_verification_failed','跨进程核验已确认不符',false));assert.equal(f.broker.profiles.blocks(peer),true);
 });
 
-test('首次 Claude 回读超时保持 pending，较晚的真实原生快照可解锁',async t=>{
-  const f=owned(t),peer=f.store.placeholder('claude',f.c.cwd);f.broker.profiles.set(peer,{model:'opus',effort:'high'});
-  f.store.adopt(peer.id,registration('claude','late-profile'));
-  const current=f.store.peer(peer.id);f.broker.profiles.waiting(current,new DeliveryError('timeout','原生尚未就绪'));
-  assert.equal(f.broker.profiles.intent(current)?.status,'pending');assert.equal(f.broker.profiles.blocks(current),true);
-  f.store.saveEndpoint({...f.store.endpoint(peer.id)!,nativeProfile:{model:'claude-opus-current',flag:{model:'opus',effort:'high'},effective:{model:'opus',effort:'high'},observedAt:Date.now()}});
-  await (f.broker as any).profileCoordination.verifyInitial(current);
-  assert.equal(f.broker.profiles.blocks(f.store.peer(peer.id)),false);
-});
-
-test('Claude child 尚在启动时保留首次核验，晚到的原生回读解除暂停',async t=>{
-  const f=owned(t),peer=f.store.placeholder('claude',f.c.cwd),home=(f.broker as any).home;
-  f.broker.profiles.set(peer,{model:'opus',effort:'high'});f.store.adopt(peer.id,registration('claude','starting-child'));
-  mkdirSync(home+'/run',{recursive:true});atomicJson(claudeChildFile(home,peer.id),{version:1,peerId:peer.id,sessionId:'starting-child',phase:'starting'});
-  const native=new ClaudeAdapter(f.broker.config,home);t.after(()=>native.close());
-  (f.claude as any).readProfile=(current:Peer)=>native.readProfile(current);
-  await (f.broker as any).profileCoordination.verifyInitial(f.store.peer(peer.id));
-  assert.equal(f.broker.profiles.intent(peer)?.status,'pending');assert.equal(f.broker.profiles.blocks(f.store.peer(peer.id)),true);
-  (f.claude as any).readProfile=async()=>({model:'claude-opus-current',effort:'high',requestedModel:'opus'});
-  await (f.broker as any).profileCoordination.verifyInitial(f.store.peer(peer.id));assert.equal(f.broker.profiles.blocks(f.store.peer(peer.id)),false);
-});
-
 test('显式创建字段不进入冻结记录；effort 单字段选择只冻结宿主模型',t=>{
   const home=temporary(t),store=new Store(':memory:');t.after(()=>store.close());
   const config={...DEFAULT_CONFIG,partnerProfiles:{codex:{source:'frozen' as const}}},profiles=new PartnerProfiles(store,home,config);
@@ -269,7 +217,7 @@ test('显式创建字段不进入冻结记录；effort 单字段选择只冻结�
 });
 
 test('明确指定创建设置时替换已启动预备成员，回收旧后台且原草稿只发送一次',async t=>{
-  const f=fixture(t,{implicit:'on-demand'}),sender={host:'claude' as const,sessionId:f.c.sessionId!,callId:'provisional-profile'};
+  const f=fixture(t,{implicit:'on-demand'}),sender={host:'agy' as const,sessionId:f.c.sessionId!,callId:'provisional-profile'};
   const provisional=f.store.placeholder('codex',f.c.cwd);f.store.adopt(provisional.id,registration('codex','already-created'));
   f.store.setSetting('implicitPartner:'+f.c.id,{peerId:provisional.id,sessionId:f.c.sessionId,callId:sender.callId});
   const view=f.store.selections.create(f.c,sender,f.broker.config,{actor:sender,message:'唯一的原草稿'}) as any;
@@ -282,7 +230,7 @@ test('明确指定创建设置时替换已启动预备成员，回收旧后台�
 });
 
 test('慢成员的设置核验不阻塞另一配对，同成员的后台阶段不并发提交',async t=>{
-  const f=owned(t),c2=f.store.register(registration('claude','second-c')),x2=f.store.register(registration('codex','second-x'));
+  const f=owned(t),c2=f.store.register(registration('agy','second-c')),x2=f.store.register(registration('codex','second-x'));
   f.store.pair(c2.id,x2.id);f.store.updatePeer(x2.id,{owner:'nxbridge'});
   f.broker.profiles.set(f.store.peer(f.x.id),{model:'first'});f.broker.profiles.set(f.store.peer(x2.id),{model:'second'});
   let release!:()=>void,entered!:()=>void;const started=new Promise<void>(resolve=>entered=resolve),waiting=new Promise<void>(resolve=>release=resolve),calls:string[]=[];
@@ -322,7 +270,7 @@ test('首次设置回读的拥塞或能力错误保持等待，不能误报为�
   await (f.broker as any).profileCoordination.verifyInitial(f.store.peer(peer.id));assert.equal(f.broker.profiles.blocks(f.store.peer(peer.id)),false);
 });
 
-test('重启、退休或接管期间不读取模型设置；提交接管后的真实观测保留为会话基线',async t=>{
+test('重启或退休期间不读取模型设置',async t=>{
   const f=owned(t),peer=f.store.peer(f.x.id);f.broker.profiles.set(peer,{model:'chosen'});f.broker.profiles.failed(peer,profileChangeFailure(new DeliveryError('timeout','超时'),true));
   let reads=0;(f.codex as any).readProfile=async()=>{reads++;return{model:'chosen'};};
   const releaseRestart=lifecycle(f.broker).beginRestart(peer.id);
@@ -330,23 +278,6 @@ test('重启、退休或接管期间不读取模型设置；提交接管后的�
   const retirement=lifecycle(f.broker).releaseOwned([peer.id]);
   try{await (f.broker as any).profileCoordination.reconcile(peer);}finally{await retirement;}
   assert.equal(reads,0);
-  const childPeer=f.store.peer(f.c.id),home=(f.broker as any).home,endpoint=f.store.endpoint(childPeer.id)!;
-  const child={version:1,peerId:childPeer.id,sessionId:childPeer.sessionId,cwd:childPeer.cwd,address:'test',phase:'user',handoffId:'profile-handoff',updatedAt:Date.now(),modelProfile:{model:'old-canonical',effort:'low'},foreground:{pid:endpoint.pid,startedAt:endpoint.procStart}} as ClaudeChildRecord;
-  mkdirSync(home+'/run',{recursive:true});atomicJson(claudeChildFile(home,childPeer.id),child);
-  lifecycle(f.broker).returnClaudeChild(childPeer,child,child.handoffId!);assert.deepEqual(claudeChild(home,childPeer.id)?.modelProfile,child.modelProfile);
-  atomicJson(claudeChildFile(home,childPeer.id),child);
-  f.store.saveEndpoint({...endpoint,nativeProfile:{model:'foreground-canonical',effective:{effort:'high'},observedAt:Date.now()}});
-  lifecycle(f.broker).returnClaudeChild(childPeer,child,child.handoffId!);assert.deepEqual(claudeChild(home,childPeer.id)?.modelProfile,{model:'foreground-canonical',effort:'high'});
-  atomicJson(claudeChildFile(home,childPeer.id),child);
-  f.store.saveEndpoint({...endpoint,nativeProfile:{model:'foreground-canonical',effective:{effort:'high'},runtimeEffort:'medium',observedAt:Date.now()}});
-  lifecycle(f.broker).returnClaudeChild(childPeer,child,child.handoffId!);assert.deepEqual(claudeChild(home,childPeer.id)?.modelProfile,{model:'foreground-canonical',effort:'medium'});
-  atomicJson(claudeChildFile(home,childPeer.id),child);
-  f.store.saveEndpoint({...endpoint,nativeProfile:{model:'foreground-canonical',effective:{effort:'high'},runtimeEffort:null,observedAt:Date.now()}});
-  lifecycle(f.broker).returnClaudeChild(childPeer,child,child.handoffId!);assert.deepEqual(claudeChild(home,childPeer.id)?.modelProfile,{model:'foreground-canonical'});
-  atomicJson(claudeChildFile(home,childPeer.id),child);
-  f.store.saveEndpoint({...endpoint,nativeProfile:{model:'foreground-canonical',effective:{effort:'high'},runtimeEffort:'medium',effortUnverified:true,observedAt:Date.now()}});
-  lifecycle(f.broker).returnClaudeChild(childPeer,child,child.handoffId!);assert.deepEqual(claudeChild(home,childPeer.id)?.modelProfile,{model:'foreground-canonical'});
-  assert.equal(f.broker.profiles.blocks(childPeer),false);
 });
 
 test('既有托管暂停仍准备通知，新模型暂停才提前返回',async t=>{

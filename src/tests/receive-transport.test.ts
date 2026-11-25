@@ -10,13 +10,13 @@ import type { Actor, Host } from '../types.js';
 type ReceiveResult={messages:{message_id:string;message:string}[];status:string};
 const budget=1024*1024;
 
-for(const target of ['claude','codex'] as Host[])for(const [label,body] of [
+for(const target of ['agy','codex'] as Host[])for(const [label,body] of [
   ['ASCII','a'.repeat(256*1024)],
   ['Unicode','汉🙂'.repeat(Math.floor(256*1024/7))],
   ['JSON 转义','\u0001'.repeat(256*1024)]
 ] as const)test(`${target} embedded 大批 ${label} 消息按序分批，超额不认领，同次取件重试不增次数`,async t=>{
   const {store,broker,c,x}=fixture(t),home=temporary(t);await ensureHome(home);
-  const peer=target==='claude'?c:x,sender=target==='claude'?x:c;
+  const peer=target==='agy'?c:x,sender=target==='agy'?x:c;
   store.deactivate(peer.id);store.register(registration(target,peer.sessionId!,{endpoint:{mode:'embedded',address:'',epoch:'embedded',pid:process.pid,procStart:'test'}}));
   const pair=store.pair(c.id,x.id),ids=Array.from({length:12},(_,index)=>store.accept(pair,sender,body,'large-'+index).id);
   const server=await listenBroker(home,async(_method,actor)=>broker.receive(actor as Actor)),rpc=await connectBroker(home);

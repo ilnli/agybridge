@@ -13,11 +13,11 @@ import {atomicJson} from '../shared/files.js';
 
 test('无可推进身份的原生启动记录立即停止自动重试，显式回收仍可重新核验',async t=>{
   const f=fixture(t);f.store.updatePeer(f.c.id,{owner:'nxbridge'});
-  (f.claude as any).release=async()=>{throw new BridgeError('claude_release_unresolved','仅剩未结算记录');};
+  (f.agy as any).release=async()=>{throw new BridgeError('agy_release_unresolved','仅剩未结算记录');};
   await lifecycle(f.broker).releaseOwned([f.c.id]);
   const pending=f.store.setting<any>('processRetirements')[f.c.id];assert.equal(pending.attempts,1);assert.equal(pending.nextAt,Number.MAX_SAFE_INTEGER);
   await f.broker.pump();assert.equal(f.store.setting<any>('processRetirements')[f.c.id].attempts,1);
-  (f.claude as any).release=async()=>{};assert.equal((await f.broker.dispatch('runtime.retire',{peer_id:f.c.id})as any).released,true);
+  (f.agy as any).release=async()=>{};assert.equal((await f.broker.dispatch('runtime.retire',{peer_id:f.c.id})as any).released,true);
 });
 
 test('残留后台区分历史失败与当前归属诊断，活动配对及用户窗口拒绝回收',async t=>{
@@ -27,7 +27,7 @@ test('残留后台区分历史失败与当前归属诊断，活动配对及用�
   f.store.unpair(pair.id);(f.codex as any).releaseRuntime=async()=> 'socket 对端独占性无法核验';
   for(let index=0;index<3;index++)await lifecycle(f.broker).releaseOwned([f.x.id]);
   const status:any=await f.broker.dispatch('status',{}),retired=status.capabilities.retirements.find((value:any)=>value.peerId===f.x.id);
-  assert.equal(retired.exhausted,true);assert.equal(retired.nextAt,Number.MAX_SAFE_INTEGER);assert.match(retired.lastFailure,/socket 对端独占性无法核验/);assert.equal(retired.action,'nxbridge retire --member '+f.x.id);
+  assert.equal(retired.exhausted,true);assert.equal(retired.nextAt,Number.MAX_SAFE_INTEGER);assert.match(retired.lastFailure,/socket 对端独占性无法核验/);assert.equal(retired.action,'agybridge retire --member '+f.x.id);
   assert.equal(retired.state,'record-only');assert.deepEqual(retired.processes,[]);assert.match(retired.currentReason,/未结算记录/);assert.equal(retired.error,undefined);
   (f.codex as any).releaseRuntime=async()=>undefined;
   assert.equal((await f.broker.dispatch('runtime.retire',{peer_id:f.x.id}) as any).released,true);assert.equal(f.store.setting<any>('processRetirements')[f.x.id],undefined);

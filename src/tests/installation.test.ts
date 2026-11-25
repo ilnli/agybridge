@@ -11,16 +11,16 @@ import {PACKAGE_ROOT} from '../shared/package-location.js';
 import { temporary, temporaryDirectory } from './support/temporary.js';
 
 test('状态查询共用同次缓存清单，保留归属核验且下次重新读取磁盘',t=>{
-  const root=temporary(t),home=path.join(root,'bridge'),hostHome=path.join(root,'claude');mkdirSync(home);
-  const directories=Array.from({length:8},(_,index)=>path.join(hostHome,'plugins','cache','nxbridge-local','nxbridge','v'+index));
+  const root=temporary(t),home=path.join(root,'bridge'),hostHome=path.join(root,'codex');mkdirSync(home);
+  const directories=Array.from({length:8},(_,index)=>path.join(hostHome,'plugins','cache','agybridge-local','agybridge','v'+index));
   for(const[index,directory]of directories.entries()){
-    mkdirSync(path.join(directory,'.claude-plugin'),{recursive:true});
-    writeFileSync(path.join(directory,'.claude-plugin','plugin.json'),JSON.stringify({name:'nxbridge',version:'0.1.'+index}),'utf8');
+    mkdirSync(path.join(directory,'.codex-plugin'),{recursive:true});
+    writeFileSync(path.join(directory,'.codex-plugin','plugin.json'),JSON.stringify({name:'agybridge',version:'0.1.'+index}),'utf8');
     writeFileSync(path.join(directory,'runtime.json'),JSON.stringify({home:index===7?path.join(root,'foreign'):home}),'utf8');
   }
-  writeFileSync(path.join(home,'setup-state.json'),JSON.stringify({cacheDirectories:directories.map(directory=>({host:'claude',directory}))}),'utf8');
+  writeFileSync(path.join(home,'setup-state.json'),JSON.stringify({cacheDirectories:directories.map(directory=>({host:'codex',directory}))}),'utf8');
   assert.equal(installedCacheStatus(home).length,7);
-  writeFileSync(path.join(directories[0]!,'.claude-plugin','plugin.json'),JSON.stringify({name:'other-plugin',version:'0.1.0'}),'utf8');
+  writeFileSync(path.join(directories[0]!,'.codex-plugin','plugin.json'),JSON.stringify({name:'other-plugin',version:'0.1.0'}),'utf8');
   assert.equal(installedCacheStatus(home).length,6);
   writeFileSync(path.join(directories[1]!,'runtime.json'),JSON.stringify({home:path.join(root,'foreign')}),'utf8');
   assert.equal(installedCacheStatus(home).length,5);
@@ -43,9 +43,9 @@ test('全新安装创建尚不存在的用户 PATH 目录，不选择 Node 系�
 test('只保护选中目录的命令，其他 PATH 目录的同名命令仅在遮挡时提示',t=>{
   const directory=temporary(t),home=path.join(directory,'home'),bin=path.join(directory,'bin'),foreign=path.join(directory,'foreign');
   mkdirSync(bin);mkdirSync(foreign);
-  const filename=path.join(foreign,process.platform==='win32'?'nxbridge.cmd':'nxbridge');writeFileSync(filename,'其他安装的命令','utf8');
+  const filename=path.join(foreign,process.platform==='win32'?'agybridge.cmd':'agybridge');writeFileSync(filename,'其他安装的命令','utf8');
   const options={directories:[bin],pathValue:[foreign,bin].join(path.delimiter)},shadowed=planShim(home,options);
-  assert.equal(shadowed.directory,bin);assert.match(shadowed.notice!,/会遮住/);assert.ok(shadowed.notice!.includes(filename));assert.match(shadowed.notice!,/nxbridge\.cjs/);
+  assert.equal(shadowed.directory,bin);assert.match(shadowed.notice!,/会遮住/);assert.ok(shadowed.notice!.includes(filename));assert.match(shadowed.notice!,/agybridge\.cjs/);
   installShim(shadowed);assert.equal(readFileSync(filename,'utf8'),'其他安装的命令');
   assert.equal(planShim(home,{...options,pathValue:[bin,foreign].join(path.delimiter)}).notice,undefined);
   assert.throws(()=>planShim(home,{directories:[foreign],pathValue:options.pathValue}),{code:'shim_conflict'});
@@ -55,7 +55,7 @@ test('生成的命令入口支持中文路径并转发参数、标准输入和�
   const directory=temporary(t),home=path.join(directory,'中文 私有目录'),bin=path.join(directory,'中文 命令目录'),entry=path.join(directory,'隔离 入口.mjs');mkdirSync(bin);
   writeFileSync(entry,"import {readFileSync} from 'node:fs';console.log(JSON.stringify({args:process.argv.slice(2),input:process.argv.includes('--no-stdin')?'':readFileSync(0,'utf8')}));process.exitCode=7;",'utf8');
   const plan=planShim(home,{directories:[bin],pathValue:bin,entry});installShim(plan);
-  const launcher=process.platform==='win32'?path.join(bin,'nxbridge.cjs'):path.join(home,'bin','nxbridge.cjs');
+  const launcher=process.platform==='win32'?path.join(bin,'agybridge.cjs'):path.join(home,'bin','agybridge.cjs');
   const args=['中文 参数','','a"b','x&y'];
   const result=await new Promise<{code:number|null;stdout:string;stderr:string}>((resolve,reject)=>{
     const child=spawn(process.execPath,[launcher,...args],{stdio:['pipe','pipe','pipe'],windowsHide:true});let stdout='',stderr='';
@@ -63,7 +63,7 @@ test('生成的命令入口支持中文路径并转发参数、标准输入和�
   });
   assert.equal(result.code,7);assert.equal(result.stderr,'');assert.deepEqual(JSON.parse(result.stdout),{args,input:'中文标准输入'});
   if(process.platform==='win32'){
-    const shim=path.join(bin,'nxbridge.cmd'),quote=(value:string)=>"'"+value.replaceAll("'","''")+"'";
+    const shim=path.join(bin,'agybridge.cmd'),quote=(value:string)=>"'"+value.replaceAll("'","''")+"'";
     const command=`chcp 65001 > $null; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); & ${quote(shim)} --no-stdin '中文 参数'; exit $LASTEXITCODE`;
     const running=promisify(execFile)(windowsPowerShell(),['-NoLogo','-NoProfile','-NonInteractive','-Command',command],{windowsHide:true,timeout:10000});running.child.stdin?.end();
     await assert.rejects(running,error=>{const result=error as Error&{code:number;stdout:string};assert.equal(result.code,7);assert.deepEqual(JSON.parse(result.stdout).args,['--no-stdin','中文 参数']);return true;});
@@ -75,25 +75,25 @@ test('相同 Node 的安装入口及两端插件不创建额外父进程，新�
   const stub=(revision:string)=>`console.log(JSON.stringify({pid:process.pid,parent:process.ppid,revision:${JSON.stringify(revision)},args:process.argv.slice(2)}));`;
   writeFileSync(entry,stub('first'),'utf8');writeFileSync(next,stub('next'),'utf8');const plan=planShim(home,{entry,pathValue:''});installShim(plan);
   const launch=async(file:string,command='mcp')=>new Promise<any>((resolve,reject)=>{const child=spawn(process.execPath,[file,command,'--host','codex'],{stdio:['ignore','pipe','pipe'],windowsHide:true});let output='',error='';child.stdout!.on('data',chunk=>output+=chunk);child.stderr!.on('data',chunk=>error+=chunk);child.once('error',reject);child.once('close',code=>{try{assert.equal(code,0,error);const result=JSON.parse(output);assert.equal(result.pid,child.pid);assert.equal(result.parent,process.pid);resolve(result);}catch(error){reject(error);}});});
-  const launcher=path.join(home,'bin','nxbridge.cjs');assert.equal((await launch(launcher)).revision,'first');
-  for(const host of ['codex','claude'])for(const installed of [false,true]){
+  const launcher=path.join(home,'bin','agybridge.cjs');assert.equal((await launch(launcher)).revision,'first');
+  for(const host of ['codex','agy'])for(const installed of [false,true]){
     const plugin=path.join(directory,host+installed);mkdirSync(plugin);cpSync(path.join(PACKAGE_ROOT,'plugins',host,'bridge.cjs'),path.join(plugin,'bridge.cjs'));
     writeFileSync(path.join(plugin,'runtime.json'),JSON.stringify({node:process.execPath,entry,home,...(installed?{launcher}:{})}),'utf8');assert.equal((await launch(path.join(plugin,'bridge.cjs'))).revision,'first');
   }
   const pointer=path.join(home,'bin','runtime.json'),runtime=JSON.parse(readFileSync(pointer,'utf8'));writeFileSync(pointer,JSON.stringify({...runtime,entry:next}),'utf8');assert.equal((await launch(launcher)).revision,'next');
-  for(const command of ['mcp','mod','hook']){
+  for(const command of ['mcp','hook']){
     writeFileSync(path.join(directory,command+'-entry.mjs'),stub(command),'utf8');assert.equal((await launch(launcher,command)).revision,command);
-    for(const host of ['codex','claude'])for(const installed of [false,true])assert.equal((await launch(path.join(directory,host+installed,'bridge.cjs'),command)).revision,command);
+    for(const host of ['codex','agy'])for(const installed of [false,true])assert.equal((await launch(path.join(directory,host+installed,'bridge.cjs'),command)).revision,command);
   }
 });
 
 test('插件经安装入口切换 Node 时仍继承首个进程的 hook 预算起点',async t=>{
   const directory=temporary(t),home=path.join(directory,'home'),entry=path.join(directory,'hook-entry.mjs'),alternate=path.join(directory,process.platform==='win32'?'alternate-node.exe':'alternate-node');
   const fs=await import('node:fs');try{fs.linkSync(process.execPath,alternate);}catch{fs.copyFileSync(process.execPath,alternate);}
-  writeFileSync(entry,'console.log(JSON.stringify({started:Number(process.env.NXBRIDGE_HOOK_STARTED_AT),current:performance.timeOrigin}));','utf8');
+  writeFileSync(entry,'console.log(JSON.stringify({started:Number(process.env.AGYBRIDGE_HOOK_STARTED_AT),current:performance.timeOrigin}));','utf8');
   installShim(planShim(home,{node:alternate,entry,pathValue:''}));const plugin=path.join(directory,'plugin');mkdirSync(plugin);cpSync(path.join(PACKAGE_ROOT,'plugins','codex','bridge.cjs'),path.join(plugin,'bridge.cjs'));
-  writeFileSync(path.join(plugin,'runtime.json'),JSON.stringify({node:alternate,entry,home,launcher:path.join(home,'bin','nxbridge.cjs')}),'utf8');
-  const env={...process.env};delete env.NXBRIDGE_HOOK_STARTED_AT;
+  writeFileSync(path.join(plugin,'runtime.json'),JSON.stringify({node:alternate,entry,home,launcher:path.join(home,'bin','agybridge.cjs')}),'utf8');
+  const env={...process.env};delete env.AGYBRIDGE_HOOK_STARTED_AT;
   const result=await promisify(execFile)(process.execPath,[path.join(plugin,'bridge.cjs'),'hook','--host','codex'],{env,windowsHide:true,timeout:10000});const budget=JSON.parse(result.stdout);
   assert.ok(Number.isFinite(budget.started));assert.ok(budget.started<budget.current,'子 Node 必须继承父进程起点，不能重置预算');
 });
@@ -101,19 +101,19 @@ test('插件经安装入口切换 Node 时仍继承首个进程的 hook 预算�
 test('安装入口仅为 Mod/MCP 启用官方编译缓存，尊重禁用与已有目录，切换 Node 仍生效',async t=>{
   const directory=temporary(t),home=path.join(directory,'中文 缓存'),entry=path.join(directory,'entry.mjs'),alternate=path.join(directory,process.platform==='win32'?'cache-node.exe':'cache-node');
   writeFileSync(entry,"import {getCompileCacheDir} from 'node:module';console.log(JSON.stringify({cache:getCompileCacheDir()??null}));",'utf8');
-  installShim(planShim(home,{entry,pathValue:''}));const launcher=path.join(home,'bin','nxbridge.cjs');
+  installShim(planShim(home,{entry,pathValue:''}));const launcher=path.join(home,'bin','agybridge.cjs');
   const run=async(command:string,extra:NodeJS.ProcessEnv={})=>{
-    const env:NodeJS.ProcessEnv={...process.env,NXBRIDGE_HOME:home};delete env.NODE_COMPILE_CACHE;delete env.NODE_DISABLE_COMPILE_CACHE;
+    const env:NodeJS.ProcessEnv={...process.env,AGYBRIDGE_HOME:home};delete env.NODE_COMPILE_CACHE;delete env.NODE_DISABLE_COMPILE_CACHE;
     const result=await promisify(execFile)(process.execPath,[launcher,command],{env:{...env,...extra},windowsHide:true,timeout:10000});return JSON.parse(result.stdout).cache as string|null;
   };
   const expected=path.join(home,'run','compile-cache')+path.sep;
-  for(const command of ['mod','mcp'])assert.ok((await run(command))?.startsWith(expected));
+  for(const command of ['mcp'])assert.ok((await run(command))?.startsWith(expected));
   assert.equal(await run('hook'),null);assert.equal(await run('mcp',{NODE_DISABLE_COMPILE_CACHE:'1'}),null);
   const custom=path.join(directory,'用户自有缓存');assert.ok((await run('mcp',{NODE_COMPILE_CACHE:custom}))?.startsWith(custom+path.sep));
   const unavailable=path.join(directory,'不能写缓存');mkdirSync(path.join(unavailable,'run'),{recursive:true});writeFileSync(path.join(unavailable,'run','compile-cache'),'普通文件','utf8');
-  assert.equal(await run('mcp',{NXBRIDGE_HOME:unavailable}),null,'缓存不可写不能阻止原命令运行');
+  assert.equal(await run('mcp',{AGYBRIDGE_HOME:unavailable}),null,'缓存不可写不能阻止原命令运行');
   const fs=await import('node:fs');try{fs.linkSync(process.execPath,alternate);}catch{fs.copyFileSync(process.execPath,alternate);}
-  installShim(planShim(home,{entry,node:alternate,pathValue:''}));assert.ok((await run('mod'))?.startsWith(expected));assert.equal(await run('hook'),null);
+  installShim(planShim(home,{entry,node:alternate,pathValue:''}));assert.ok((await run('mcp'))?.startsWith(expected));assert.equal(await run('hook'),null);
 });
 
 test('新安装跳过工具专属目录，已有自有入口和显式目录仍可保留',t=>{

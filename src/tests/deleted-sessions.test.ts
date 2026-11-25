@@ -15,20 +15,17 @@ import { registration } from './support/registration.js';
 import { temporary } from './support/temporary.js';
 import { Broker, type Adapters } from '../broker/coordinator.js';
 import { processIdentity } from '../process/process.js';
-import { saveNativeOwnership, forgetNativeOwnership, type NativeOwnership } from '../process/owned-native.js';
 
 async function unattended(t:TestContext,f:ReturnType<typeof fixture>){
   const native=await processIdentity(process.pid),configHome=temporary(t);
   f.store.updatePeer(f.c.id,{owner:'nxbridge'});f.store.saveEndpoint({...f.store.endpoint(f.c.id)!,pid:native.pid,procStart:native.startedAt,configHome});
-  mkdirSync(path.join(configHome,'sessions'));writeFileSync(path.join(configHome,'sessions',native.pid+'.json'),JSON.stringify({sessionId:f.c.sessionId,procStart:native.startedAt}),'utf8');
-  const proof:NativeOwnership={version:1,id:f.c.id,home:f.broker.home,peerId:f.c.id,configHome,phase:'bound',createdAt:Date.now(),sessionId:f.c.sessionId!,native:{pid:native.pid,startedAt:native.startedAt}};
-  saveNativeOwnership(proof);t.after(()=>forgetNativeOwnership(proof));return native;
+  return native;
 }
 
 function setup(t:TestContext,options:{presence?:SessionPresence;implicit?:'never';deletedHost?:Host}={}){
   const store=new Store(':memory:');t.after(()=>store.close());
-  const c=store.register(registration('claude','deleted-c')),x=store.register(registration('codex','deleted-x')),pair=store.pair(c.id,x.id);
-  const dead=options.deletedHost==='claude'?c:x,survivor=dead.id===c.id?x:c;
+  const c=store.register(registration('agy','deleted-c')),x=store.register(registration('codex','deleted-x')),pair=store.pair(c.id,x.id);
+  const dead=options.deletedHost==='agy'?c:x,survivor=dead.id===c.id?x:c;
   let presence:SessionPresence=options.presence??'present',failure=false,createCount=0;
   let beforePrepare:undefined|(()=>void);
   const prepared:string[]=[],cancelled:string[]=[],retired:string[]=[],alerted:string[]=[];
@@ -55,7 +52,7 @@ test('已核验删除在交互窗口解除绑定并通知；未知在场状态�
 });
 
 test('两方向无人值守恢复只建一个新成员，附上下文，旧消息不重放',async t=>{
-  for(const deletedHost of ['claude','codex'] as const){
+  for(const deletedHost of ['agy','codex'] as const){
     const f=setup(t,{presence:'absent',deletedHost});
     const safe=f.store.accept(f.pair,f.survivor,'确定未送达的任务','safe');
     const uncertain=f.store.accept(f.pair,f.survivor,'可能已执行的任务','uncertain');
@@ -144,11 +141,7 @@ test('只有仍存活的自有后台视作无人值守，关闭窗口和 SDK 非
   f.store.saveEndpoint({...ep,nativeSession:{interactive:false}});
   assert.equal(await sessionPresence(f.store,peer,async()=>['alive']),'unknown');
   const owned=f.store.updatePeer(peer.id,{owner:'nxbridge'});
-  assert.equal(await sessionPresence(f.store,owned,async()=>['alive']),'unknown');
-  const home=temporary(t),proof:NativeOwnership={version:1,id:peer.id,home,peerId:peer.id,configHome:home,phase:'bound',createdAt:Date.now(),sessionId:peer.sessionId!,native:{pid:ep.pid!,startedAt:ep.procStart!}};
-  saveNativeOwnership(proof);
-  assert.equal(await sessionPresence(f.store,owned,async()=>['alive'],home),'absent');
-  saveNativeOwnership({...proof,releasedToUser:true});assert.equal(await sessionPresence(f.store,owned,async()=>['alive'],home),'unknown');
+  assert.equal(await sessionPresence(f.store,owned,async()=>['alive']),'absent');
   assert.equal(await sessionPresence(f.store,owned,async()=>['dead']),'unknown');
   f.store.saveEndpoint({...ep,nativeSession:undefined});
   assert.equal(await sessionPresence(f.store,peer,async()=>['alive']),'unknown');
@@ -168,9 +161,9 @@ test('Broker 保留删除恢复的部分启动预约，维护后沿用原会话�
   assert.notEqual(store.pairFor(c.id)?.id,pair.id);assert.equal(store.pairFor(c.id)?.codex,claim.memberId);assert.equal(codex.created.length,1);
 });
 
-for(const deletedHost of ['claude','codex'] as const)test('真实历史删除与找回可逆，辅助文件不妨碍判断：'+deletedHost,async t=>{
-  const f=setup(t,{deletedHost}),home=temporary(t),directory=path.join(home,deletedHost==='claude'?'projects':'sessions','project');mkdirSync(directory,{recursive:true});
-  const file=path.join(directory,f.dead.sessionId+'.jsonl'),body=JSON.stringify(deletedHost==='codex'?{type:'session_meta',payload:{id:f.dead.sessionId}}:{sessionId:f.dead.sessionId,type:'user'});
+for(const deletedHost of ['agy','codex'] as const)test('真实历史删除与找回可逆，辅助文件不妨碍判断：'+deletedHost,async t=>{
+  const f=setup(t,{deletedHost}),home=temporary(t),directory=deletedHost==='agy'?path.join(home,'antigravity-cli','brain',f.dead.sessionId!,'.system_generated','logs'):path.join(home,'sessions','project');mkdirSync(directory,{recursive:true});
+  const file=path.join(directory,deletedHost==='agy'?'transcript_full.jsonl':f.dead.sessionId+'.jsonl'),body=JSON.stringify(deletedHost==='codex'?{type:'session_meta',payload:{id:f.dead.sessionId}}:{sessionId:f.dead.sessionId,type:'user'});
   writeFileSync(file,body+'\n','utf8');writeFileSync(path.join(directory,'notes.md'),'辅助笔记','utf8');
   const endpoint={...f.store.endpoint(f.dead.id)!,configHome:home,nativeSession:{transcriptPath:file}};f.store.saveEndpoint(endpoint);f.manager.observe(f.dead,endpoint);
   unlinkSync(file);await f.manager.sweep();
@@ -203,7 +196,7 @@ test('安全失败只尝试三次，终止与不确定结果各通知幸存者�
 });
 
 test('一组删除核验失败不阻止其他配对继续处理',async t=>{
-  const f=setup(t),c=f.store.register(registration('claude','c2')),x=f.store.register(registration('codex','x2')),pair=f.store.pair(c.id,x.id),endpoint=f.store.endpoint(x.id)!;
+  const f=setup(t),c=f.store.register(registration('agy','c2')),x=f.store.register(registration('codex','x2')),pair=f.store.pair(c.id,x.id),endpoint=f.store.endpoint(x.id)!;
   f.deps.change=async(selected,work)=>{if((selected as {id:string}).id===f.pair.id)throw Error('第一组核验失败');return work();};
   f.markDeleted();f.manager.deleted(x,endpoint);await f.manager.sweep();
   assert.equal(f.store.pairFor(f.survivor.id)?.id,f.pair.id);assert.equal(f.store.pairFor(c.id),undefined);assert.equal(f.store.pairById(pair.id)!.archived,true);
@@ -214,9 +207,9 @@ test('接手预约后关闭成员不会让一条失败交接阻断其他配对�
   f.deps.prepare=async(_target,_source,_guard,beforeCreate)=>{beforeCreate();throw new DeliveryError('timeout','创建结果未核验',true);};
   f.markDeleted();await f.manager.sweep(true);
   const claim=f.store.setting<any>('deletedReplacement:'+f.survivor.id);
-  f.store.pair(f.survivor.host==='claude'?f.survivor.id:claim.memberId,f.survivor.host==='codex'?f.survivor.id:claim.memberId);
+  f.store.pair(f.survivor.host==='agy'?f.survivor.id:claim.memberId,f.survivor.host==='codex'?f.survivor.id:claim.memberId);
   f.store.adopt(claim.memberId,registration(f.dead.host,'late-identity'));f.store.updatePeer(f.survivor.id,{enabled:false});
-  const c=f.store.register(registration('claude','other-c')),x=f.store.register(registration('codex','other-x')),pair=f.store.pair(c.id,x.id);
+  const c=f.store.register(registration('agy','other-c')),x=f.store.register(registration('codex','other-x')),pair=f.store.pair(c.id,x.id);
   f.manager.deleted(x,f.store.endpoint(x.id)!);await f.manager.sweep(true);
   assert.equal(f.store.pairById(pair.id)!.archived,true);
 });
@@ -228,12 +221,12 @@ test('删除巡检等待创建时不阻塞其他配对的消息泵',async t=>{
   f.broker.send({actor:{host:'codex',sessionId:'x',callId:'independent'},message:'其他配对继续投递'},false);
   const pumping=f.broker.pump();await started;
   let timer:NodeJS.Timeout|undefined;
-  try{await Promise.race([pumping,new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>reject(Error('删除巡检阻塞消息泵')),5000);})]);assert.equal(f.claude.delivered.length,1);}
+  try{await Promise.race([pumping,new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>reject(Error('删除巡检阻塞消息泵')),5000);})]);assert.equal(f.agy.delivered.length,1);}
   finally{clearTimeout(timer);finish();await pumping;}
 });
 
 test('同一原生会话的 hook 和提问重新登记保留会话事实，换代不继承',t=>{
-  const f=setup(t),input=registration('claude','native',{endpoint:{mode:'claude-inbox',address:'facts',epoch:'native',pid:process.pid,procStart:'native',configHome:temporary(t),nativeSession:{interactive:true,transcriptPath:'/native.jsonl'}}});
+  const f=setup(t),input=registration('agy','native',{endpoint:{mode:'agy-acp',address:'facts',epoch:'native',pid:process.pid,procStart:'native',configHome:temporary(t),nativeSession:{interactive:true,transcriptPath:'/native.jsonl'}}});
   const peer=f.store.register(input);
   for(const nativeSession of [{transcriptPath:'/native.jsonl'},undefined])f.store.register({...input,endpoint:{...input.endpoint,nativeSession}});
   assert.deepEqual(f.store.endpoint(peer.id)!.nativeSession,{interactive:true,transcriptPath:'/native.jsonl'});
@@ -249,7 +242,7 @@ test('实际 Broker 允许找回历史后恢复原配对，托管接管不能绕
                            
   await assert.rejects((f.broker as any).hostingTarget({peer_id:f.x.id},true),{code:'pair_restore_unavailable'});
   await assert.rejects((f.broker as any).hostingTarget({pair_id:pair.id},true),{code:'pair_restore_unavailable'});
-  const actor={host:'claude',sessionId:'c',callId:'restore-picker'};
+  const actor={host:'agy',sessionId:'c',callId:'restore-picker'};
   const initial=await f.broker.dispatch('pair.code',{actor}) as {selection_id:string};
   writeFileSync(path.join(directory,'moved.jsonl'),body,'utf8');
   const refreshed=await f.broker.dispatch('pair.selection.refresh',{actor,selection_id:initial.selection_id}) as {candidates:{member_id:string}[]};
@@ -258,37 +251,13 @@ test('实际 Broker 允许找回历史后恢复原配对，托管接管不能绕
   assert.equal(restored.restored,true);assert.equal(f.store.pairFor(f.c.id)?.id,pair.id);
 });
 
-test('原生 Claude 回收归属后保留启动来源，找回历史可按原会话和配置恢复',async t=>{
-  const home=temporary(t),nativeHome=temporary(t),store=new Store(':memory:'),claude=new FakeAdapter(),codex=new FakeAdapter();
-  const broker=new Broker(store,{...DEFAULT_CONFIG,implicit:'never'},{claude,codex} as unknown as Adapters,home);
-  t.after(async()=>{await broker.stop();store.close();});
-  const directory=path.join(nativeHome,'projects','project');mkdirSync(directory,{recursive:true});
-  const file=path.join(directory,'original.jsonl'),body=JSON.stringify({type:'user',sessionId:'original'})+'\n';writeFileSync(file,body,'utf8');
-  const registered=store.register(registration('claude','original',{endpoint:{mode:'claude-inbox',address:'old-native',epoch:'old-native',pid:2147483647,procStart:'dead-native',configHome:nativeHome,nativeSession:{transcriptPath:file}}})),peer=store.updatePeer(registered.id,{owner:'nxbridge'}),other=store.register(registration('codex','survivor')),pair=store.pair(peer.id,other.id);
-  const proof:NativeOwnership={version:1,id:peer.id,home,peerId:peer.id,sessionId:peer.sessionId!,configHome:nativeHome,phase:'bound',createdAt:Date.now(),executable:process.execPath,native:{pid:2147483647,startedAt:'dead-native'}};
-  saveNativeOwnership(proof);claude.release=async()=>{forgetNativeOwnership(proof);};
-  let affinity:unknown;
-  claude.wake=async(_peer,_endpoint,_signal,beforeLaunch,saved?:unknown)=>{affinity=saved;await beforeLaunch?.();};
-  broker.deletedSessions.observe(peer,store.endpoint(peer.id)!);broker.deletedSessions.deleted(peer,store.endpoint(peer.id)!);
-  unlinkSync(file);await broker.deletedSessions.sweep(true);await new Promise(resolve=>setImmediate(resolve));await (broker as any).runtimeHealth.waitForIdle();
-  assert.equal(store.pairFor(peer.id),undefined);assert.equal(store.setting<any>('managedLaunchProof:'+peer.id).nativeLaunchId,proof.id);
-  writeFileSync(file,body,'utf8');
-  const restored=await broker.dispatch('pair.restore',{pair_id:pair.id}) as {restored:boolean};
-  assert.equal(restored.restored,true);assert.equal(store.peer(peer.id).sessionId,'original');
-  assert.equal((affinity as {configHome:string}).configHome,nativeHome);assert.equal((affinity as {nativeLaunchId:string}).nativeLaunchId,proof.id);
-  assert.equal(store.peer(peer.id).launchFailure,undefined);
-  assert.equal(store.setting('managedLaunchProof:'+peer.id),null);
-  await lifecycle(broker).prepare(store.peer(peer.id));
-  assert.equal((affinity as {configHome:string}).configHome,nativeHome,'再次恢复仍沿用已登记的原配置目录');
-});
-
 test('自动创建尚未返回时用户选择同一预留搭档只创建一次',async t=>{
   const f=fixture(t,{implicit:'on-demand'});await unattended(t,f);
   f.store.pair(f.c.id,f.x.id);
   let finish!:()=>void,entered!:()=>void;const gate=new Promise<void>(resolve=>finish=resolve),started=new Promise<void>(resolve=>entered=resolve),create=f.codex.create.bind(f.codex);
   f.codex.create=async(...args)=>{entered();await gate;return create(...args);};
   f.broker.deletedSessions.deleted(f.x,f.store.endpoint(f.x.id)!);const replacing=f.broker.deletedSessions.sweep(true);await started;
-  const claim=f.store.setting<any>('deletedReplacement:'+f.c.id),actor={host:'claude' as const,sessionId:'c',callId:'choose'};
+  const claim=f.store.setting<any>('deletedReplacement:'+f.c.id),actor={host:'agy' as const,sessionId:'c',callId:'choose'};
   const draft={actor,message:'用户接手后附带的任务'};
   const selection=f.store.selections.create(f.store.peer(f.c.id),actor,f.broker.config,draft,'pair_lost') as {selection_id:string};
   const choosing=f.broker.dispatch('pair.selection.commit',{actor,selection_id:selection.selection_id,action:'create'});
@@ -308,7 +277,7 @@ test('选择原预约后启动在提交前失败，后续创建仍保留一份�
   const gate=new Promise<void>(resolve=>finish=resolve),started=new Promise<void>(resolve=>entered=resolve);
   f.codex.create=async()=>{entered();await gate;throw new DeliveryError('timeout','尚未提交原生创建',false);};
   f.broker.deletedSessions.deleted(f.x,f.store.endpoint(f.x.id)!);const replacing=f.broker.deletedSessions.sweep(true);await started;
-  const claim=f.store.setting<any>('deletedReplacement:'+f.c.id),actor={host:'claude',sessionId:'c',callId:'pre-submit-handoff'};
+  const claim=f.store.setting<any>('deletedReplacement:'+f.c.id),actor={host:'agy',sessionId:'c',callId:'pre-submit-handoff'};
   const selection=await f.broker.dispatch('pair.code',{actor}) as {selection_id:string};
   const choosing=f.broker.dispatch('pair.selection.commit',{actor,selection_id:selection.selection_id,action:'create'});
   try{
@@ -327,8 +296,8 @@ test('不确定创建会向仍存活的自有后台投递终止通知一次',asy
   f.broker.deletedSessions.deleted(f.x,f.store.endpoint(f.x.id)!);await f.broker.deletedSessions.sweep(true);
                                      
   await new Promise(resolve=>setImmediate(resolve));await (f.broker as any).runtimeHealth.waitForIdle();
-  assert.equal(f.claude.delivered.length,1);assert.match(f.claude.delivered[0]!.body,/no 2nd auto create/);
-  await f.broker.deletedSessions.sweep(true);assert.equal(f.claude.delivered.length,1);
+  assert.equal(f.agy.delivered.length,1);assert.match(f.agy.delivered[0]!.body,/no 2nd auto create/);
+  await f.broker.deletedSessions.sweep(true);assert.equal(f.agy.delivered.length,1);
 });
 
 test('原生提交前的超时保留安全重试，提交后超时才停止重复创建',async t=>{
@@ -348,7 +317,7 @@ test('用户接手创建结果不确定的预留成员后不再创建，可信�
   let finish!:()=>void,entered!:()=>void,submits=0;const gate=new Promise<void>(resolve=>finish=resolve),started=new Promise<void>(resolve=>entered=resolve);
   f.codex.create=async(...args)=>{await args[4]?.();submits++;entered();await gate;throw new DeliveryError('timeout','原生创建响应未知',true);};
   f.broker.deletedSessions.deleted(f.x,f.store.endpoint(f.x.id)!);const replacing=f.broker.deletedSessions.sweep(true);await started;
-  const claim=f.store.setting<any>('deletedReplacement:'+f.c.id),actor={host:'claude',sessionId:'c',callId:'choose-uncertain'};
+  const claim=f.store.setting<any>('deletedReplacement:'+f.c.id),actor={host:'agy',sessionId:'c',callId:'choose-uncertain'};
   const selection=await f.broker.dispatch('pair.code',{actor}) as {selection_id:string};
   const choosing=f.broker.dispatch('pair.selection.commit',{actor,selection_id:selection.selection_id,action:'create'}) as Promise<{status:string}>;
   try{

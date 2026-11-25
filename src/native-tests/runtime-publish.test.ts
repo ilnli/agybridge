@@ -21,24 +21,24 @@ test('发布安装器：来源移走后修复、显式来源更新及从已安�
   t.after(temporary.cleanup);
   mkdirSync(home,{recursive:true});mkdirSync(bin);
   atomicJson(path.join(home,'config.json'),{...DEFAULT_CONFIG,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})});
-  const env=publishEnvironment(home,bin,{...process.env,NXBRIDGE_HOME:home,CODEX_HOME:path.join(directory,'codex'),CLAUDE_CONFIG_DIR:path.join(directory,'claude')}) as NodeJS.ProcessEnv&{CODEX_HOME:string;CLAUDE_CONFIG_DIR:string};
-  mkdirSync(env.CODEX_HOME,{recursive:true});mkdirSync(env.CLAUDE_CONFIG_DIR,{recursive:true});
+  const env=publishEnvironment(home,bin,{...process.env,AGYBRIDGE_HOME:home,CODEX_HOME:path.join(directory,'codex'),AGY_HOME:path.join(directory,'agy')}) as NodeJS.ProcessEnv&{CODEX_HOME:string;AGY_HOME:string};
+  mkdirSync(env.CODEX_HOME,{recursive:true});mkdirSync(env.AGY_HOME,{recursive:true});
   writeFileSync(path.join(env.CODEX_HOME,'config.toml'),'# 用户配置需保留\nmodel_verbosity = "low"\n','utf8');
-  const launcher=path.join(home,'bin','nxbridge.cjs');
+  const launcher=path.join(home,'bin','agybridge.cjs');
   const run=async(entry:string,args:string[])=>JSON.parse((await execute(process.execPath,['--no-warnings',entry,...args],{cwd:directory,env,windowsHide:true,timeout:90000,maxBuffer:4*1024*1024})).stdout);
   const revision=async(destination:string,label:string)=>{
     await cp(path.join(PACKAGE_ROOT,'publish'),destination,{recursive:true});
                                             
-    const runtime=path.join(destination,'nxbridge.mjs');
+    const runtime=path.join(destination,'agybridge.mjs');
     writeFileSync(runtime,readFileSync(runtime,'utf8')+'\n// '+label+'\n','utf8');
     const manifest=readJson<any>(path.join(destination,'publish.json'));manifest.files=fileHashes(destination,['publish.json']);
     manifest.buildId=manifest.version+'-'+createHash('sha256').update(JSON.stringify({files:manifest.files,dependencies:manifest.dependencies})).digest('hex').slice(0,12);
     atomicJson(path.join(destination,'publish.json'),manifest);return manifest;
   };
   const source=path.join(directory,'source'),first=await revision(source,'第一版验收');
-  const installed=await run(path.join(source,'nxbridge.mjs'),['setup','--bin-dir',bin]);
+  const installed=await run(path.join(source,'agybridge.mjs'),['setup','--bin-dir',bin]);
   assert.equal(installed.runtime.buildId,first.buildId);
-  const codexBundle=path.join(env.CODEX_HOME,'plugins','cache','nxbridge-local','nxbridge',VERSION),bundleBefore=fileHashes(codexBundle);
+  const codexBundle=path.join(env.CODEX_HOME,'plugins','cache','agybridge-local','nxbridge',VERSION),bundleBefore=fileHashes(codexBundle);
   const baseline=await run(launcher,['config','get','questions.timeout_ms']);assert.equal(baseline.source,'managed-toml');
   const userFile=path.join(home,'config.toml'),userText='\ufeff# 用户配置原字节保留\r\nnote="""\r\n多行说明\r\n"""\r\n[questions]\r\ntimeout_ms=321\r\n';writeFileSync(userFile,userText,'utf8');
   const override=await run(launcher,['config','get','questions.timeout_ms']);assert.equal(override.value,321);assert.equal(override.shadowed,DEFAULT_CONFIG.questionTimeoutMs);assert.equal(override.source,'user-toml');assert.equal(override.editable,false);
@@ -65,5 +65,5 @@ test('发布安装器：来源移走后修复、显式来源更新及从已安�
   assert.equal(removed.removed,true,JSON.stringify(removed));assert.equal(removed.purged,true,JSON.stringify(removed));assert.equal(existsSync(home),false);
   assert.equal(existsSync(path.join(bin,process.platform==='win32'?'nxbridge.cmd':'nxbridge')),false);
   assert.match(readFileSync(path.join(env.CODEX_HOME,'config.toml'),'utf8'),/model_verbosity = "low"/);
-  assert.equal(existsSync(path.join(nextSource,'publish','nxbridge.mjs')),true,'卸载不能删除发布来源');
+  assert.equal(existsSync(path.join(nextSource,'publish','agybridge.mjs')),true,'卸载不能删除发布来源');
 });

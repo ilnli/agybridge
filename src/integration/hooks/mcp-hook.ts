@@ -2,7 +2,7 @@ import type { BrokerSession } from '../../ipc/ipc.js';
 import { BridgeError, describeError } from '../../shared/errors.js';
 import { codexHome } from '../../shared/local-paths.js';
 
-export const CODEX_HOOK_TOOL='nxbridge_hook';
+export const CODEX_HOOK_TOOL='agybridge_hook';
 const HOOK_BUDGET_MS=9000;
 
                                           
@@ -44,7 +44,7 @@ export class McpHook {
     }
   }
   acknowledge(receipt:string):void{
-    void this.bounded(async remaining=>{await this.connection.connect();await this.connection.request('hook.client.ack',{receipt},{timeout:remaining(),mutation:true});},500).catch(error=>process.stderr.write('nxbridge hook 回执：'+describeError(error)+'\n'));
+    void this.bounded(async remaining=>{await this.connection.connect();await this.connection.request('hook.client.ack',{receipt},{timeout:remaining(),mutation:true});},500).catch(error=>process.stderr.write('agybridge hook 回执：'+describeError(error)+'\n'));
   }
   close():void{this.closed=true;clearTimeout(this.recovery);}
 }

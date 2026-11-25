@@ -14,7 +14,7 @@ import { Store } from '../storage/store.js';
 
 import { fixture } from './setup-fixture.js';
 
-async function recoveryRelease(directory:string,filename='nxbridge-collaboration.md'){
+async function recoveryRelease(directory:string,filename='agybridge-collaboration.md'){
   const source=path.join(directory,'新的发布来源');await cp(path.join(PACKAGE_ROOT,'publish'),source,{recursive:true});
   const guide=path.join(source,filename);writeFileSync(guide,readFileSync(guide,'utf8')+'\n'+(filename.endsWith('.mjs')?'// ':'')+'隔离的中断恢复版本\n','utf8');
   const manifest=readJson<any>(path.join(source,'publish.json'));manifest.files=fileHashes(source,['publish.json']);
@@ -23,14 +23,14 @@ async function recoveryRelease(directory:string,filename='nxbridge-collaboration
 }
 
                                          
-for(const [entry,required] of [['mcp-entry.mjs',{claude:true,codex:true}],['mod-entry.mjs',{claude:true,codex:false}],['vendor-core.mjs',{claude:true,codex:true}],['runtime-native-source.mjs',{claude:true,codex:true}]] as const){
+for(const [entry,required] of [['mcp-entry.mjs',{agy:true,codex:true}],['vendor-core.mjs',{agy:true,codex:true}],['runtime-native-source.mjs',{agy:true,codex:true}]] as const){
   test(`仅长驻入口代码变化也提示对应窗口重载，同一版本重复更新无需再次操作（${entry}）`,async t=>{
     const f=fixture(t);await setup({home:f.home},f.services);
     const release=await recoveryRelease(f.directory,entry),updated=await setup({home:f.home,from:release.source},f.services) as any;
     assert.deepEqual(updated.reloadRequired,required);assert.equal(updated.hookTrustRequired,false);
-    assert.equal(updated.next.some((value:string)=>value.includes('nxbridge restart codex')),required.codex);
-    assert.ok(updated.next.some((value:string)=>value.includes('/reload-plugins')));
-    assert.deepEqual((await setup({home:f.home,from:release.source},f.services) as any).reloadRequired,{claude:false,codex:false});
+    assert.equal(updated.next.some((value:string)=>value.includes('agybridge restart codex')),required.codex);
+    assert.ok(updated.next.some((value:string)=>value.includes('AGY')));
+    assert.deepEqual((await setup({home:f.home,from:release.source},f.services) as any).reloadRequired,{agy:false,codex:false});
   });
 }
 
@@ -38,18 +38,18 @@ test('显式正式来源可替换手工未知构建，保留配对、未知投�
   const f=fixture(t);await setup({home:f.home},f.services);
   const old=activeRuntime(f.home)!,buildId='0.1.1-0badcafe0001',directory=path.join(f.home,'runtime',buildId);
   renameSync(old.directory,directory);
-  for(const name of ['publish.json','.nxbridge-runtime.json']){
+  for(const name of ['publish.json','.agybridge-runtime.json']){
     const file=path.join(directory,name);atomicJson(file,{...readJson<any>(file),buildId});
   }
-  atomicJson(path.join(f.home,'bin','runtime.json'),{...old,buildId,directory,entry:path.join(directory,'nxbridge.mjs')});
+  atomicJson(path.join(f.home,'bin','runtime.json'),{...old,buildId,directory,entry:path.join(directory,'agybridge.mjs')});
                                            
   const stateFile=path.join(f.home,'setup-state.json'),state=readJson<any>(stateFile);
   for(const file of state.managedFiles)file.content=readFileSync(file.file,'utf8');atomicJson(stateFile,state);
   const receipt=path.join(f.home,'install-manifest.json');atomicJson(receipt,{...readJson<any>(receipt),buildId});
   const obsolete=path.join(f.home,'adopt-codex.json'),obsoleteText='{"sessionId":"未经授权的旧文件"}';writeFileSync(obsolete,obsoleteText,'utf8');
-  const store=new Store(path.join(f.home,'nxbridge.db'));
+  const store=new Store(path.join(f.home,'agybridge.db'));
   try{
-  const claude=store.register(registration('claude','unknown-build-source')),codex=store.register(registration('codex','preserved-session'));
+  const claude=store.register(registration('agy','unknown-build-source')),codex=store.register(registration('codex','preserved-session'));
   const pair=store.pair(claude.id,codex.id),message=store.accept(pair,claude,'未知投递必须保留','unknown-build-call');
   store.claim(message.id);store.transition(message.id,'unknown','旧版本投递结果不确定，不自动重发');
   const pairs=store.pairs(),messages=store.messages(),configuration=readFileSync(path.join(f.home,'config.managed.toml'),'utf8');f.registry.codex.enabled=false;
@@ -60,7 +60,7 @@ test('显式正式来源可替换手工未知构建，保留配对、未知投�
   }finally{store.close();}
 });
 
-for(const step of ['plan','prepared','market:claude','cache-state:claude','market:codex','cache-state:codex','namespace-state','obsolete-state']){
+for(const step of ['plan','prepared','cache-state:agy','market:codex','cache-state:codex','namespace-state','obsolete-state']){
   test(`安装阶段 ${step} 中断后普通重跑保留原版本和 bin，来源移走仍能恢复`,async t=>{
     const f=fixture(t),release=await recoveryRelease(f.directory),checkpoint=(current:string)=>{if(current===step)throw Error('隔离安装阶段故障 '+step);};
     await assert.rejects(setup({home:f.home,from:release.source,binDirectory:f.bin},{...f.services,checkpoint}),/隔离安装阶段故障/);
@@ -86,7 +86,7 @@ test('Windows 实际状态文件 EPERM：指针已更新而 receipt 未更新，
     assert.equal(activeRuntime(f.home)!.buildId,release.buildId);assert.equal(readJson<any>(receiptFile).buildId,before.buildId);assert.equal(existsSync(path.join(f.home,'setup-pending.json')),true);
   }finally{if(descriptor!==undefined)closeSync(descriptor);}
   const recovered:any=await setup({home:f.home},f.services);assert.equal(recovered.runtime.buildId,release.buildId);assert.equal(readJson<any>(receiptFile).buildId,release.buildId);
-  assert.equal(loadConfig(f.home).codexHome,undefined);assert.equal(loadConfig(f.home).claudeHome,undefined);
+  assert.equal(loadConfig(f.home).codexHome,undefined);assert.equal(loadConfig(f.home).agyHome,undefined);
   assert.equal(recovered.notes.some((note:string)=>note.includes('自动完成中断')),true);assert.equal(readFileSync(path.join(f.codex,'config.toml'),'utf8'),configBefore);
   const state=readJson<any>(stateFile);for(const file of state.managedFiles)assert.equal(readFileSync(file.file,'utf8'),file.content);assert.equal(state.pendingSetup,undefined);assert.equal(existsSync(path.join(f.home,'setup-pending.json')),false);
 });
@@ -100,9 +100,9 @@ test('中断安装仍可卸载，取消待完成计划后再次安装不引用�
 
 test('插件首次准备中断时归属标记已经写入，普通 setup 可重建未完成的自有目录',async t=>{
   const f=fixture(t);await assert.rejects(preparePlugins(f.home,{packageRoot:path.join(f.directory,'不存在的发布来源')}),{code:'ENOENT'});
-  const root=path.join(f.home,'marketplace');assert.equal(existsSync(path.join(root,'.nxbridge-owned.json')),true);
-  mkdirSync(path.join(root,'plugins','claude'),{recursive:true});writeFileSync(path.join(root,'plugins','claude','bridge.cjs'),'未完成的复制内容','utf8');
-  const result:any=await setup({home:f.home},f.services);assert.equal(result.installed,true);assert.notEqual(readFileSync(path.join(root,'plugins','claude','bridge.cjs'),'utf8'),'未完成的复制内容');
+  const root=path.join(f.home,'marketplace');assert.equal(existsSync(path.join(root,'.agybridge-owned.json')),true);
+  mkdirSync(path.join(root,'plugins','agy'),{recursive:true});writeFileSync(path.join(root,'plugins','agy','bridge.cjs'),'未完成的复制内容','utf8');
+  const result:any=await setup({home:f.home},f.services);assert.equal(result.installed,true);assert.notEqual(readFileSync(path.join(root,'plugins','agy','bridge.cjs'),'utf8'),'未完成的复制内容');
 });
 
 test('中断计划优先保持原目标，新选项不能静默替换它；错误和 dry-run 都不写文件',async t=>{

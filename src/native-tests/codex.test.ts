@@ -19,7 +19,6 @@ import {spawnCli} from '../process/host-command.js';
 import {PACKAGE_ROOT} from '../shared/package-location.js';
 import { connectAppServer, CodexAdapter } from '../hosts/codex/adapter.js';
 import { Store } from '../storage/store.js';
-import {peerKeyFile} from '../hosts/claude/claude-inbox.js';
 import {processIdentity,processAncestors,liveProcess} from '../process/process.js';
 import { brokerCall, ensureBroker } from '../ipc/ipc.js';
 import { diagnose } from '../app/commands/doctor.js';
@@ -32,14 +31,14 @@ async function remember(pid:number|undefined):Promise<number|undefined>{if(pid)i
 async function stop(pid:number|undefined):Promise<void>{if(!pid)return;const identity=identities.get(pid);assert.ok(identity,'停止测试进程前必须已有代次记录');await stopOwnedProcess(identity);}
 
 test('隔离官方 CLI：安装保留配置、直连、命名空间工具、双向消息与卸载',async t=>{
-  const temporary=temporaryDirectory(),directory=temporary.directory,nxhome=path.join(directory,'bridge'),codexhome=path.join(directory,'codex'),claudehome=path.join(directory,'claude');
+  const temporary=temporaryDirectory(),directory=temporary.directory,nxhome=path.join(directory,'bridge'),codexhome=path.join(directory,'codex'),claudehome=path.join(directory,'agy');
   let brokerPid:number|undefined,serverPid:number|undefined,managedPid:number|undefined;
   let client:Awaited<ReturnType<typeof connectAppServer>>|undefined,receiver:net.Server|undefined,model:http.Server|undefined;
   mkdirSync(codexhome,{recursive:true});mkdirSync(claudehome,{recursive:true});
-  const config={...DEFAULT_CONFIG,codexHome:codexhome,claudeHome:claudehome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};
+  const config={...DEFAULT_CONFIG,codexHome:codexhome,agyHome:claudehome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};
   mkdirSync(nxhome,{recursive:true});writeFileSync(path.join(nxhome,'config.json'),JSON.stringify(config),'utf8');
-  const keys=['NXBRIDGE_HOME','CODEX_HOME','CLAUDE_CONFIG_DIR','OPENAI_API_KEY'];const previous=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
-  Object.assign(process.env,{NXBRIDGE_HOME:nxhome,CODEX_HOME:codexhome,CLAUDE_CONFIG_DIR:claudehome,OPENAI_API_KEY:'nxbridge-not-a-real-key'});
+  const keys=['AGYBRIDGE_HOME','CODEX_HOME','AGY_HOME','OPENAI_API_KEY'];const previous=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
+  Object.assign(process.env,{AGYBRIDGE_HOME:nxhome,CODEX_HOME:codexhome,AGY_HOME:claudehome,OPENAI_API_KEY:'nxbridge-not-a-real-key'});
   t.after(async()=>{
     client?.close();await stop(brokerPid);await stop(serverPid);await stop(managedPid);
     if(model){model.closeAllConnections();await new Promise<void>(resolve=>model!.close(()=>resolve()));}
@@ -52,7 +51,7 @@ test('隔离官方 CLI：安装保留配置、直连、命名空间工具、双�
   assert.equal((await setup() as any).installed,true,'重复安装应保留原始恢复记录');
   const configText=readFileSync(path.join(codexhome,'config.toml'),'utf8'),configured=parse(configText) as any;
   assert.match(configText,/保留用户注释/);assert.equal(configured.model_verbosity,'low');assert.equal(configured.features.code_mode.enabled,false);
-  assert.deepEqual(configured.features.code_mode.direct_only_tool_namespaces,['claude']);
+  assert.deepEqual(configured.features.code_mode.direct_only_tool_namespaces,['agy']);
 
   const modelRequests:any[]=[],outgoing='原生协议往返成功 '+ '原生长结果 '.repeat(400);let askNext=false,sentOutgoing=false,pickupNext=false;
   model=http.createServer(async(req,res)=>{
@@ -62,7 +61,7 @@ test('隔离官方 CLI：安装保留配置、直连、命名空间工具、双�
       const body=JSON.parse(raw.toString());modelRequests.push(body);const n=modelRequests.length;
       const lastWake=body.input?.findLastIndex((item:any)=>item.type==='message'&&item.role==='user'&&JSON.stringify(item).includes(WAKE_NOTICE))??-1,lastPickup=body.input?.findLastIndex((item:any)=>item.type==='function_call_output'&&String(item.call_id).startsWith('native-pickup-'))??-1;
       const pickup=pickupNext||lastWake>lastPickup;pickupNext=false;
-      const item=askNext?{type:'function_call',id:'fc_ask',call_id:'native-ask',name:'ask',namespace:'claude',arguments:JSON.stringify({questions:[{id:'format',header:'格式',question:'输出格式？',options:[{label:'摘要',description:'结论'},{label:'全文',description:'详细'}]}]})}:pickup?{type:'function_call',id:'fc_pickup_'+n,call_id:'native-pickup-'+n,name:'receive_messages',namespace:'claude',arguments:'{}'}:!sentOutgoing?{type:'function_call',id:'fc_nxbridge',call_id:'native-call',name:'send_message',namespace:'claude',arguments:JSON.stringify({message:outgoing})}:{type:'message',id:'msg_'+n,role:'assistant',status:'completed',content:[{type:'output_text',text:'协议检查完成'}]};
+      const item=askNext?{type:'function_call',id:'fc_ask',call_id:'native-ask',name:'ask',namespace:'agy',arguments:JSON.stringify({questions:[{id:'format',header:'格式',question:'输出格式？',options:[{label:'摘要',description:'结论'},{label:'全文',description:'详细'}]}]})}:pickup?{type:'function_call',id:'fc_pickup_'+n,call_id:'native-pickup-'+n,name:'receive_messages',namespace:'agy',arguments:'{}'}:!sentOutgoing?{type:'function_call',id:'fc_nxbridge',call_id:'native-call',name:'send_message',namespace:'agy',arguments:JSON.stringify({message:outgoing})}:{type:'message',id:'msg_'+n,role:'assistant',status:'completed',content:[{type:'output_text',text:'协议检查完成'}]};
       if(item.type==='function_call'&&item.name==='send_message')sentOutgoing=true;
       askNext=false;
       res.writeHead(200,{'Content-Type':'text/event-stream'});
@@ -100,14 +99,13 @@ test('隔离官方 CLI：安装保留配置、直连、命名空间工具、双�
   mkdirSync(path.join(claudehome,'sessions'),{recursive:true});
   const identityInfo=await processIdentity(process.pid),identityFields=process.platform==='win32'?{procStartFt:identityInfo.procStartFt}:{procStart:identityInfo.procStart};
   writeFileSync(path.join(claudehome,'sessions',`${process.pid}.json`),JSON.stringify({sessionId:'claude-probe',cwd:directory,...identityFields}));
-  if(process.platform==='win32')writeFileSync(peerKeyFile(process.pid,inbox,claudehome),JSON.stringify({peerToken:'a'.repeat(32),...identityFields}));
-  const claudePeer=await brokerCall<any>('register',{host:'claude',sessionId:'claude-probe',cwd:directory,name:'Claude 协议测试',kind:'root',permission:'prompting',endpoint:{mode:'claude-inbox',address:inbox,epoch:'native-test',pid:process.pid,procStart:identityInfo.startedAt}});
-  await brokerCall('pair',{claude:claudePeer.id,codex:codexPeer.id});
-  const incoming=await brokerCall<any>('send',{actor:{host:'claude',sessionId:'claude-probe',callId:'first-message'},message:`请检查原生工具和回信，参考 [问答](<${path.join(PACKAGE_ROOT,'src/integration/mcp/questions.ts')}:12>) [插件](<${path.join(PACKAGE_ROOT,'plugins/claude')}>)`});
+  const claudePeer=await brokerCall<any>('register',{host:'agy',sessionId:'claude-probe',cwd:directory,name:'Claude 协议测试',kind:'root',permission:'prompting',endpoint:{mode:'agy-acp',address:inbox,epoch:'native-test',pid:process.pid,procStart:identityInfo.startedAt}});
+  await brokerCall('pair',{agy:claudePeer.id,codex:codexPeer.id});
+  const incoming=await brokerCall<any>('send',{actor:{host:'agy',sessionId:'claude-probe',callId:'first-message'},message:`请检查原生工具和回信，参考 [问答](<${path.join(PACKAGE_ROOT,'src/integration/mcp/questions.ts')}:12>) [插件](<${path.join(PACKAGE_ROOT,'plugins/claude')}>)`});
   try{await waitFor(()=>modelRequests.length>=2,20000);}catch(error){
     assert.fail(JSON.stringify({error:String(error),modelRequests:modelRequests.length,tools:modelRequests[0]?.tools?.map((v:any)=>v.name),status:await brokerCall('status'),logs,brokerLog:readFileSync(path.join(nxhome,'run','broker.log'),'utf8').slice(-3000)},null,2));
   }
-  const namespace=modelRequests[0].tools.find((tool:any)=>tool.type==='namespace'&&tool.name==='claude');
+  const namespace=modelRequests[0].tools.find((tool:any)=>tool.type==='namespace'&&tool.name==='agy');
   assert.ok(namespace,'首个请求缺少直接暴露的 claude 命名空间');
   assert.deepEqual(namespace.tools.map((tool:any)=>tool.name).sort(),['answer_question','ask','checkpoint','choose_partner','config','partner_profile','read_messages','receive_messages','recover_partner','select_partner','send_message','set_enabled','status']);
   const injected=modelRequests[0].input.find((item:any)=>item.type==='function_call_output'&&String(item.output).includes(incoming.message_id));assert.ok(injected);
@@ -134,13 +132,13 @@ test('隔离官方 CLI：安装保留配置、直连、命名空间工具、双�
   const evidence=await readCodexHistory(history.thread.path,thread.id);assert.equal(evidence.status,'supported');assert.equal(evidence.receipts.filter(receipt=>receipt.messageId===incoming.message_id).length,1);
   const diagnosis=await diagnose(nxhome),capabilities=diagnosis.codexCapabilities as any;
   assert.equal(capabilities.hooks.length,9);assert.ok(capabilities.hooks.every((h:any)=>h.trust==='untrusted'));
-  assert.ok(capabilities.mcp.some((m:any)=>m.name==='claude'&&m.tools.includes('send_message')));assert.deepEqual(capabilities.errors,{});
+  assert.ok(capabilities.mcp.some((m:any)=>m.name==='agy'&&m.tools.includes('send_message')));assert.deepEqual(capabilities.errors,{});
 
                                                  
   await stop(brokerPid);brokerPid=undefined;
   const restarted=await ensureBroker(nxhome);brokerPid=await remember((await restarted.request('ping')).pid);restarted.close();
   const recovered=await brokerCall<any>('status');assert.equal(recovered.pair.id,after.pair.id);
-  const resumed=await brokerCall('send',{actor:{host:'claude',sessionId:'claude-probe',callId:'after-restart'},message:'重启后继续同一线程'});
+  const resumed=await brokerCall('send',{actor:{host:'agy',sessionId:'claude-probe',callId:'after-restart'},message:'重启后继续同一线程'});
   await waitFor(()=>modelRequests.some(r=>JSON.stringify(r.input).includes(resumed.message_id)),10000);assert.equal(taskFrames().length,1);
   const waitIdle=async()=>{const idleDeadline=Date.now()+10000;while((await client!.request('thread/read',{threadId:thread.id,includeTurns:false})).thread.status.type!=='idle'){assert.ok(Date.now()<idleDeadline,'原生线程未空闲');await delay(50);}};
   await waitIdle();
@@ -201,7 +199,7 @@ test('隔离官方 CLI：安装保留配置、直连、命名空间工具、双�
   const askOutput=modelRequests.flatMap(r=>r.input??[]).find((item:any)=>item.type==='function_call_output'&&item.call_id==='native-ask');
   assert.match(JSON.stringify(askOutput),/pending/);
   const pending=(await brokerCall('status')).questions.find((q:any)=>q.format==='codex'&&q.status==='pending');assert.ok(pending);
-  await brokerCall('question.answer',{actor:{host:'claude',sessionId:'claude-probe',callId:'native-answer'},input:{request_id:pending.id,answers:{'输出格式？':'摘要'},rationale:'测试搭档答案来源。'}});
+  await brokerCall('question.answer',{actor:{host:'agy',sessionId:'claude-probe',callId:'native-answer'},input:{request_id:pending.id,answers:{'输出格式？':'摘要'},rationale:'测试搭档答案来源。'}});
   await waitFor(()=>modelRequests.some(r=>JSON.stringify(r.input).includes('nxbridge.question_result')),15000);
   const returned=modelRequests.find(r=>JSON.stringify(r.input).includes('nxbridge.question_result'));
   assert.match(JSON.stringify(returned.input),/测试搭档答案来源/);assert.match(JSON.stringify(returned.input),/partner/);

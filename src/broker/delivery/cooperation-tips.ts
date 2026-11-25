@@ -39,7 +39,7 @@ export class CooperationTips {
     if(!this.config().syncTipMinutes||!this.scope(peer)||peer.state!=='busy'||this.options.blocked?.(peer)||this.store.endpoint(peer.id)?.pendingContext)return false;
     const pair=this.store.pairFor(peer.id);
     if(!pair)return this.config().implicit!=='never'&&!this.store.setting('cooperationUnpaired:'+peer.id)&&!this.store.hasPairHistory(peer.id)&&!this.store.setting('pairLoss:'+peer.id)&&!this.store.setting('hosting:'+peer.id);
-    const other=this.store.peer(pair[peer.host==='codex'?'claude':'codex']);
+    const other=this.store.peer(pair[peer.host==='codex'?'agy':'codex']);
     if(pair.paused||!root(other)||other.state!=='ready'||!this.scope(other)||this.options.blocked?.(other)||this.store.endpoint(other.id)?.pendingContext)return false;
     if(this.store.questions(true).some(q=>q.pairId===pair.id))return false;
     return ![peer.id,other.id].some(id=>this.store.deliveryIssueFacts(pair.id,id).length);
@@ -70,7 +70,7 @@ export class CooperationTips {
   changed(peer:Peer):void{
                                            
     this.observe(peer);const pair=this.store.pairFor(peer.id);
-    if(pair)this.observe(this.store.peer(pair[peer.host==='codex'?'claude':'codex']));
+    if(pair)this.observe(this.store.peer(pair[peer.host==='codex'?'agy':'codex']));
   }
   contact(peer:Peer,message:Message,incoming:boolean):void{
     this.store.transaction(()=>{
@@ -119,7 +119,7 @@ export class CooperationTips {
       const silence=elapsed>=interval&&sinceTip>=interval&&state.count<3;
       const band=state.pendingBand,context=band!==undefined&&state.usage&&state.usage.tokens>=band&&(this.config().contextTipTokens??DEFAULT_CONFIG.contextTipTokens).includes(band)?{tokens:state.usage.tokens,threshold:band}:undefined;
       if((!silence&&!context)||elapsed<cooldown||sinceTip<cooldown){save();return;}
-      const pair=this.store.pairFor(peer.id),other=pair?this.store.peer(pair[peer.host==='codex'?'claude':'codex']):undefined;
+      const pair=this.store.pairFor(peer.id),other=pair?this.store.peer(pair[peer.host==='codex'?'agy':'codex']):undefined;
       const owed=pair?this.store.seenSinceLastSendFacts(pair.id,peer.id,this.store.bindings.current(peer.id)?.activatedAt??pair.createdAt).map(m=>m.id):[];
       const idle=this.options.idle?.(current);
       if(silence){state.count++;if(state.firstTip===undefined){state.firstTip=Date.now();state.firstTipWork=state.work;}}

@@ -8,13 +8,13 @@ import { once } from 'node:events';
 import { brokerOutageNotice, brokerOutageState, claimBrokerOutageEnqueue, releaseBrokerOutageClaim, observeBrokerReachable, brokerOutageDiagnostic, BROKER_OUTAGE_DELAY_MS, type OutageClaimant } from '../broker/broker-outage.js';
 import { temporaryDirectory } from './support/temporary.js';
 
-const actor=(session:string):OutageClaimant=>({host:session==='codex'?'codex':'claude',peerId:session,sessionId:session,pid:100,procStart:session});
+const actor=(session:string):OutageClaimant=>({host:session==='codex'?'codex':'agy',peerId:session,sessionId:session,pid:100,procStart:session});
 const alive=async()=>['alive' as const];
 function home(t:test.TestContext){const temp=temporaryDirectory();mkdirSync(path.join(temp.directory,'run'));t.after(temp.cleanup);return temp.directory;}
 async function prime(root:string,who:OutageClaimant,start=1000){for(const offset of [0,40000,80000])assert.equal(await brokerOutageNotice(root,who,{now:start+offset,admit:false},alive),undefined);}
 
 test('持续两分钟后所有窗口共用一次原子领取，原生 hook 和 Mod 不重复处理',async t=>{
-  const root=home(t),first=actor('claude'),other=actor('codex');
+  const root=home(t),first=actor('agy'),other=actor('codex');
   await prime(root,first);
   assert.equal(await brokerOutageNotice(root,first,{now:BROKER_OUTAGE_DELAY_MS,admit:false},alive),undefined);
   const notices=await Promise.all([first,other,actor('third')].map(actor=>brokerOutageNotice(root,actor,{now:121001},alive)));
@@ -48,7 +48,7 @@ test('独立进程同时领取时只有一个处理任务，落败窗口只能�
 });
 
 test('只读信号保留领取；原生 inbox 提交一次，领取者死于提供正文之前才允许转交',async t=>{
-  const root=home(t),first=actor('claude'),other=actor('codex');await prime(root,first);
+  const root=home(t),first=actor('agy'),other=actor('codex');await prime(root,first);
   const signal=(await brokerOutageNotice(root,first,{now:121001,admit:false},alive))!;assert.equal(signal.wake,true);
   assert.equal(claimBrokerOutageEnqueue(root,first,signal.id,121001),true);assert.equal(claimBrokerOutageEnqueue(root,first,signal.id,121001),false);
   assert.equal((await brokerOutageNotice(root,other,{now:122000,admit:false},async()=>['unknown']))?.wake,false);
@@ -58,7 +58,7 @@ test('只读信号保留领取；原生 inbox 提交一次，领取者死于提�
 });
 
 test('已提供正文后结果未知也不重放；恢复是被动事实，下一次故障从新期限开始',async t=>{
-  const root=home(t),first=actor('claude');await prime(root,first);
+  const root=home(t),first=actor('agy');await prime(root,first);
   const notice=(await brokerOutageNotice(root,first,{now:121001},alive))!;
   assert.equal(await brokerOutageNotice(root,first,{now:122000},alive),undefined);
   assert.equal(await brokerOutageNotice(root,first,{now:123000,reachable:true},alive),undefined);
@@ -73,7 +73,7 @@ test('已提供正文后结果未知也不重放；恢复是被动事实，下�
 });
 
 test('交接期间重计静默期限，不给暂停或待人工窗口领取，锁竞争也不产生第二任务',async t=>{
-  const root=home(t),first=actor('claude');await prime(root,first);
+  const root=home(t),first=actor('agy');await prime(root,first);
   assert.equal(await brokerOutageNotice(root,first,{now:121001,suppressed:true},alive),undefined);
   assert.equal(await brokerOutageNotice(root,first,{now:122000},alive),undefined);
   for(const now of [162000,202000])assert.equal(await brokerOutageNotice(root,first,{now},alive),undefined);
@@ -84,7 +84,7 @@ test('交接期间重计静默期限，不给暂停或待人工窗口领取，�
 });
 
 test('短暂恢复后再崩溃仍是同一次故障，超过一小时也不循环唤醒',async t=>{
-  const root=home(t),first=actor('claude');await prime(root,first);
+  const root=home(t),first=actor('agy');await prime(root,first);
   const initial=(await brokerOutageNotice(root,first,{now:121001},alive))!;
   for(const now of [122000,1800000,3800000]){
     assert.equal(await brokerOutageNotice(root,first,{now,reachable:true},alive),undefined);
@@ -94,7 +94,7 @@ test('短暂恢复后再崩溃仍是同一次故障，超过一小时也不循�
 });
 
 test('长时间没有观察时重新计算连续断线期限，快速通道也由 broker 心跳关闭旧故障',async t=>{
-  const root=home(t),first=actor('claude');await brokerOutageNotice(root,first,{now:1000},alive);
+  const root=home(t),first=actor('agy');await brokerOutageNotice(root,first,{now:1000},alive);
   assert.equal(await brokerOutageNotice(root,first,{now:121001},alive),undefined);
   assert.equal(brokerOutageState(root)?.since,121001);
   for(const now of [161001,201001])await brokerOutageNotice(root,first,{now},alive);
@@ -104,7 +104,7 @@ test('长时间没有观察时重新计算连续断线期限，快速通道也�
 });
 
 test('明确未提供正文可转交并排除原窗口；预约过期可接替，已提供正文永不释放',async t=>{
-  const root=home(t),first=actor('claude'),other=actor('codex');await prime(root,first);
+  const root=home(t),first=actor('agy'),other=actor('codex');await prime(root,first);
   const signal=(await brokerOutageNotice(root,first,{now:121001,admit:false},alive))!;
   claimBrokerOutageEnqueue(root,first,signal.id,121001);releaseBrokerOutageClaim(root,first,signal.id);
   assert.equal((await brokerOutageNotice(root,first,{now:122000,admit:false},alive))?.wake,false);
@@ -116,7 +116,7 @@ test('明确未提供正文可转交并排除原窗口；预约过期可接替�
 
 test('损坏领取账本保留原始证据且不自动重新创建任务',async t=>{
   const root=home(t),filename=path.join(root,'run','broker-outage.db'),bytes='invalid sqlite';writeFileSync(filename,bytes,'utf8');
-  assert.equal(await brokerOutageNotice(root,actor('claude'),{now:121001},alive),undefined);
+  assert.equal(await brokerOutageNotice(root,actor('agy'),{now:121001},alive),undefined);
   observeBrokerReachable(root);assert.equal(readFileSync(filename,'utf8'),bytes);assert.match(brokerOutageDiagnostic(root)!,/unknown/);
 });
 
@@ -133,7 +133,7 @@ test('通知已入队但窗口切换且进程仍活时，正文领取超时可�
 });
 
 test('单窗口明确未提交后只短暂排除，恢复预算允许同一窗口随后领取一次',async t=>{
-  const root=home(t),first=actor('claude');await prime(root,first);
+  const root=home(t),first=actor('agy');await prime(root,first);
   const signal=(await brokerOutageNotice(root,first,{now:121001,admit:false},alive))!;
   releaseBrokerOutageClaim(root,first,signal.id);
   for(const now of [122000,162000])assert.equal((await brokerOutageNotice(root,first,{now,admit:false},alive))?.wake,false);
@@ -151,7 +151,7 @@ test('稀疏 Codex hook 累计断线时间，稳定恢复后的心跳和读取�
 });
 
 test('唯一窗口长时间忙碌导致入队和预约过期时，迟到取件仍能领取任务，不被当作发送失败排除',async t=>{
-  const root=home(t),first=actor('claude');await prime(root,first);
+  const root=home(t),first=actor('agy');await prime(root,first);
   const signal=(await brokerOutageNotice(root,first,{now:121001,admit:false},alive))!;claimBrokerOutageEnqueue(root,first,signal.id,121001);
   for(const now of [162000,202000,242002,282002,322003])await brokerOutageNotice(root,first,{now,admit:false},alive);
   assert.equal(brokerOutageState(root)?.excluded?.[JSON.stringify([first.host,first.peerId,first.sessionId,first.pid,first.procStart])],undefined);
@@ -165,7 +165,7 @@ test('无法解析的领取记录保留原文和诊断，不按空账本重新�
 });
 
 test('自有账本的扩展字段不冻结恢复，已准入领取也不会因旧枚举校验重复唤醒',async t=>{
-  const root=home(t),first=actor('claude');await prime(root,first);
+  const root=home(t),first=actor('agy');await prime(root,first);
   const signal=(await brokerOutageNotice(root,first,{now:121001},alive))!;
   const {DatabaseSync}=createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite'),db=new DatabaseSync(path.join(root,'run','broker-outage.db'));
   try{
@@ -182,7 +182,7 @@ test('自有账本的扩展字段不冻结恢复，已准入领取也不会因�
 
 test('系统时钟回退后未提交领取可到期转交，已提供正文的领取仍不重放',async t=>{
   for(const admitted of [false,true]){
-    const root=home(t),first=actor('claude'),other=actor('codex');await prime(root,first,9000000);
+    const root=home(t),first=actor('agy'),other=actor('codex');await prime(root,first,9000000);
     const signal=(await brokerOutageNotice(root,first,{now:9120001,admit:admitted},alive))!;
     if(!admitted)claimBrokerOutageEnqueue(root,first,signal.id,9120001);
     assert.equal(await brokerOutageNotice(root,other,{now:1000},alive),undefined);
@@ -193,14 +193,14 @@ test('系统时钟回退后未提交领取可到期转交，已提供正文的�
 });
 
 test('只有被动断线说明而未产生领取时，稳定恢复后也提供一次恢复事实',async t=>{
-  const root=home(t),first=actor('claude');await prime(root,first);
+  const root=home(t),first=actor('agy');await prime(root,first);
   assert.equal((await brokerOutageNotice(root,first,{now:121001,eligible:false},alive))?.wake,false);assert.equal(brokerOutageState(root)?.claim,undefined);
   for(let now=122000;now<=242000;now+=30000)observeBrokerReachable(root,now);
   assert.equal((await brokerOutageNotice(root,first,{now:243000,reachable:true},alive))?.phase,'recovery');assert.equal(await brokerOutageNotice(root,first,{now:243001,reachable:true},alive),undefined);
 });
 
 test('慢速进程核验期间其他窗口推进账本后，使用提交时的新时钟，不把交错观察误判为时钟回退',async t=>{
-  t.mock.timers.enable({apis:['Date'],now:1000});const root=home(t),first=actor('claude'),other=actor('other');await prime(root,first);t.mock.timers.tick(120001);
+  t.mock.timers.enable({apis:['Date'],now:1000});const root=home(t),first=actor('agy'),other=actor('other');await prime(root,first);t.mock.timers.tick(120001);
   const signal=(await brokerOutageNotice(root,first,{admit:false},alive))!;claimBrokerOutageEnqueue(root,first,signal.id);
   const passive=await brokerOutageNotice(root,other,{admit:false},async()=>{
     for(let i=0;i<2;i++){t.mock.timers.tick(40000);await brokerOutageNotice(root,first,{admit:false},alive);}return['alive'];

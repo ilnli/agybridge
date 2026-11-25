@@ -54,7 +54,7 @@ export async function removeOwnedSocket(home:string,endpoint:string):Promise<voi
     const code=(error as NodeJS.ErrnoException).code;
     if(code==='ENOENT')return;
     if(process.platform!=='win32'||!['EACCES','EPERM'].includes(code??''))throw error;
-    await execute(windowsPowerShell(),['-NoLogo','-NoProfile','-NonInteractive','-Command','Remove-Item -LiteralPath $env:NXBRIDGE_SOCKET_FILE -Force -ErrorAction Stop'],{windowsHide:true,timeout:10000,env:{...process.env,NXBRIDGE_SOCKET_FILE:filename},encoding:'utf8'});
+    await execute(windowsPowerShell(),['-NoLogo','-NoProfile','-NonInteractive','-Command','Remove-Item -LiteralPath $env:AGYBRIDGE_SOCKET_FILE -Force -ErrorAction Stop'],{windowsHide:true,timeout:10000,env:{...process.env,AGYBRIDGE_SOCKET_FILE:filename},encoding:'utf8'});
   }
 }
 

@@ -13,7 +13,7 @@ import { readWindowsJobMembers, stopWindowsJob, stopWindowsProcess, watchWindows
 import { stopOwnedGroup, ownedGroupState, type ProcessState } from './process-stop.js';
 import { posixSupervisorMetadata, declarePosixNative, configurePosixCompletion } from './posix/posix-supervisor.js';
 
-export type OwnedProcessRole='broker'|'codex-runtime'|'claude-native'|'claude-worker'|'claude-child'|'host-control'|'proxy'|'test-daemon';
+export type OwnedProcessRole='broker'|'codex-runtime'|'agy-acp'|'host-control'|'proxy'|'test-daemon';
 export interface OwnedProcessRecord {
   version:1;id:string;home:string;role:OwnedProcessRole;identity:ProcessIdentity;
   peerId?:string;sessionId?:string;configHome?:string;handle?:string;parent?:OwnedIdentity;
@@ -32,11 +32,11 @@ export interface OwnedProcessRecord {
 const normalize=(home:string)=>process.platform==='win32'?path.resolve(home).toLowerCase():path.resolve(home);
 const linuxBootId=(()=>{if(process.platform!=='linux')return;try{return readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim()||undefined;}catch{return;}})();
 export const currentLinuxBootId=():string|undefined=>linuxBootId;
-const defaultProcessRegistryRoot=()=>process.platform==='win32'?path.join(process.env.LOCALAPPDATA??path.join(homedir(),'AppData','Local'),'nxbridge','processes'):path.join(process.env.XDG_STATE_HOME??path.join(homedir(),'.local','state'),'nxbridge','processes');
-export function processRegistryRoot():string{return path.resolve(process.env.NXBRIDGE_PROCESS_REGISTRY??defaultProcessRegistryRoot());}
+const defaultProcessRegistryRoot=()=>process.platform==='win32'?path.join(process.env.LOCALAPPDATA??path.join(homedir(),'AppData','Local'),'agybridge','processes'):path.join(process.env.XDG_STATE_HOME??path.join(homedir(),'.local','state'),'agybridge','processes');
+export function processRegistryRoot():string{return path.resolve(process.env.AGYBRIDGE_PROCESS_REGISTRY??defaultProcessRegistryRoot());}
 export function processRegistryDirectory(home:string):string{return path.join(processRegistryRoot(),createHash('sha256').update(normalize(home)).digest('hex').slice(0,24));}
 export const containerCompletionFile=(home:string,id=randomUUID())=>path.join(processRegistryDirectory(home),id+'.json.done');
-export function processOwnershipEnvironment():NodeJS.ProcessEnv{return Object.fromEntries(['NXBRIDGE_PROCESS_REGISTRY','NXBRIDGE_TEST_SCOPE'].filter(key=>process.env[key]!==undefined).map(key=>[key,process.env[key]]));}
+export function processOwnershipEnvironment():NodeJS.ProcessEnv{return Object.fromEntries(['AGYBRIDGE_PROCESS_REGISTRY','AGYBRIDGE_TEST_SCOPE'].filter(key=>process.env[key]!==undefined).map(key=>[key,process.env[key]]));}
 const filename=(record:Pick<OwnedProcessRecord,'home'|'id'>)=>{
   if(!/^[a-f0-9-]{36}$/.test(record.id))throw new BridgeError('process_record_invalid','进程归属记录标识无效。');
   return path.join(processRegistryDirectory(record.home),record.id+'.json');
@@ -64,7 +64,7 @@ function verifySpawnChain(identity:ProcessIdentity,parent:OwnedIdentity|undefine
 }
 async function persistOwnedProcess(home:string,input:Omit<OwnedProcessRecord,'version'|'id'|'home'|'createdAt'|'scope'>,id=randomUUID()):Promise<OwnedProcessRecord>{
   await prepareProcessRegistry(home);
-  const record:OwnedProcessRecord={...input,version:1,id,home:path.resolve(home),createdAt:Date.now(),bootTime:Date.now()-uptime()*1000,...(linuxBootId?{bootId:linuxBootId}:{}),...(process.env.NXBRIDGE_TEST_SCOPE?{scope:process.env.NXBRIDGE_TEST_SCOPE}:{})};
+  const record:OwnedProcessRecord={...input,version:1,id,home:path.resolve(home),createdAt:Date.now(),bootTime:Date.now()-uptime()*1000,...(linuxBootId?{bootId:linuxBootId}:{}),...(process.env.AGYBRIDGE_TEST_SCOPE?{scope:process.env.AGYBRIDGE_TEST_SCOPE}:{})};
   if(record.posixGroup||record.windowsJob)record.completionFile??=filename(record)+'.done';
                                            
   if(record.scope){const directory=path.join(processRegistryRoot(),'test-generations');stateDirectory(directory,0o700);atomicJson(path.join(directory,record.id+'.json'),record);}
@@ -251,7 +251,6 @@ export async function rememberOwnedChild(home:string,child:ChildProcess,role:Own
   const done=()=>{if(record.posixGroup)return;try{forgetOwnedProcess(record,'child-exited');}catch(error){process.stderr.write('自有子进程记录清理未完成：'+describeError(error)+'\n');}};
   if(child.exitCode!==null||child.signalCode!==null)done();else child.once('exit',done);return record;
 }
-export async function rememberOwnedHost(home:string,child:ChildProcess,_host:'codex'|'claude',role:OwnedProcessRole,launchId:string,configHome?:string):Promise<void>{
-                                   
+export async function rememberOwnedHost(home:string,child:ChildProcess,_host:'codex'|'agy',role:OwnedProcessRole,launchId:string,configHome?:string):Promise<void>{
   await rememberOwnedChild(home,child,role,{configHome},launchId);
 }

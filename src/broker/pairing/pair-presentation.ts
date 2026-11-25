@@ -1,7 +1,7 @@
 import type { Host } from '../../types.js';
 
 export interface CandidateDisplay {host:Host;name?:string;pid:number|null;state:string;observed_at:number;activity_at:number|null;opened_at:number|null}
-export const hostLabel=(host:Host)=>host==='codex'?'Codex':'Claude';
+export const hostLabel=(host:Host)=>host==='codex'?'Codex':'AGY';
 export function candidateLabel(value:CandidateDisplay,duplicate=false):string{
   const name=value.name?.trim(),label=name?(name.length>24?name.slice(0,24)+'…':name):'未命名 '+hostLabel(value.host)+' 窗口';
   return label+(duplicate&&value.pid?'（进程 '+value.pid+'）':'');

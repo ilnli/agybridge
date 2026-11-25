@@ -6,7 +6,7 @@ import {type Host} from '../../types.js';
 import { hostLabel } from '../../broker/pairing/pair-presentation.js';
 
 export async function partnerProfileCommand(args:string[]):Promise<unknown>{
-  const host=z.enum(['codex','claude']).parse(args[0]),target:string[]=[],profile:{model?:string;effort?:string}={};let reset=false;
+  const host=z.enum(['codex','agy']).parse(args[0]),target:string[]=[],profile:{model?:string;effort?:string}={};let reset=false;
   for(let index=1;index<args.length;index++){
     const flag=args[index]!;
     if(flag==='--json')continue;
@@ -27,10 +27,10 @@ const reason=(view:ProfileView)=>(view.error?.message??'原因未知').trim().re
 export function formatPartnerProfile(view:ProfileView):string{
   const current=describe(view.effective)||'模型和推理强度还没有报告',requested=describe(view.requested);
   const state=view.status==='host'?'没有单独指定，按默认设置。':!requested?'没有单独指定；当前会话保持上面的设置。'
-    :view.status==='applied'&&view.delivery_held?`正在重新核对${requested}是否仍然生效；核对完之前，新消息先不发给它。一直停在这里时，可以运行 nxbridge partner-profile ${view.host} --reset 放弃这次选择。`
+    :view.status==='applied'&&view.delivery_held?`正在重新核对${requested}是否仍然生效；核对完之前，新消息先不发给它。一直停在这里时，可以运行 agybridge partner-profile ${view.host} --reset 放弃这次选择。`
     :view.status==='applied'?(view.source==='explicit'?'这是为它指定的设置，已生效。':'按默认设置，已生效。')
-    :view.status==='pending'?(view.session_id?`已记下${requested}，正在等它生效并核对（它正在工作时会等这一轮做完）${view.delivery_held?`；在这之前，新消息先不发给它。一直停在这里时，可以运行 nxbridge partner-profile ${view.host} --reset 放弃这次选择`:''}。`:`已记下${requested}，它启动时就用这个设置。`)
-    :view.delivery_held?`上次修改（${requested}）结果不明，或者实际设置和指定的不一致：${reason(view)}。核对清楚之前，新消息先不发给它；要放弃这次修改，运行 nxbridge partner-profile ${view.host} --reset。`
+    :view.status==='pending'?(view.session_id?`已记下${requested}，正在等它生效并核对（它正在工作时会等这一轮做完）${view.delivery_held?`；在这之前，新消息先不发给它。一直停在这里时，可以运行 agybridge partner-profile ${view.host} --reset 放弃这次选择`:''}。`:`已记下${requested}，它启动时就用这个设置。`)
+    :view.delivery_held?`上次修改（${requested}）结果不明，或者实际设置和指定的不一致：${reason(view)}。核对清楚之前，新消息先不发给它；要放弃这次修改，运行 agybridge partner-profile ${view.host} --reset。`
     :`修改（${requested}）没有成功：${reason(view)}。它继续用原来的设置。`;
   return `后台 ${hostLabel(view.host)}：${current}。${state?'\n'+state:''}\n`;
 }

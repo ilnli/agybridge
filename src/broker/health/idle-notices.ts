@@ -27,7 +27,7 @@ export class IdleNotices {
   observe(pair:Pair,partner:Peer,minutes:number):void{
     if(minutes)minutes=Math.max(5,minutes);
     this.store.transaction(()=>{
-      const delegator=this.store.peer(pair[partner.host==='codex'?'claude':'codex']),binding=this.store.bindings.current(partner.id),recipientBinding=this.store.bindings.current(delegator.id),key='idleNotice:'+partner.id;
+      const delegator=this.store.peer(pair[partner.host==='codex'?'agy':'codex']),binding=this.store.bindings.current(partner.id),recipientBinding=this.store.bindings.current(delegator.id),key='idleNotice:'+partner.id;
       const scope=JSON.stringify([pair.id,binding?.epoch??partner.sessionId,recipientBinding?.epoch??delegator.sessionId]),previous=this.store.setting<Episode>(key);
                                                
       const oldScope=previous?JSON.parse(previous.scope):undefined;

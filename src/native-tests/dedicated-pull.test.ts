@@ -20,10 +20,10 @@ import { connectAppServer } from '../hosts/codex/adapter.js';
 import { rememberOwnedHost,releaseRecordedProcesses } from '../process/owned-processes.js';
 
 test('官方专用 Codex HTTP：空闲成对注入、忙碌真实取件、中断与重启去重、续跑失败保留历史证据',{timeout:120000},async t=>{
-  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexHome=path.join(root,'codex'),claudeHome=path.join(root,'claude');
-  for(const directory of [home,codexHome,claudeHome])mkdirSync(directory);
-  const env={NXBRIDGE_HOME:home,CODEX_HOME:codexHome,CLAUDE_CONFIG_DIR:claudeHome,OPENAI_API_KEY:'isolated-http-pull-only'},restoreEnvironment=overrideEnvironment(env);
-  const config={...DEFAULT_CONFIG,implicit:'never' as const,codexHome,claudeHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};writeFileSync(path.join(home,'config.json'),JSON.stringify(config),'utf8');
+  const temp=temporaryDirectory(),root=temp.directory,home=path.join(root,'bridge'),codexHome=path.join(root,'codex'),agyHome=path.join(root,'agy');
+  for(const directory of [home,codexHome,agyHome])mkdirSync(directory);
+  const env={AGYBRIDGE_HOME:home,CODEX_HOME:codexHome,AGY_HOME:agyHome,OPENAI_API_KEY:'isolated-http-pull-only'},restoreEnvironment=overrideEnvironment(env);
+  const config={...DEFAULT_CONFIG,implicit:'never' as const,codexHome,agyHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};writeFileSync(path.join(home,'config.json'),JSON.stringify(config),'utf8');
   writeFileSync(path.join(codexHome,'config.toml'),'[features]\ncode_mode = false\n','utf8');
   const requests:any[]=[],protocolErrors:unknown[]=[],nativeItems:any[]=[],completed=new Map<string,any>(),launchId=randomUUID();let client:Awaited<ReturnType<typeof connectAppServer>>|undefined,hold=false,pull=false,fail=false,stderr='',gate:Promise<void>|undefined,finishHeld:(()=>void)|undefined,diagnostics:(()=>Promise<unknown>)|undefined;
   const model=http.createServer(async(req,res)=>{try{
@@ -59,9 +59,9 @@ test('官方专用 Codex HTTP：空闲成对注入、忙碌真实取件、中断
   await brokerCall('codex.connect',{endpoint},{home});const {thread}=await client!.request('thread/start',{cwd:root,approvalPolicy:'never',sandbox:'read-only'});
   const status=()=>brokerCall<any>('status',{}, {home});let target:any;await wait(async()=>{target=(await status()).peers.find((peer:any)=>peer.sessionId===thread.id);return!!target;});
   diagnostics=async()=>{const value=await status(),native=(await client!.request('thread/read',{threadId:thread.id,includeTurns:false})).thread;return{peers:value.peers,messages:value.messages.map((message:any)=>({id:message.id,state:message.state})),history:await readCodexHistory(native.path,thread.id),nativeItems};};
-  const identity=await processIdentity(process.pid),sender=await brokerCall<any>('register',{host:'claude',sessionId:'http-source',cwd:root,kind:'root',endpoint:{mode:'embedded',address:'',epoch:'source',pid:identity.pid,procStart:identity.startedAt}},{home});
-  await brokerCall('pair',{claude:sender.id,codex:target.id},{home});
-  let sequence=0;const send=async(body:string)=>brokerCall<any>('send',{actor:{host:'claude',sessionId:'http-source',callId:'send-'+sequence++},message:body},{home});
+  const identity=await processIdentity(process.pid),sender=await brokerCall<any>('register',{host:'agy',sessionId:'http-source',cwd:root,kind:'root',endpoint:{mode:'embedded',address:'',epoch:'source',pid:identity.pid,procStart:identity.startedAt}},{home});
+  await brokerCall('pair',{agy:sender.id,codex:target.id},{home});
+  let sequence=0;const send=async(body:string)=>brokerCall<any>('send',{actor:{host:'agy',sessionId:'http-source',callId:'send-'+sequence++},message:body},{home});
   const observed=async(id:string)=>(await status()).messages.find((message:any)=>message.id===id)?.state==='contextObserved';
   const bootstrap=await send('HTTP_PRIVATE_BODY_FIRST_UNMATERIALIZED');await wait(()=>observed(bootstrap.message_id));await wait(()=>[...completed.values()].some(turn=>turn.status==='completed'));
   await wait(async()=>(await client!.request('thread/read',{threadId:thread.id,includeTurns:false})).thread.status.type==='idle');

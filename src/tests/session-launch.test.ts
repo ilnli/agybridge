@@ -62,10 +62,10 @@ test('临时版本探测及混合失败不永久暂停，历史异常保持原�
 });
 
 test('Claude 自动入口保留版本筛选，用户显式固定旧入口会显示写入版本提示',async t=>{
-  const home=temporary(t),entry={...record(home,'claude','2.1.0 (Claude Code)','session'),host:'claude' as const};saveUserProfile(home,entry);
+  const home=temporary(t),entry={...record(home,'agy','2.1.0 (Claude Code)','session'),host:'agy' as const};saveUserProfile(home,entry);
   const options={home,cwd:home,configHome:home,sessionId:'session'},dependencies={writer:'2.2.0',version:async()=>entry.version};
-  await assert.rejects(selectSessionLaunch('claude',DEFAULT_CONFIG,options,dependencies),{code:'profile_version_unsupported'});
-  const selected=await selectSessionLaunch('claude',{...DEFAULT_CONFIG,claudeBinary:entry.exe},options,dependencies);
+  await assert.rejects(selectSessionLaunch('agy',DEFAULT_CONFIG,options,dependencies),{code:'profile_version_unsupported'});
+  const selected=await selectSessionLaunch('agy',{...DEFAULT_CONFIG,agyBinary:entry.exe},options,dependencies);
   assert.equal(selected.executable.command,entry.exe);assert.match(selected.notes.join(' '),/2\.1\.0.*2\.2\.0/);
 });
 
@@ -89,7 +89,7 @@ test('daemon 来源保存映像和版本，环境不成为用户模板，恢复�
   const home=temporary(t),exe=record(home,'daemon','codex-cli 0.167.1').exe,native={pid:2,parentPid:1,name:'codex',startedAt:'generation',image:exe},endpoint={daemon:{address:'unix://isolated'},pid:2,procStart:'generation',configHome:home};
   const observed=await captureDaemonLaunch(home,{sessionId:'daemon-session',cwd:home},endpoint,{identity:async()=>native,daemon:async()=>true,version:async()=> 'codex-cli 0.167.1'});
   assert.equal(observed?.kind,'daemon');assert.deepEqual(observed?.env,{});assert.equal(profileState(home).profiles.length,0);
-  const capture={host:'codex' as const,sessionId:'daemon-session',nativePid:2,nativeGeneration:'generation',sourcePid:3,sourceGeneration:'source',force:true,env:{CODEX_HOME:home,NXBRIDGE_OWNED_LAUNCH:'codex:owned',HTTPS_PROXY:'不准用作模板'}};
+  const capture={host:'codex' as const,sessionId:'daemon-session',nativePid:2,nativeGeneration:'generation',sourcePid:3,sourceGeneration:'source',force:true,env:{CODEX_HOME:home,AGYBRIDGE_OWNED_LAUNCH:'codex:owned',HTTPS_PROXY:'不准用作模板'}};
   await captureUserLaunch(home,capture,{id:'member',host:'codex',sessionId:'daemon-session',cwd:home,owner:'nxbridge'}as any,2,{ancestors:async()=>[{pid:3,parentPid:2,name:'node',startedAt:'source'},native],version:async()=> 'codex-cli 0.167.1'});
   assert.equal(profileState(home).observations?.[0]?.kind,'daemon');assert.deepEqual(profileState(home).observations?.[0]?.env,{});assert.equal(profileState(home).profiles.length,0);
   const selected=await selectSessionLaunch('codex',DEFAULT_CONFIG,{home,cwd:home,configHome:home,sessionId:'daemon-session'},{version,writer:'0.167.1'});

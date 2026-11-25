@@ -9,11 +9,10 @@ import { normalizedHome } from '../../integration/hooks/session-bindings.js';
 import {codexHome} from '../../shared/local-paths.js';
 import {runCli} from '../../process/host-command.js';
 import {BridgeError,DeliveryError,describeError} from '../../shared/errors.js';
-import {HEALTH_WAKE_NOTICE,type BridgeConfig,type Peer,type RegisterInput,type CodexPermissionEvidence} from '../../types.js';
+import {type BridgeConfig,type Peer,type RegisterInput,type CodexPermissionEvidence} from '../../types.js';
 import { daemonContextChanged, daemonWakeAuthorized, observeDaemonContext } from './daemon-wake.js';
 import { classifyCodexPermission, persistedCodexPermission, observeCodexPermission } from './codex-permission.js';
 import type { RpcClient } from '../../ipc/rpc.js';
-import type { CodexTurnOriginProvider } from './codex-turn-origin.js';
 import type { Store } from '../../storage/store.js';
 import type { Endpoint, PermissionClass } from '../../types.js';
 import { codexParent, codexSubagent } from './codex-lineage.js';
@@ -39,7 +38,6 @@ export function daemonRegistration(thread:CodexThread,domain:DaemonDomain,rootSe
 }
 
 export class CodexDaemons {
-  turnOrigin?:CodexTurnOriginProvider;
   private clients=new Map<string,Connection>();
   private openings=new Map<string,Promise<Connection|undefined>>();
   private scans=new Map<string,{work:Promise<Connection|undefined>;fresh:boolean}>();
@@ -52,7 +50,7 @@ export class CodexDaemons {
   constructor(private store:Store,private config:BridgeConfig,private home:string,private register:(input:RegisterInput)=>Promise<Peer>){}
   private wakeScope(peer:Peer,endpoint:Endpoint):string|undefined{
     const current=this.store.peer(peer.id),active=this.store.endpoint(peer.id),pair=this.store.pairFor(peer.id),binding=this.store.bindings.current(peer.id);
-    if(this.closed||!pair||pair.paused||!daemonWakeAuthorized(this.store,pair)||daemonContextChanged(this.store,current,active)||[pair.claude,pair.codex].some(id=>this.store.peer(id).enabled===false)||current.state!=='ready'||current.sessionId!==peer.sessionId||!['root','fork'].includes(current.kind)||!endpoint.daemon||!endpoint.configHome||!endpoint.pid||!endpoint.procStart||!active?.active||active.epoch!==endpoint.epoch||active.bindingEpoch!==endpoint.bindingEpoch||active.pendingContext||!binding?.active||binding.transitioning)return;
+    if(this.closed||!pair||pair.paused||!daemonWakeAuthorized(this.store,pair)||daemonContextChanged(this.store,current,active)||[pair.agy,pair.codex].some(id=>this.store.peer(id).enabled===false)||current.state!=='ready'||current.sessionId!==peer.sessionId||!['root','fork'].includes(current.kind)||!endpoint.daemon||!endpoint.configHome||!endpoint.pid||!endpoint.procStart||!active?.active||active.epoch!==endpoint.epoch||active.bindingEpoch!==endpoint.bindingEpoch||active.pendingContext||!binding?.active||binding.transitioning)return;
     return JSON.stringify([pair.id,peer.sessionId,endpoint.epoch,endpoint.bindingEpoch]);
   }
                                   
@@ -67,14 +65,9 @@ export class CodexDaemons {
       const current=this.wakeScope(peer,endpoint);this.wakeChecks.set(peer.id,{scope,at:Date.now(),ready:ready&&current===scope});return ready&&current===scope;
     }catch{this.wakeChecks.delete(peer.id);return false;}
   }
-                                          
-  async queueWakeReady(peer:Peer,endpoint:Endpoint):Promise<boolean>{
-    const scope=this.wakeScope(peer,endpoint);if(!scope)return false;
-    try{const {thread}=await this.readTarget(peer,endpoint,false,true);return thread.status?.type==='idle'&&this.wakeScope(peer,endpoint)===scope;}catch{return false;}
-  }
-  private async readTarget(peer:Peer,endpoint:Endpoint,includeTurns:boolean,connectedOnly=false){
+  private async readTarget(peer:Peer,endpoint:Endpoint,includeTurns:boolean){
     if(this.closed||!endpoint.daemon||!endpoint.configHome||!endpoint.pid||!endpoint.procStart||!peer.sessionId)throw new DeliveryError('daemon_wake_unavailable','目标共享 daemon 路由不完整。');
-    const connection=connectedOnly?this.clients.get(normalizedHome(endpoint.configHome)):await this.connection(normalizedHome(endpoint.configHome),{pid:endpoint.pid,procStart:endpoint.procStart});
+    const connection=await this.connection(normalizedHome(endpoint.configHome),{pid:endpoint.pid,procStart:endpoint.procStart});
     if(!connection||connection.rpc.closed||connection.pid!==endpoint.pid||connection.procStart!==endpoint.procStart||connection.address!==endpoint.daemon.address)throw new DeliveryError('daemon_identity_changed','共享 daemon 的原生路由已经改变。');
     const thread=includeTurns?await readCodexThread(connection.rpc,peer.sessionId!):(await connection.rpc.request('thread/read',{threadId:peer.sessionId,includeTurns:false},{timeout:5000})).thread as CodexThread;
     if(thread?.id!==peer.sessionId||!interactive(thread)||thread.status?.type==='notLoaded'||this.endedThreads.has(this.threadKey(connection,peer.sessionId)))throw new DeliveryError('daemon_thread_ended','原生主会话已卸载或不再可投递。');
@@ -99,23 +92,11 @@ export class CodexDaemons {
   }
   async inject(peer:Peer,endpoint:Endpoint,callId:string,output:string):Promise<void>{
     const rpc=await this.mutationTarget(peer,endpoint);
-    await rpc.request('thread/inject_items',{threadId:peer.sessionId,items:[{type:'function_call',call_id:callId,name:'receive_messages',namespace:'claude',arguments:'{}'},{type:'function_call_output',call_id:callId,name:'receive_messages',namespace:'claude',output}]},{mutation:true});
+    await rpc.request('thread/inject_items',{threadId:peer.sessionId,items:[{type:'function_call',call_id:callId,name:'receive_messages',namespace:'agy',arguments:'{}'},{type:'function_call_output',call_id:callId,name:'receive_messages',namespace:'agy',output}]},{mutation:true});
   }
   async continueInjected(peer:Peer,endpoint:Endpoint):Promise<string>{
-    const scope=this.wakeScope(peer,endpoint),rpc=await this.mutationTarget(peer,endpoint),origin=await this.turnOrigin?.(peer,'partner');
-    if(this.wakeScope(peer,endpoint)!==scope)throw new DeliveryError('daemon_wake_unavailable','原生唤醒授权或上下文已改变。');
-    const result=await rpc.request('turn/start',{threadId:peer.sessionId,input:[],...origin},{mutation:true});
+    const rpc=await this.mutationTarget(peer,endpoint),result=await rpc.request('turn/start',{threadId:peer.sessionId,input:[]},{mutation:true});
     this.wakeChecks.delete(peer.id);return result.turn.id;
-  }
-  async wake(peer:Peer,endpoint:Endpoint,beforeSubmit:()=>Promise<boolean>):Promise<string|undefined>{
-    const scope=this.wakeScope(peer,endpoint),rpc=await this.mutationTarget(peer,endpoint);
-    const origin=await this.turnOrigin?.(peer,'children');
-    if(!await beforeSubmit())return;
-    if(this.wakeScope(peer,endpoint)!==scope)throw new DeliveryError('daemon_wake_unavailable','共享 daemon 唤醒授权或当前上下文已改变。');
-    const result=await rpc.request('turn/start',{threadId:peer.sessionId,input:[{type:'text',text:HEALTH_WAKE_NOTICE}],...origin},{mutation:true});
-    this.wakeChecks.delete(peer.id);
-    if(typeof result?.turn?.id!=='string'||!result.turn.id)throw new DeliveryError('wake_result_unknown','原生唤醒没有返回可核验的轮次。',true);
-    return result.turn.id;
   }
   private threadKey(domain:Pick<DaemonDomain,'configHome'|'pid'|'procStart'>,id:string):string{return JSON.stringify([normalizedHome(domain.configHome),domain.pid,domain.procStart,id]);}
   private async endDead(configHome:string,current?:DaemonDomain):Promise<void>{
@@ -123,7 +104,7 @@ export class CodexDaemons {
     const states=await probeProcesses(endpoints.map(endpoint=>({pid:endpoint.pid!,procStart:endpoint.procStart!})));
     for(let index=0;index<endpoints.length;index++)if(states[index]==='dead'){
       const endpoint=endpoints[index]!,peer=this.store.peer(endpoint.peerId),pair=this.store.pairFor(peer.id);
-      this.store.transaction(()=>{this.endPeer(peer,endpoint.epoch);if(pair)this.store.setSetting('daemonContinuity:'+peer.id,{pairId:pair.id,sessionId:peer.sessionId,configHome:normalizedHome(configHome),generation:endpoint.procStart,losses:[pair.claude,pair.codex].map(id=>this.store.setting<{id:string}>('pairLoss:'+id)?.id)});});
+      this.store.transaction(()=>{this.endPeer(peer,endpoint.epoch);if(pair)this.store.setSetting('daemonContinuity:'+peer.id,{pairId:pair.id,sessionId:peer.sessionId,configHome:normalizedHome(configHome),generation:endpoint.procStart,losses:[pair.agy,pair.codex].map(id=>this.store.setting<{id:string}>('pairLoss:'+id)?.id)});});
     }
   }
   async scan(configHome:string,expected?:{pid:number;procStart:string},fresh=false):Promise<Connection|undefined>{
@@ -201,7 +182,7 @@ export class CodexDaemons {
     connection.threads=threads;connection.at=Date.now();await this.endDead(configHome,connection);return connection;
   }
   async registration(configHome:string,runtime:{pid:number;procStart:string},sessionId:string,contextStart=false):Promise<RegisterInput>{
-    if(this.store.peersForSession('codex',sessionId).some(peer=>peer.enabled===false))throw new BridgeError('member_disabled','该 Codex 成员的 nxbridge 已关闭。');
+    if(this.store.peersForSession('codex',sessionId).some(peer=>peer.enabled===false))throw new BridgeError('member_disabled','该 Codex 成员的 agybridge 已关闭。');
                                                  
     const connection=await this.connection(normalizedHome(configHome),runtime);if(!connection)throw new BridgeError('daemon_unavailable','未找到当前配置目录的共享 daemon。');
     const chain:CodexThread[]=[],seen=new Set<string>(),revisions=new Map<string,number>();let id:string|undefined=sessionId;
@@ -249,7 +230,7 @@ export class CodexDaemons {
         try{await captureDaemonLaunch(this.home,peer,input.endpoint);}catch(error){this.store.event('launch.daemon.capture.failed',{peerId:peer.id,code:(error as BridgeError).code??'capture_failed'});}
         if(continuity&&continuity.sessionId===thread.id&&continuity.configHome===normalizedHome(domain.configHome)&&continuity.generation!==domain.procStart){
           const pair=this.store.pairById(continuity.pairId);
-          if(pair?.archived&&[pair.claude,pair.codex].every((id,index)=>!this.store.pairFor(id)&&this.store.setting<{id:string}>('pairLoss:'+id)?.id===continuity.losses[index]))this.store.restorePair(pair.id);
+          if(pair?.archived&&[pair.agy,pair.codex].every((id,index)=>!this.store.pairFor(id)&&this.store.setting<{id:string}>('pairLoss:'+id)?.id===continuity.losses[index]))this.store.restorePair(pair.id);
           this.store.setSetting(key,null);
         }
       }

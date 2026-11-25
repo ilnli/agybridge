@@ -12,9 +12,9 @@ import { managedMarker } from '../install/installation.js';
 import { compareCacheVersions, pruneRetainedCodexCaches, recoverRetainedCaches, withRetainedCodexCaches } from '../install/plugin-cache-retention.js';
 
 function fixture(t:Parameters<typeof temporary>[0]){
-  const directory=temporary(t),home=path.join(directory,'bridge'),hostHome=path.join(directory,'codex'),base=path.join(hostHome,'plugins','cache','nxbridge-local','nxbridge'),old=path.join(base,'0.1.0'),fresh=path.join(base,'0.1.1');
+  const directory=temporary(t),home=path.join(directory,'bridge'),hostHome=path.join(directory,'codex'),base=path.join(hostHome,'plugins','cache','agybridge-local','agybridge'),old=path.join(base,'0.1.0'),fresh=path.join(base,'0.1.1');
   mkdirSync(home);mkdirSync(path.join(old,'.codex-plugin'),{recursive:true});
-  atomicJson(path.join(old,'.codex-plugin','plugin.json'),{name:'nxbridge',version:'0.1.0'});atomicJson(path.join(old,'runtime.json'),{home});writeFileSync(path.join(old,'bridge.cjs'),'旧的已信任代码','utf8');
+  atomicJson(path.join(old,'.codex-plugin','plugin.json'),{name:'agybridge',version:'0.1.0'});atomicJson(path.join(old,'runtime.json'),{home});writeFileSync(path.join(old,'bridge.cjs'),'旧的已信任代码','utf8');
   return{home,hostHome,base,old,fresh,pending:path.join(home,'cache-retention-pending.json')};
 }
 

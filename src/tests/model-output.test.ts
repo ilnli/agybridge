@@ -42,9 +42,9 @@ test('模型状态只保留活跃问题，题目仅给回答方并采用宿主�
   for(const key of ['host','name'])assert.equal(small.partner[key],undefined);
   for(const key of ['paused','pending','receive_mode'])assert.equal(small[key],undefined);
   assert.equal(small.pickup,true);
-  const respondent:any=await broker.dispatch('status',{actor:{host:'claude',sessionId:'c',callId:'status'},model_view:true});
-  assert.equal(respondent.questions[0].role,'respondent');assert.equal(respondent.questions[0].questions[0].question,'用户原文？');assert.equal(respondent.questions[0].questions[0].multiSelect,false);assert.equal(respondent.questions[0].questions[0].id,undefined);
-  await broker.dispatch('question.answer',{actor:{host:'claude',sessionId:'c',callId:'answer'},input:{request_id:q.request_id,answers:{'用户原文？':'甲'},rationale:'原始理由'}});
+  const respondent:any=await broker.dispatch('status',{actor:{host:'agy',sessionId:'c',callId:'status'},model_view:true});
+  assert.equal(respondent.questions[0].role,'respondent');assert.equal(respondent.questions[0].questions[0].question,'用户原文？');assert.equal(respondent.questions[0].questions[0].multiSelect,undefined);assert.equal(respondent.questions[0].questions[0].id,'q');
+  await broker.dispatch('question.answer',{actor:{host:'agy',sessionId:'c',callId:'answer'},input:{request_id:q.request_id,answers:{q:'甲'},rationale:'原始理由'}});
   const done:any=await broker.dispatch('status',{actor,model_view:true});assert.equal(done.questions,undefined);
   const history:any=await broker.dispatch('status',{});assert.equal(history.questions[0].source.kind,'partner');assert.equal(history.questions[0].rationale,'原始理由');assert.equal(history.questions[0].answers.q.answers[0],'甲');
   store.saveEndpoint({...store.endpoint(x.id)!,mode:'embedded'});store.setPaused(true);
@@ -55,7 +55,7 @@ test('模型错误只翻译内部文案，保留 uncertain 和自定义名称',t
   const {c}=fixture(t);
   assert.deepEqual(modelError(new BridgeError('ref_missing','中文错误')),{code:'ref_missing',message:'nxref not found: msg must be in current pair; agent must be own finished subagent (id, not name)'});
   assert.equal(modelError(new DeliveryError('timeout','超时',true)).uncertain,true);
-  assert.equal(modelPeerName(c),c.name);assert.equal(modelPeerName({...c,name:'nxbridge · claude 搭档'}),'nxbridge:claude');
-  assert.equal(modelPeerName({...c,name:'nxbridge-01234567-89ab-cdef-0123-456789abcdef'}),'nxbridge:claude');
+  assert.equal(modelPeerName(c),c.name);assert.equal(modelPeerName({...c,name:'agybridge · agy 搭档'}),'agybridge:agy');
+  assert.equal(modelPeerName({...c,name:'agybridge-01234567-89ab-cdef-0123-456789abcdef'}),'agybridge:agy');
   assert.equal(modelPeerName({...c,name:'用户定制名称'}),'用户定制名称');
 });

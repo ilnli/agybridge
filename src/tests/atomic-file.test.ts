@@ -33,7 +33,7 @@ test('Windows 短暂替换失败只对三种占用错误重试，总退避严格
 test('原子发布不覆盖已有意图，失败后旧内容保留且本次临时文件清理',t=>{
   const directory=temporary(t),file=path.join(directory,'状态 中文.json');
   atomicWriteText(file,'旧内容');
-  assert.throws(()=>atomicWriteText(file,'新内容',{exclusive:true}),{code:'EEXIST'});
+  assert.throws(()=>atomicWriteText(file,'新内容',true),{code:'EEXIST'});
   assert.equal(readFileSync(file,'utf8'),'旧内容');assert.deepEqual(readdirSync(directory),[path.basename(file)]);
   atomicWriteText(file,'完整新内容');assert.equal(readFileSync(file,'utf8'),'完整新内容');
   const exclusive=path.join(directory,'意图.json');atomicWriteText(exclusive,'完整意图',{exclusive:true});

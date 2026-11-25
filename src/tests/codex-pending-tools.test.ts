@@ -22,7 +22,7 @@ test('模型已生成函数或自定义调用不代表工具结束；只保留�
   let value=await f.read();assert.equal(value?.complete,true);
   assert.deepEqual(value?.calls,[{id:'function',at:base},{id:'custom',at:base}]);
   assert.doesNotMatch(JSON.stringify(value),/arbitrary_tool|正文/);
-                                      
+
   f.append(row({type:'item_completed',thread_id:session,turn_id:'older',item:{id:'old-item'}},'event_msg'),output('function'),output('custom','custom_tool_call_output'));
   value=await f.read();assert.deepEqual(value?.calls,[]);
 });

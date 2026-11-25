@@ -96,7 +96,7 @@ test('fork 只在父线程正式结束且后继唯一时继承，活父或多个
   await f.client.applySnapshot(f.domain,[parent,fork]);const root=f.store.find('codex','parent')!,pair=f.store.pair(f.c.id,root.id);
   await f.client.applySnapshot(f.domain,[parent,fork]);assert.equal(f.store.pairFor(root.id)!.id,pair.id);assert.equal(f.store.peer(root.id).sessionId,'parent');
   await f.client.applySnapshot(f.domain,[fork]);assert.equal(f.store.peer(root.id).sessionId,'fork');assert.equal(f.store.pairFor(root.id)!.id,pair.id);assert.equal(f.store.peers().filter(peer=>peer.sessionId==='fork').length,1);
-  const c=f.store.register(registration('claude','other-c'));await f.client.applySnapshot(f.domain,[fork,thread('p2')]);const p2=f.store.find('codex','p2')!;f.store.pair(c.id,p2.id);
+  const c=f.store.register(registration('agy','other-c'));await f.client.applySnapshot(f.domain,[fork,thread('p2')]);const p2=f.store.find('codex','p2')!;f.store.pair(c.id,p2.id);
   await f.client.applySnapshot(f.domain,[fork,thread('f2',{forkedFromId:'p2'}),thread('f3',{forkedFromId:'p2'})]);assert.equal(f.store.pairFor(c.id)?.codex,p2.id);
   const message=f.store.accept(pair,f.c,'父结束后交给后继的任务','after-fork');
   await f.client.applySnapshot(f.domain,[]);assert.equal(f.store.pairFor(root.id)?.id,pair.id);assert.equal(f.store.message(message.id).state,'accepted');

@@ -67,7 +67,7 @@ test('用户观察租约自动释放后仍可唤醒；关闭窗口后原 ID 可�
   await new Promise<void>(resolve=>model.listen(0,'127.0.0.1',resolve));
   const configText=stringify({model:'gpt-5.1-codex',model_provider:'subscription_test',approval_policy:'never',sandbox_mode:'danger-full-access',web_search:'disabled',analytics:{enabled:false},features:{apps:false,remote_plugin:false,daemon_auto_start:false,code_mode:false},model_providers:{subscription_test:{name:'本地线程释放验收',base_url:'http://127.0.0.1:'+(model.address() as any).port+'/v1',wire_api:'responses',requires_openai_auth:false}}});
   writeFileSync(path.join(codexHome,'config.toml'),configText,'utf8');
-  const config={...DEFAULT_CONFIG,codexHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})},adapter=new CodexAdapter(config,home),store=new Store(':memory:'),broker=new Broker(store,config,{codex:adapter,claude:new FakeAdapter()} as unknown as Adapters,home);
+  const config={...DEFAULT_CONFIG,codexHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})},adapter=new CodexAdapter(config,home),store=new Store(':memory:'),broker=new Broker(store,config,{codex:adapter,agy:new FakeAdapter()} as unknown as Adapters,home);
   const windows:Awaited<ReturnType<typeof connectAppServer>>[]=[];
   t.after(async()=>{for(const rpc of windows)rpc.close();await broker.stop();assert.deepEqual(await releaseNativeTestLaunches(home),[]);model.closeAllConnections();await new Promise<void>(resolve=>model.close(()=>resolve()));store.close();await temp.cleanup();});
   const endpoint=await adapter.ensureEndpoint(root),runtime=runtimeFor(home,{endpoint})!.value;
@@ -76,8 +76,8 @@ test('用户观察租约自动释放后仍可唤醒；关闭窗口后原 ID 可�
   const first=await window.request('thread/start',{cwd:root});
   await window.request('turn/start',{threadId:first.thread.id,input:[{type:'text',text:'生成持久历史'}]});
   await wait(async()=>requests>0&&(await window.request('thread/read',{threadId:first.thread.id,includeTurns:false})).thread.status.type==='idle','本地轮次没有完成');
-  const peer=store.register({...threadRegistration(first.thread,endpoint,first)!,endpoint:{...threadRegistration(first.thread,endpoint,first)!.endpoint,configHome:codexHome}}),other=store.register(registration('claude','subscription-partner',{cwd:root}));store.pair(other.id,peer.id);
-                                     
+  const peer=store.register({...threadRegistration(first.thread,endpoint,first)!,endpoint:{...threadRegistration(first.thread,endpoint,first)!.endpoint,configHome:codexHome}}),other=store.register(registration('agy','subscription-partner',{cwd:root}));store.pair(other.id,peer.id);
+
   const releaseObservation=()=>wait(async()=>{
     await (broker as any).releaseIdleCodexSubscriptions();return !adapter.hasSubscription(peer,store.endpoint(peer.id)!);
   },'原生轮次及观察读取结束后没有释放用户观察租约');
