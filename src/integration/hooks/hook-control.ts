@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { brokerCall as callBroker } from '../../ipc/ipc.js';
 import { agyHookRegistration } from '../../hosts/agy/identity.js';
+import { inspectAgyTranscript } from '../../hosts/agy/agy-transcript.js';
 import { agyProcessIdentity, codexProcessIdentity } from '../../process/process.js';
 import { codexAgentPath } from '../../hosts/codex/adapter.js';
 import { agyHome, bridgeHome, codexHome } from '../../shared/local-paths.js';
@@ -107,8 +108,15 @@ export async function hook(host:Host,input:any,provided:(ack:()=>Promise<void>)=
       session_id:sessionId,
       context_key:contextKey,
       ...(actor?{actor}:{}),
-      agybridge_timing:{identityMs,registrationMs:performance.now()-registrationStartedAt,elapsedBeforeBrokerMs:execution.elapsedMs===undefined?performance.now():execution.elapsedMs+identityMs+performance.now()-began},
     };
+    const registrationMs=performance.now()-registrationStartedAt;
+    if((event==='PreInvocation'||event==='PostToolUse')&&typeof input.transcriptPath==='string'&&input.transcriptPath){
+      try{
+        const snapshot=await inspectAgyTranscript(input.transcriptPath,remainingTime(deadline,2000));
+        if(snapshot.compaction||snapshot.usage)payload.agy_transcript=snapshot;
+      }catch(error){process.stderr.write('agybridge AGY 转录读取：'+describeError(error)+'\n');}
+    }
+    payload.agybridge_timing={identityMs,registrationMs,elapsedBeforeBrokerMs:execution.elapsedMs===undefined?performance.now():execution.elapsedMs+identityMs+performance.now()-began};
     const monitor=['SessionStart','PreInvocation'].includes(event);
     let result:any,notices:RuntimeNotice[]=[];
     try{

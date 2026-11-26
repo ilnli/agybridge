@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { writeFileSync } from 'node:fs';
@@ -10,7 +10,8 @@ import { temporaryDirectory } from './support/temporary.js';
 import { agyMcpIdentity, agyHookRegistration, agyTranscriptPath } from '../hosts/agy/identity.js';
 import { AgyAdapter } from '../hosts/agy/adapter.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
-import type { Peer } from '../types.js';
+import { AGY_WAKE_NOTICE, type Peer, type BridgeConfig } from '../types.js';
+import { hook as runHook } from '../integration/hooks/hook-control.js';
 
 const FAKE_ACP_SCRIPT = `
 import { createInterface } from 'node:readline';
@@ -349,7 +350,7 @@ test('AGY hooks 覆盖 allow、普通子代理放行、nxref 改写、PostToolUs
   assert.ok(Array.isArray(pairPrompt.injectSteps));
   assert.match(pairPrompt.injectSteps[0].systemMessage.systemMessage, /choose_partner/);
 
-  // PreInvocation agybridge pair <code> returns visible systemMessage without terminationBehavior:'terminate'
+  // Pair code results are rendered inline and finish the invocation.
   const pairCodePrompt = await f.broker.dispatch('hook', {
     host: 'agy',
     conversationId: 'c',
@@ -357,8 +358,9 @@ test('AGY hooks 覆盖 allow、普通子代理放行、nxref 改写、PostToolUs
     lastUserInput: 'agybridge pair 9999',
   }) as any;
   assert.ok(Array.isArray(pairCodePrompt.injectSteps));
-  assert.equal(pairCodePrompt.terminationBehavior, undefined);
-  assert.match(pairCodePrompt.injectSteps[0].systemMessage.systemMessage, /agybridge 控制命令已由 hook 执行完成/);
+  assert.equal(pairCodePrompt.terminationBehavior, 'terminate');
+  assert.equal(pairCodePrompt.injectSteps[0].systemMessage.systemMessage, '');
+  assert.match(pairCodePrompt.injectSteps[0].systemMessage.metadata.user_markdown, /配对码/);
 
   // recentWake suppresses repeated PreInvocation control command on wait_partner turn 2
   const pendingMsg = f.store.accept(pair, f.x, '来自 Codex 的回复', 'wake-check');
@@ -380,7 +382,7 @@ test('AGY hooks 覆盖 allow、普通子代理放行、nxref 改写、PostToolUs
     hookEventName: 'Stop',
   }) as any;
   assert.equal(stopFallback.decision, 'continue');
-  assert.match(stopFallback.reason, /receive_messages/);
+  assert.equal(stopFallback.reason, AGY_WAKE_NOTICE);
 
   // Stop returns {} when continuationActive is true
   const stopNoLoop = await f.broker.dispatch('hook', {
@@ -495,4 +497,169 @@ test('AgyAdapter 通过 stdio ACP 完成 create、deliver、usage/profile、setP
   assert.equal(resumed.endpoint.mode, 'agy-acp');
   assert.notEqual(resumed.endpoint.pid, reg.endpoint.pid);
   await assert.rejects(adapter.deliver(activePeer,endpoint,message,sender),{code:'agy_acp_offline'});
+});
+
+function foregroundPair(t:TestContext, config:Partial<BridgeConfig>={}) {
+  const f=fixture(t,config);
+  const pair=f.store.pair(f.a.id,f.x.id);
+  f.store.saveEndpoint({...f.store.endpoint(f.a.id)!,mode:'agy-tui'});
+  const actor={host:'agy' as const,sessionId:'c',callId:'agy-call'};
+  const hook=(event:string,fields:Record<string,unknown>={})=>f.broker.dispatch('hook',{
+    host:'agy',conversationId:'c',hookEventName:event,...fields,
+  }) as Promise<{decision?:string;reason?:string;injectSteps?:{systemMessage:{systemMessage:string}}[]}>;
+  const send=(callId:string,replyExpected=true)=>f.broker.send({
+    actor:{...actor,callId},message:callId,reply_expected:replyExpected,
+  },false);
+  return {...f,pair,actor,hook,send};
+}
+
+test('AGY 收信提示在没有 hook 的首次调用和新的原生轮次各出现一次，等待器优先收信',async t=>{
+  const f=foregroundPair(t);
+  const hint=()=>f.broker.dispatch('messages.pending-hint',f.actor);
+  const parked=f.broker.dispatch('agy.wait',{actor:f.actor,timeout_ms:5000});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.broker.hasAgyWaiter(f.a.id),true);
+  f.store.accept(f.pair,f.x,'先交给等待器','waiting');
+  assert.deepEqual(await hint(),{});
+  f.broker.wakeAgyWaiter(f.a.id);
+  await parked;
+  const unread=f.store.accept(f.pair,f.x,'等待前台取件','pending');
+  const notice={pending_inbound:AGY_WAKE_NOTICE};
+  assert.deepEqual(await hint(),notice);
+  assert.deepEqual(await hint(),{});
+  const start=await f.hook('SessionStart');
+  const texts=start.injectSteps!.map(step=>step.systemMessage.systemMessage);
+  assert.ok(texts.includes(AGY_WAKE_NOTICE));
+  assert.match(texts.join('\n'),/agybridge recovery facts rev/);
+  assert.doesNotMatch(texts.join('\n'),/partner recovery digest|等待前台取件/);
+  const turn=await f.hook('PreInvocation');
+  assert.ok(turn.injectSteps?.some(step=>step.systemMessage.systemMessage===AGY_WAKE_NOTICE));
+  assert.deepEqual(await hint(),notice);
+  assert.deepEqual(await hint(),{});
+  f.broker.receive(f.actor);
+  assert.equal(f.store.message(unread.id).state,'contextObserved');
+  assert.deepEqual(await hint(),{});
+});
+
+test('AGY 前台仅为未答复的明确请求在正常 Stop 补一次 wait_partner',async t=>{
+  const f=foregroundPair(t);
+  f.send('fyi',false);
+  assert.deepEqual(await f.hook('Stop'),{});
+  f.send('task');
+  const first=await f.hook('Stop',{terminationReason:'NO_TOOL_CALL'});
+  assert.equal(first.decision,'continue');assert.match(first.reason!,/codex\.wait_partner once/);
+  f.send('task');
+  assert.deepEqual(await f.hook('Stop'),{},'重试同一条消息不能重新触发');
+  for(const reason of ['ERROR','MAX_INVOCATIONS','MAX_FORCED_INVOCATIONS','MAX_TOKEN_BUDGET_EXCEEDED','TERMINAL_CUSTOM_HOOK']){
+    f.send(reason);
+    assert.deepEqual(await f.hook('Stop',{terminationReason:reason}),{});
+    assert.deepEqual(await f.hook('Stop'),{});
+  }
+  f.send('already-continuing');
+  assert.deepEqual(await f.hook('Stop',{continuationActive:true}),{});
+  assert.deepEqual(await f.hook('Stop'),{});
+  f.store.saveEndpoint({...f.store.endpoint(f.a.id)!,mode:'agy-acp'});
+  f.send('background');
+  assert.deepEqual(await f.hook('Stop'),{});
+});
+
+test('AGY 优先读取已经到达的回复；显式取件和已挂起的等待器不再补提醒',async t=>{
+  const f=foregroundPair(t);
+  const first=f.send('before-stop');
+  f.store.accept(f.pair,f.x,'完成','reply-first',first.message_id);
+  assert.deepEqual(await f.hook('Stop'),{decision:'continue',reason:AGY_WAKE_NOTICE});
+  f.broker.receive(f.actor);
+  assert.deepEqual(await f.hook('Stop'),{});
+  const second=f.send('before-receive');
+  f.store.accept(f.pair,f.x,'收到','reply-second',second.message_id);
+  f.broker.receive({...f.actor,callId:'receive-second'});
+  assert.equal(f.store.setting('agyAwaitReply:'+f.a.id),null);
+  assert.deepEqual(await f.hook('Stop'),{});
+  f.send('parked');
+  const parked=f.broker.dispatch('agy.wait',{actor:f.actor,timeout_ms:5000});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.broker.hasAgyWaiter(f.a.id),true);
+  assert.deepEqual(await f.hook('Stop'),{});
+  f.broker.wakeAgyWaiter(f.a.id);
+  await parked;
+  assert.deepEqual(await f.hook('Stop'),{});
+});
+
+test('AGY 前台提问补一次等待提示；结束的问题和暂停前的请求不带入新回合',async t=>{
+  const f=foregroundPair(t);
+  const asked=await f.broker.dispatch('question.create',{actor:f.actor,questions:[{id:'format',header:'格式',question:'采用哪种格式？'}]}) as {request_id:string};
+  const stop=await f.hook('Stop');
+  assert.equal(stop.decision,'continue');assert.match(stop.reason!,/codex\.wait_partner once/);
+  assert.deepEqual(await f.hook('Stop'),{});
+  await f.broker.dispatch('question.cancel',{actor:f.actor,request_id:asked.request_id});
+  const next=await f.broker.dispatch('question.create',{actor:{...f.actor,callId:'next-question'},questions:[{id:'choice',header:'选择',question:'采用哪一项？'}]}) as {request_id:string};
+  await f.broker.dispatch('question.cancel',{actor:f.actor,request_id:next.request_id});
+  f.broker.receive(f.actor);
+  assert.deepEqual(await f.hook('Stop'),{});
+  f.send('abandoned');
+  await f.hook('Stop',{terminationReason:'USER_CANCELED'});
+  assert.equal(f.store.peer(f.a.id).state,'paused');
+  assert.equal(f.store.setting('agyAwaitReply:'+f.a.id),null);
+});
+
+test('AGY 的 PostToolUse 读到压缩后，下一次 PreInvocation 从相同转录恢复窗口内的消息且只注入一次',async t=>{
+  const f=foregroundPair(t),home=f.store.endpoint(f.a.id)!.configHome!;
+  const before=f.store.accept(f.pair,f.a,'不在压缩窗口的正文','other');
+  const included=f.store.accept(f.pair,f.a,'压缩窗口内的工作决定','inside');
+  for(const message of [before,included])f.store.transition(message.id,'contextObserved');
+  const file=path.join(home,'transcript_full.jsonl');
+  const at=new Date().toISOString();
+  const rows=[
+    {step_index:1,type:'PLANNER_RESPONSE',created_at:at,tool_calls:[{name:'mcp_codex_send_message'}]},
+    {step_index:2,source:'MODEL',type:'GENERIC',created_at:at,content:JSON.stringify({persisted:true,message_id:included.id})},
+    {step_index:3,type:'CHECKPOINT',created_at:at,content:'summary'},
+  ];
+  writeFileSync(file,rows.map(row=>JSON.stringify(row)).join('\n')+'\n');
+  const invoke=(event:string)=>runHook('agy',{conversationId:'c',hookEventName:event,transcriptPath:file},()=>{},{
+    home,agy:{configHome:home,identity:{pid:process.pid,procStart:'test',acp:false}},
+    call:async <T>(method:string,params?:unknown)=> (method==='mcp.register'?{id:f.a.id}:method==='context.lookup'?{}:await f.broker.dispatch(method,params)) as T,
+  }) as Promise<{injectSteps?:{systemMessage:{systemMessage:string}}[]}>;
+  assert.deepEqual(await invoke('PostToolUse'),{});
+  const recovered=await invoke('PreInvocation');
+  const text=recovered.injectSteps!.map(step=>step.systemMessage.systemMessage).join('\n');
+  assert.match(text,/agybridge recovery facts rev/);
+  assert.match(text,/1 actual exchange msgs/);
+  assert.match(text,/压缩窗口内的工作决定/);
+  assert.doesNotMatch(text,/不在压缩窗口的正文/);
+  assert.deepEqual(await invoke('PreInvocation'),{});
+});
+
+test('AGY PostToolUse 的真实输入用量在后续 PreInvocation 触发长上下文提醒',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:1000000});
+  const f=foregroundPair(t,{syncTipMinutes:2,contextTipTokens:[500]});
+  f.store.updatePeer(f.x.id,{state:'ready'});
+  await f.hook('PreInvocation');
+  t.mock.timers.tick(60001);
+  await f.hook('PostToolUse',{agy_transcript:{usage:{tokens:550,at:Date.now()}}});
+  const next=await f.hook('PreInvocation');
+  assert.ok(next.injectSteps?.some(step=>step.systemMessage.systemMessage.includes('long context')));
+  assert.deepEqual(await f.hook('PreInvocation'),{});
+});
+
+test('暂停、离线、结束上下文及解除配对时丢弃 AGY 待回复标记',async t=>{
+  for(const action of ['pause','offline','end-context','unpair']){
+    const f=foregroundPair(t);
+    const key='agyAwaitReply:'+f.a.id;
+    f.send('tracked');
+    assert.ok(f.store.setting(key));
+    if(action==='end-context')f.store.endContext(f.actor);
+    else if(action==='offline')await f.broker.dispatch('peer.state',{actor:f.actor,state:'offline'});
+    else await f.broker.dispatch(action,{pair_id:f.pair.id});
+    assert.equal(f.store.setting(key),null,action);
+  }
+});
+
+test('恢复原 AGY 会话时提供已丢失配对的原因和原配对标识',async t=>{
+  const f=foregroundPair(t);
+  f.store.unpair(f.pair.id,{reason:'identity_mismatch'});
+  const start=await f.hook('SessionStart');
+  const text=start.injectSteps!.map(step=>step.systemMessage.systemMessage).join('\n');
+  assert.match(text,/identity_mismatch/);
+  assert.ok(text.includes(f.pair.id));
+  assert.doesNotMatch(text,/partner recovery digest/);
 });

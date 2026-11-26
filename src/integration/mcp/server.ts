@@ -197,8 +197,8 @@ export async function serveMcp(host:Host,options:{connection?:BrokerSession;tran
         case'receive_messages':z.object({}).strict().parse(request.params.arguments??{});value=await brokerCall('receive',actor,{mutation:true});break;
         default:throw new BridgeError('unknown_tool','未知的搭档工具。');
       }
-      if(host==='codex'&&['status','send_message','checkpoint'].includes(request.params.name)){
-        const metadata=request.params._meta?.['x-codex-turn-metadata'] as {turn_id?:unknown}|undefined;
+      if(['status','send_message','checkpoint'].includes(request.params.name)){
+        const metadata=host==='codex'?request.params._meta?.['x-codex-turn-metadata'] as {turn_id?:unknown}|undefined:undefined;
         const hint=await brokerCall<Record<string,unknown>>('messages.pending-hint',{...actor,hint_deadline:Date.now()+450,...(typeof metadata?.turn_id==='string'?{turnId:metadata.turn_id}:{})},{timeout:500}).catch(error=>{process.stderr.write('agybridge pending hint: '+String(error)+'\n');return{};});
         if(Object.keys(hint).length&&value&&typeof value==='object')value={...value,...hint};
       }

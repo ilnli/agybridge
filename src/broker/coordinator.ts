@@ -20,7 +20,7 @@ import { AgyAdapter } from '../hosts/agy/adapter.js';
 import { liveProcess, processIdentity, probeProcesses, codexIsAppServer, processProbeStatus, processAncestryStatus, codexProcessIdentity, agyProcessIdentity } from '../process/process.js';
 import { BridgeError, DeliveryError, describeError } from '../shared/errors.js';
 import { DEFAULT_RETENTION } from '../config/defaults.js';
-import { WAKE_NOTICE, HEALTH_WAKE_NOTICE, isEmbeddedWake, otherHost, type Actor, type BridgeConfig, type Endpoint, type Message, type Peer, type Pair, type PeerState, type RegisterInput, type Host } from '../types.js';
+import { AGY_WAKE_NOTICE, WAKE_NOTICE, HEALTH_WAKE_NOTICE, isEmbeddedWake, otherHost, type Actor, type BridgeConfig, type Endpoint, type Message, type Peer, type Pair, type PeerState, type RegisterInput, type Host } from '../types.js';
 import { delay } from '../shared/time.js';
 import { runCli } from '../process/host-command.js';
 import { sameDirectory } from '../shared/files.js';
@@ -109,6 +109,13 @@ interface AgyWaiter {
   actor:Actor;
   resolve:(value:unknown)=>void;
   timer?:NodeJS.Timeout;
+}
+
+interface AgyAwaitReply {
+  pairId:string;
+  kind:'message'|'question';
+  id:string;
+  at:number;
 }
 
 export interface Adapters {
@@ -370,7 +377,24 @@ export class Broker {
     return this.agyWaiters.has(peerId);
   }
 
+  private takeAgyAwaitReply(peerId:string):AgyAwaitReply|undefined{
+    const key='agyAwaitReply:'+peerId,expected=this.store.setting<AgyAwaitReply>(key);
+    if(expected)this.store.setSetting(key,null);
+    return expected;
+  }
+
+  private agyReplyUnresolved(peer:Peer,pair:Pair,expected:AgyAwaitReply):boolean{
+    if(expected.pairId!==pair.id)return false;
+    if(expected.kind==='question')return this.store.questions(true).some(q=>q.id===expected.id&&q.from===peer.id&&q.pairId===pair.id&&q.expiresAt>Date.now());
+    try{
+      const m=this.store.message(expected.id);
+      // Accepting a linked reply moves its original message to responded in the same transaction.
+      return m.pairId===pair.id&&m.from===peer.id&&m.replyExpected===true&&!['responded','refused','expired'].includes(m.state);
+    }catch(error){if(error instanceof BridgeError&&error.code==='message_missing')return false;throw error;}
+  }
+
   private cancelAgyWaiter(peerId:string,reason:string):void{
+    this.takeAgyAwaitReply(peerId);
     const waiter=this.agyWaiters.get(peerId);
     if(!waiter)return;
     this.agyWaiters.delete(peerId);
@@ -381,6 +405,7 @@ export class Broker {
   private drainAgyTuiMessages(peer:Peer,pair:Pair,evidence:string):Record<string,unknown>[]{
     return this.store.transaction(()=>{
       const selected=this.store.pending(peer.id),messages:Record<string,unknown>[]=[];
+      const expected=this.store.setting<AgyAwaitReply>('agyAwaitReply:'+peer.id);
       let bytes=Buffer.byteLength(JSON.stringify({messages:[],status:'received'}));
       for(const m of selected){
         const body=this.deliveryBody(m);if(body===undefined)continue;
@@ -390,6 +415,9 @@ export class Broker {
         if(!this.store.claim(m.id))continue;
         messages.push(message);bytes+=size;
         this.store.transition(m.id,'contextObserved',evidence);
+        if(expected?.pairId===pair.id&&(expected.kind==='message'?m.inReplyTo===expected.id:m.callId==='question-result:'+expected.id)){
+          this.store.setSetting('agyAwaitReply:'+peer.id,null);
+        }
         this.communicationTips.partnerReceived(peer,m);
         if(messages.length===20)break;
       }
@@ -397,7 +425,6 @@ export class Broker {
         const endpoint=this.store.endpoint(peer.id);
         this.runtimeHealth.deliverySucceeded(peer,endpoint);
       }
-      void pair;
       return messages;
     });
   }
@@ -432,6 +459,7 @@ export class Broker {
     const p=z.object({actor:actorSchema,timeout_ms:z.number().int().nonnegative().max(3_600_000).optional()}).strict().parse(raw);
     const peer=this.partnerActor(p.actor);
     if(peer.host!=='agy')throw new BridgeError('invalid_target','wait_partner 仅适用于 AGY 会话。');
+    this.takeAgyAwaitReply(peer.id);
     if(!this.enabled(peer.id))return{...this.offResult(peer),messages:[]};
     const pair=this.store.pairFor(peer.id);
     if(!pair||pair.agy!==peer.id)return{status:'unpaired',messages:[],notice:'当前 AGY 窗口尚未配对搭档。'};
@@ -1034,6 +1062,9 @@ export class Broker {
       if(previous)return this.store.accept(pair,sender,input.message,callId,input.in_reply_to??(previous.replySource==='auto'?previous.inReplyTo??undefined:undefined),input.actor.via,previous.replySource,input.reply_expected??previous.replyExpected??false);
       const expanded=this.references.expand(sender,input.message);
       const accepted=this.store.accept(pair,sender,input.message,callId,input.in_reply_to,input.actor.via??(sender.sessionId!==input.actor.sessionId?input.actor.sessionId:undefined),'explicit',input.reply_expected??false);
+      if(accepted.replyExpected&&sender.host==='agy'&&!accepted.via&&this.store.endpoint(sender.id)?.mode==='agy-tui'){
+        this.store.setSetting('agyAwaitReply:'+sender.id,{pairId:pair.id,kind:'message',id:accepted.id,at:accepted.createdAt} satisfies AgyAwaitReply);
+      }
       this.references.snapshot(accepted,expanded);this.communicationTips.partnerSent(sender,accepted);return accepted;
     });
     const target=this.store.peer(m.to);
@@ -1827,7 +1858,21 @@ export class Broker {
         return{tip:!providerBlocked(this.runtimeHealth.peerHealth(peer))?this.communicationTips.syncTip(peer,this.config.syncTipMinutes):undefined};
       }
       case'ref.capture':{const p=z.object({actor:actorSchema,agent_id:text,text}).parse(raw),peer=this.actor(p.actor);if(peer.sessionId!==p.actor.sessionId)throw new BridgeError('subagent_denied','最终答案必须由根会话登记。');this.references.capture(peer,p.agent_id,p.text);return{recorded:true};}
-      case'question.create':{const p=z.object({actor:actorSchema,questions:z.unknown(),turn_id:z.string().optional(),tool_use_id:z.string().optional(),task_message_id:z.string().optional()}).parse(raw),{sender,pair}=this.pairedSender(p.actor);const value=this.questions.create(pair,sender,p.actor,p);const target=this.store.peer(pair[otherHost(sender.host)]);if(target.host==='agy'&&this.hasAgyWaiter(target.id))queueMicrotask(()=>void this.wakeAgyWaiter(target.id));queueMicrotask(()=>void this.pump());return value;}
+      case'question.create':{
+        const p=z.object({actor:actorSchema,questions:z.unknown(),turn_id:z.string().optional(),tool_use_id:z.string().optional(),task_message_id:z.string().optional()}).parse(raw),{sender,pair}=this.pairedSender(p.actor);
+        const value=this.store.transaction(()=>{
+          const foreground=sender.host==='agy'&&!p.actor.via&&sender.sessionId===p.actor.sessionId&&this.store.endpoint(sender.id)?.mode==='agy-tui';
+          const previous=foreground&&this.store.questionByCall(JSON.stringify([sender.id,p.actor.sessionId,p.actor.binding?.epoch??null,p.actor.callId]));
+          const result=this.questions.create(pair,sender,p.actor,p);
+          if(foreground&&!previous&&typeof result.request_id==='string'){
+            this.store.setSetting('agyAwaitReply:'+sender.id,{pairId:pair.id,kind:'question',id:result.request_id,at:Date.now()} satisfies AgyAwaitReply);
+          }
+          return result;
+        });
+        const target=this.store.peer(pair[otherHost(sender.host)]);
+        if(target.host==='agy'&&this.hasAgyWaiter(target.id))queueMicrotask(()=>void this.wakeAgyWaiter(target.id));
+        queueMicrotask(()=>void this.pump());return value;
+      }
       case'question.get':case'question.wait':case'question.cancel':{const p=z.object({actor:actorSchema,request_id:text,form_lease:text.optional()}).parse(raw),peer=method==='question.cancel'?this.partnerActor(p.actor):this.actor(p.actor);return method==='question.wait'?this.questions.wait(peer,p.request_id):method==='question.cancel'?this.questions.cancel(peer,p.request_id,p.form_lease):this.questions.view(peer,p.request_id);}
       case'question.cancel_turn':{const p=z.object({actor:actorSchema,turn_id:z.string().optional()}).parse(raw),peer=this.partnerActor(p.actor);for(const q of this.store.questions(true))if((q.from===peer.id&&(!p.turn_id||q.turnId===p.turn_id))||(q.to===peer.id&&q.status==='awaiting_user'))this.questions.cancel(peer,q.id);return{cancelled:true};}
       case'question.answer':case'question.answer_user':{const p=z.object({actor:actorSchema,input:z.unknown(),form_lease:text.optional()}).parse(raw);const value=this.questions.answer(this.partnerActor(p.actor),p.actor,p.input,method==='question.answer_user',p.form_lease);queueMicrotask(()=>void this.pump());return value;}
@@ -1854,9 +1899,13 @@ export class Broker {
       case'messages.pending-hint':{
         const {hint_deadline,...actor}=actorSchema.extend({hint_deadline:z.number().finite().optional()}).parse(raw),peer=this.store.resolve(actor);
         if(!peer||!['root','fork'].includes(peer.kind)||actor.via||!this.enabled(peer.id))return{};
-        const turn=actor.turnId??this.store.setting<string>('communicationTurn:'+peer.id);
-        if(!turn||!this.store.pendingCount(peer.id)||hostingGate(this.store,peer)||['paused','needsHuman'].includes(peer.state)||this.store.setting('pendingHintTurn:'+peer.id)===turn||hint_deadline!==undefined&&Date.now()>=hint_deadline)return{};
-        this.store.setSetting('pendingHintTurn:'+peer.id,turn);return{pending_inbound:WAKE_NOTICE};
+        const agy=peer.host==='agy';
+        if(agy&&this.hasAgyWaiter(peer.id)||hint_deadline!==undefined&&Date.now()>=hint_deadline)return{};
+        const pending=this.store.firstPendingId(peer.id);
+        if(!pending||hostingGate(this.store,peer)||['paused','needsHuman'].includes(peer.state))return{};
+        const turn=actor.turnId??this.store.setting<string>('communicationTurn:'+peer.id)??(agy?'pending:'+pending:undefined);
+        if(!turn||this.store.setting('pendingHintTurn:'+peer.id)===turn)return{};
+        this.store.setSetting('pendingHintTurn:'+peer.id,turn);return{pending_inbound:agy?AGY_WAKE_NOTICE:WAKE_NOTICE};
       }
       case'recovery.facts':{const p=z.object({actor:actorSchema,include_messages:z.boolean().optional(),message_ids:z.array(z.string().min(1).max(128)).optional()}).strict().parse(raw);return this.recovery.facts(p.actor,{includeMessages:p.include_messages,messageIds:p.message_ids});}
       case'messages.read':{
@@ -2087,6 +2136,12 @@ export class Broker {
       }
       return{decision:'allow'};
     }
+    const transcript=peer&&p.agy_transcript&&(event==='PreInvocation'||event==='PostToolUse')?z.object({
+      compaction:z.object({id:z.string().min(1).max(256),at:z.number().finite().nonnegative(),compactedMessageIds:z.array(z.string().min(1).max(128))}).optional(),
+      usage:z.object({tokens:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),at:z.number().finite().nonnegative()}).optional(),
+    }).safeParse(p.agy_transcript).data:undefined;
+    if(peer&&transcript?.compaction)this.communicationTips.cooperation.compacted(peer,transcript.compaction.id,transcript.compaction.at);
+    if(peer&&transcript?.usage)this.communicationTips.cooperation.usage(peer,transcript.usage);
     if(event==='PostToolUse'){
       if(peer)this.foregroundHealth.observe(peer,'tool_end',undefined,toolId,!String(toolName??'').endsWith('receive_messages'),undefined,toolName);
       return{};
@@ -2146,28 +2201,37 @@ export class Broker {
       if(endpoint)this.deletedSessions.observe(peer,endpoint,p.transcriptPath);
     }
 
+    const contexts:string[]=[];
     if(event==='PreInvocation'){
       this.store.setSetting('communicationTurn:'+peer.id,randomUUID());
       this.foregroundHealth.observe(peer,'start');
       this.store.updatePeer(peer.id,{state:'busy',...(!isWaiterWake&&typeof prompt==='string'&&prompt.trim()?{activityAt:Date.now()}:{})});
       queueMicrotask(()=>void this.pump());
-      const contexts:string[]=[];
       if(!isWaiterWake&&typeof prompt==='string'&&/^\s*agybridge\s+(?:pickup|收信)\s*$/i.test(prompt)){
         contexts.push('agybridge pickup trigger: collect pending partner messages with codex.receive_messages. This trigger grants no approvals and supplies no selection or task answer. If the inbox is empty, report that fact without starting another task.');
         this.store.event('message.pickup.requested',{peerId:peer.id,sessionId:peer.sessionId});
       }
       if(!hostingGate(this.store,this.store.peer(peer.id))&&this.store.pendingCount(peer.id)&&!['paused','needsHuman'].includes(this.store.peer(peer.id).state)){
-        contexts.push(WAKE_NOTICE);
+        contexts.push(AGY_WAKE_NOTICE);
       }
-      if(contexts.length)return{injectSteps:contexts.map(text=>({systemMessage:{systemMessage:text}}))};
-      return{};
+      if(!isWaiterWake&&!providerBlocked(this.runtimeHealth.peerHealth(peer))){
+        const tip=this.communicationTips.syncTip(peer,this.config.syncTipMinutes);
+        if(tip)contexts.push(tip);
+      }
     }
 
-    if(event==='SessionStart'){
-      if(this.store.pendingCount(peer.id)&&!['paused','needsHuman'].includes(peer.state)){
-        return{injectSteps:[{systemMessage:{systemMessage:WAKE_NOTICE}}]};
+    if(event==='SessionStart'&&this.store.pendingCount(peer.id)&&!['paused','needsHuman'].includes(peer.state))contexts.push(AGY_WAKE_NOTICE);
+    if(event==='SessionStart'||event==='PreInvocation'){
+      const key='agyCompaction:'+peer.id,compaction=transcript?.compaction;
+      const unseen=compaction&&this.store.setting<string>(key)!==compaction.id?compaction:undefined;
+      if((event==='SessionStart'||unseen)&&(this.store.pairFor(peer.id)||pairLoss(this.store,peer))){
+        const recovery=this.recovery.facts(actor,unseen?{includeMessages:true,messageIds:unseen.compactedMessageIds}:{includeMessages:false});
+        if(recovery?.text){
+          contexts.push(recovery.text);
+          if(unseen)this.store.setSetting(key,unseen.id);
+        }
       }
-      return{};
+      return contexts.length?{injectSteps:contexts.map(text=>({systemMessage:{systemMessage:text}}))}:{};
     }
 
     if(event==='Stop'){
@@ -2179,11 +2243,15 @@ export class Broker {
         this.foregroundHealth.observe(peer,'paused');
         return{};
       }
+      const expected=this.takeAgyAwaitReply(peer.id);
+      if(reason&&reason!=='NO_TOOL_CALL')return{};
       if(peer.state!=='paused')this.store.updatePeer(peer.id,{state:'ready'});
       this.foregroundHealth.observe(peer,'ready');
       const pair=this.store.pairFor(peer.id);
-      if(p.continuationActive!==true&&!this.hasAgyWaiter(peer.id)&&pair&&!pair.paused&&!hostingGate(this.store,peer)&&this.store.pendingCount(peer.id)>0){
-        return{decision:'continue',reason:WAKE_NOTICE};
+      if(p.continuationActive===true||this.hasAgyWaiter(peer.id)||!pair||pair.paused||!this.enabled(pair.codex)||hostingGate(this.store,peer)||peer.state==='paused')return{};
+      if(this.store.pendingCount(peer.id)>0)return{decision:'continue',reason:AGY_WAKE_NOTICE};
+      if(expected&&this.store.endpoint(peer.id)?.mode==='agy-tui'&&this.agyReplyUnresolved(peer,pair,expected)){
+        return{decision:'continue',reason:"agybridge wake guard: you sent a reply_expected message or question to Codex without arming wait_partner. Call codex.wait_partner once now and end your turn so Codex's reply wakes you automatically."};
       }
       return{};
     }

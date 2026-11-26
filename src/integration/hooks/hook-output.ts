@@ -5,13 +5,18 @@ export function hookGuardTimeout(entries:unknown):string|undefined{
   return entries.find(entry=>entry?.kind==='warning'&&typeof entry.text==='string'&&/^agybridge hook timed out after (?:3|10)s; result unconfirmed$/.test(entry.text))?.text;
 }
 
-export function agyControlReply(text:string):{injectSteps:{systemMessage:{systemMessage:string}}[]}{
+export function agyControlReply(text:string):{
+  injectSteps:{systemMessage:{systemMessage:string;metadata:{user_markdown:string}}}[];
+  terminationBehavior:'terminate';
+}{
   return{
     injectSteps:[{
       systemMessage:{
-        systemMessage:`agybridge 控制命令已由 hook 执行完成（不要调用任何工具或命令，也不要执行其他操作；请直接将下方结果原样回复给用户后立即结束本轮）：\n\n${text}`,
+        systemMessage:'',
+        metadata:{user_markdown:text},
       },
     }],
+    terminationBehavior:'terminate',
   };
 }
 
