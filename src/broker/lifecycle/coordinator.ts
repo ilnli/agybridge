@@ -121,7 +121,7 @@ export class BrokerLifecycleCoordinator {
         const beforeCreate=provisional?.beforeCreate??(()=>{if(!marked){this.services.deletedSessions.markSelectedCreation(peer.id);marked=true;}});
         guard();
         if(peer.host==='codex')store.adopt(peer.id,await adapters.codex.create(peer,source?.sessionId??codexRequester(store,peer),guard,source?.permission??'unknown',beforeCreate));
-        else store.adopt(peer.id,await adapters.agy.create(peer,guard,source?.permission??'bypass',beforeCreate));
+        else store.adopt(peer.id,await adapters.agy.create(peer,guard,source?.permission??'unknown',beforeCreate));
       }else if(peer.host==='codex'){
         const attach=async(endpoint:Endpoint)=>{
           try{if(codexUserWindow(peer))await adapters.codex.observe(peer,endpoint);else await adapters.codex.attach(peer,endpoint,{verify:hostingRecord(store,peer)?.phase==='adopting'});}

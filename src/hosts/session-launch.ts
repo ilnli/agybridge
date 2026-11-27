@@ -1,10 +1,9 @@
-import path from 'node:path';
-import { existsSync, statSync, realpathSync } from 'node:fs';
+import { statSync, realpathSync } from 'node:fs';
 import { selectHostLaunch, sameHostImage, homeKey, commandKey, launchSource, launchStatus, launchMetadata, type HostLaunch, type HostLaunchOptions } from './host-launch.js';
 import { profileState, type LaunchProfile } from './launch-profiles.js';
 import { profileVersionSupported } from './host-version.js';
 import { readSessionProfile, sessionFile } from './codex/codex-session-profile.js';
-import {agyAppDataDir,bridgeHome} from '../shared/local-paths.js';
+import {findAgySessionEvidence,findAgySessionAppDataDirs,bridgeHome} from '../shared/local-paths.js';
 import {runCli} from '../process/host-command.js';
 import {sameDirectory} from '../shared/files.js';
 import {BridgeError} from '../shared/errors.js';
@@ -19,15 +18,10 @@ export function executableStamp(file:string):unknown[]{
 }
 export function sessionEvidenceFile(host:Host,home:string,id:string):string|undefined{
   if(host==='codex')return sessionFile(home,id);
-  if(!/^[\w-]+$/.test(id))return;
-  const appData=agyAppDataDir(home);
-  const db=path.join(appData,'conversations',id+'.db');
-  if(existsSync(db))return db;
-  const pb=path.join(appData,'conversations',id+'.pb');
-  if(existsSync(pb))return pb;
-  const transcript=path.join(appData,'brain',id,'.system_generated','logs','transcript_full.jsonl');
-  if(existsSync(transcript))return transcript;
-  return undefined;
+  try{
+    const matches=findAgySessionEvidence(home,id);
+    if(matches.length===1&&statSync(matches[0]!.file).isFile())return matches[0]!.file;
+  }catch{ /* An unreadable store leaves the session's provenance unverified. */ }
 }
 
 export async function sessionWriterVersion(host:Host,home:string,id:string):Promise<string|undefined>{
@@ -76,6 +70,10 @@ export async function selectSessionLaunch(host:Host,config:BridgeConfig,options:
     try{
       launch=selectHostLaunch(host,config,{...options,...candidate,record:candidate.record,profileId:candidate.record?.id,unobserved:!candidate.record,executable:candidate.executable??candidate.record?.exe},state);
       const key=JSON.stringify([launch.executable,candidate.record?.id]);if(seen.has(key))continue;seen.add(key);
+      if(host==='agy'){
+        const matches=findAgySessionAppDataDirs(launch.configHome,options.sessionId);
+        if(matches.length>1)throw new BridgeError('session_store_ambiguous','多个 AGY 数据目录包含该会话，无法核验原始来源。');
+      }
       writer??=await sessionWriterVersion(host,options.configHome??config[homeKey(host)]??launch.configHome,options.sessionId);
       const version=await(dependencies.version??versionOf)(launch),entry:LaunchCandidate={executable:launch.executable.command,version,source:candidate.source};checked.push(entry);
       if(writer&&!profileVersionSupported(version,writer)){

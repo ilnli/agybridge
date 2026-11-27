@@ -9,7 +9,7 @@
 - **平等搭档、取长补短**：AGY 擅长交互规划、跨模块综合分析、前端/UI 与多代理编排；Codex 擅长纵深后端工程、系统级调试、严密验证与安全审查。双方作为对等同事异步配合，绝不把一方降级成另一方的无状态子代理。
 - **前台自动唤醒 + 双向后台托管**：
   - 在 **AGY 前台窗口**发信后通过 `codex.wait_partner` 在后台挂起监听，Codex 完成任务回信时**自动唤醒空闲中的 AGY 窗口并注入完整回复**，无需轮询。
-  - 同目录没有对方窗口时自动按需拉起后台搭档（后台专用 Codex App Server，或基于 **`agy acp --stdio`** 的后台 AGY 会话）；需要人工查看或介入时，随时用 `agybridge open codex` 或 `agybridge open agy` 在前台打开原会话。
+  - 同目录没有对方窗口时自动按需拉起后台搭档（后台专用 Codex App Server，或基于 **`agy acp --stdio`** 的后台 AGY 会话），严格遵循源会话权限边界（非 `bypass` 会话遇到审批自动转 `needsHuman`），需要人工查看或介入时随时用 `agybridge open codex` 或 `agybridge open agy` 在前台打开原会话；同时兼容 Antigravity CLI 与 Antigravity 2.0 IDE 会话存储目录。
 - **消息可靠、断线可恢复**：每条消息与问答均记录在本机 SQLite WAL 持久账本中，送达证据如实反馈，结果不明（`unknown`）的消息绝不盲目重发；后台搭档意外退出后按原会话自动恢复，关键状态文件均经 `fsync` 落盘后原子替换。
 - **非侵入、数据隔离**：通过两家官方的插件、生命周期 hooks 和 MCP 标准协议接入，不修改 CLI 本身，不改动你的模型、沙箱和审批策略，也不安装系统常驻服务。所有运行数据隔离保存在 `~/.agybridge`（`AGYBRIDGE_HOME`）。
 

@@ -46,6 +46,7 @@ export class Store {
   onContextEnd?: (peerId:string) => void;
   onCooperationChange?: (peerIds:string[]) => void;
   onDeliveryObserved?: (message:Message) => void;
+  onPairChange?: (agyPeerId:string, paired:boolean) => void;
   constructor(filename: string) {
     const {DatabaseSync}=createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
     this.db = new DatabaseSync(filename);
@@ -288,31 +289,43 @@ export class Store {
     const pairs=this.pairs();if(pairs.length>1)throw new BridgeError('pair_selector_required','有多组配对，请明确指定配对或窗口。');return pairs[0];
   }
   pair(agy: string,codex: string,replace=false): Pair {
-    return this.transaction(()=>{
+    const {pair,detachedAgy}=this.transaction(()=>{
       const a=this.peer(agy),x=this.peer(codex);
       if(a.host!=='agy'||x.host!=='codex'||!['root','fork'].includes(a.kind)||!['root','fork'].includes(x.kind))throw new BridgeError('invalid_pair','只能配对 AGY 与 Codex 的独立主会话。');
       const old=[...new Map([this.pairFor(agy),this.pairFor(codex)].filter((p):p is Pair=>!!p).map(p=>[p.id,p])).values()];
-      if(old.length===1&&old[0]!.agy===agy&&old[0]!.codex===codex)return old[0]!;
+      if(old.length===1&&old[0]!.agy===agy&&old[0]!.codex===codex)return{pair:old[0]!,detachedAgy:[] as string[]};
       if(old.length&&!replace)throw new BridgeError('pair_exists','所选窗口已有搭档；替换必须由人显式指定 --replace。');
       for(const p of old)statement(this.db,'UPDATE pairs SET archived=1,archived_at=? WHERE id=?').run(Date.now(),p.id);
-      const pair:Pair={id:randomUUID(),agy,codex,paused:false,archived:false,createdAt:Date.now()};
-      statement(this.db,'INSERT INTO pairs(id,agy,codex,created_at) VALUES(?,?,?,?)').run(pair.id,agy,codex,pair.createdAt);
+      const created:Pair={id:randomUUID(),agy,codex,paused:false,archived:false,createdAt:Date.now()};
+      statement(this.db,'INSERT INTO pairs(id,agy,codex,created_at) VALUES(?,?,?,?)').run(created.id,agy,codex,created.createdAt);
       for(const id of [agy,codex])this.setSetting(pairLossKey(id),null);
       this.selections.invalidate(agy);this.selections.invalidate(codex);
-      this.event('pair.created',pair,[pair.agy,pair.codex]);return pair;
+      this.event('pair.created',created,[created.agy,created.codex]);
+      return{pair:created,detachedAgy:[...new Set(old.map(p=>p.agy).filter(id=>id!==agy))]};
     });
+    for(const id of detachedAgy)this.onPairChange?.(id,false);
+    this.onPairChange?.(pair.agy,true);
+    return pair;
   }
   setPaused(paused: boolean,selector?:string): void { const pair=this.currentPair(selector);if(!pair)throw new BridgeError('unpaired','当前没有配对。');statement(this.db,'UPDATE pairs SET paused=? WHERE id=?').run(Number(paused),pair.id);this.event(paused?'pair.paused':'pair.resumed',{pairId:pair.id},[pair.agy,pair.codex]); }
-  unpair(selector?:string,cause?:PairLossCause): Pair | undefined { return this.transaction(()=>{const pair=this.currentPair(selector);if(pair&&cause&&[pair.agy,pair.codex].some(id=>this.peer(id).enabled===false))return pair;if(pair){statement(this.db,'UPDATE pairs SET archived=1,archived_at=? WHERE id=?').run(Date.now(),pair.id);if(cause)recordPairLoss(this,pair,cause);else for(const id of [pair.agy,pair.codex]){this.setSetting(pairLossKey(id),null);this.setSetting('cooperationUnpaired:'+id,true);}this.event('pair.archived',{pairId:pair.id,...(cause?{cause}:{})},[pair.agy,pair.codex]);}return pair;}); }
+  unpair(selector?:string,cause?:PairLossCause): Pair | undefined {
+    let unpairedAgy:string|undefined;
+    const result=this.transaction(()=>{const pair=this.currentPair(selector);if(pair&&cause&&[pair.agy,pair.codex].some(id=>this.peer(id).enabled===false))return pair;if(pair){statement(this.db,'UPDATE pairs SET archived=1,archived_at=? WHERE id=?').run(Date.now(),pair.id);if(cause)recordPairLoss(this,pair,cause);else for(const id of [pair.agy,pair.codex]){this.setSetting(pairLossKey(id),null);this.setSetting('cooperationUnpaired:'+id,true);}this.event('pair.archived',{pairId:pair.id,...(cause?{cause}:{})},[pair.agy,pair.codex]);unpairedAgy=pair.agy;}return pair;});
+    if(unpairedAgy&&!this.pairFor(unpairedAgy))this.onPairChange?.(unpairedAgy,false);
+    return result;
+  }
   restorePair(id:string):Pair{
-    return this.transaction(()=>{
+    let restoredAgy:string|undefined;
+    const restored=this.transaction(()=>{
       const pair=this.pairById(id);if(!pair)throw new BridgeError('pair_restore_unavailable','原配对不存在。');
       if(!pair.archived)return pair;
       if(this.pairFor(pair.agy)||this.pairFor(pair.codex))throw new BridgeError('pair_exists','原成员已有其他搭档，不能恢复旧配对。');
       statement(this.db,'UPDATE pairs SET archived=0,archived_at=NULL WHERE id=?').run(id);
       for(const member of [pair.agy,pair.codex]){this.setSetting(pairLossKey(member),null);this.selections.invalidate(member);}
-      this.event('pair.restored',{pairId:id},[pair.agy,pair.codex]);return{...pair,archived:false};
+      this.event('pair.restored',{pairId:id},[pair.agy,pair.codex]);restoredAgy=pair.agy;return{...pair,archived:false};
     });
+    if(restoredAgy)this.onPairChange?.(restoredAgy,true);
+    return restored;
   }
   candidates(host: Host,cwd: string): Peer[] {return this.peers().filter(p=>p.enabled!==false&&p.host===host&&(p.sessionId||this.endpoint(p.id)?.pendingContext)&&!this.pairFor(p.id)&&['root','fork'].includes(p.kind)&&['ready','busy','needsHuman','paused'].includes(p.state)&&!this.bindings.current(p.id)?.transitioning&&sameDirectory(p.cwd,cwd));}
   endContext(actor:Actor,reason:ContextChangeReason='unknown'):boolean{

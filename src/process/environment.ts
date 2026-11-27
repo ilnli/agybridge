@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { parse } from 'smol-toml';
+import { AGY_APP_DATA_SUBDIRS } from '../shared/local-paths.js';
 import type { Host } from '../types.js';
 
 export interface EnvironmentReport {source:string;dropped:string[];replaced:string[];inheritedLoopbackProxy:string[]}
@@ -11,7 +12,7 @@ export interface WindowsEnvironment {machine:Record<string,string>;user:Record<s
 const essential=['SYSTEMROOT','WINDIR','COMSPEC','USERPROFILE','HOMEDRIVE','HOMEPATH','APPDATA','LOCALAPPDATA','TEMP','TMP','USERNAME','USERDOMAIN','USERDOMAIN_ROAMINGPROFILE','LOGONSERVER','SESSIONNAME','PROGRAMDATA','ALLUSERSPROFILE','PROGRAMFILES','PROGRAMFILES(X86)','COMMONPROGRAMFILES','COMMONPROGRAMFILES(X86)','NUMBER_OF_PROCESSORS','PROCESSOR_ARCHITECTURE','PROCESSOR_IDENTIFIER','OS'];
 const upper=(env:NodeJS.ProcessEnv)=>Object.fromEntries(Object.entries(env).filter((entry):entry is [string,string]=>typeof entry[1]==='string').map(([key,value])=>[key.toUpperCase(),value]));
 let cachedWindows:NodeJS.ProcessEnv|undefined;
-const sessionVariable=/^(?:ANTIGRAVITY_(?:CONVERSATION|SESSION|PARENT|AGENT|PLUGIN_ROOT|PLUGIN_DATA|HOOK|IPC|TASK)|PLUGIN_ROOT$|PLUGIN_DATA$|CODEX_(?:THREAD|SESSION|PARENT|PLUGIN_ROOT|HOOK|SANDBOX|INTERNAL_|MANAGED_BY_|MANAGED_PACKAGE_ROOT$|ORIGINATOR)|AGYBRIDGE_(?!HOME$))/i;
+const sessionVariable=/^(?:ANTIGRAVITY_(?:CONVERSATION|SESSION|PARENT|AGENT|PLUGIN_ROOT|PLUGIN_DATA|HOOK|IPC|TASK|LS_ADDRESS|LS_VERSION|CSRF_TOKEN|TRAJECTORY_ID|SOURCE_METADATA|PROJECT_ID|SIDECAR_|APP_DATA_DIR)|PLUGIN_ROOT$|PLUGIN_DATA$|CODEX_(?:THREAD|SESSION|PARENT|PLUGIN_ROOT|HOOK|SANDBOX|INTERNAL_|MANAGED_BY_|MANAGED_PACKAGE_ROOT$|ORIGINATOR)|AGYBRIDGE_(?!HOME$))/i;
 
 export function environmentPath(env:NodeJS.ProcessEnv):string{
   return env.PATH??(process.platform==='win32'?Object.entries(env).find(([key])=>key.toUpperCase()==='PATH')?.[1]:undefined)??'';
@@ -83,9 +84,9 @@ export function referencedAuthEnvironment(host:Host,home:string,current=process.
     }else if(Array.isArray(value)){for(const item of value){if(key==='env_vars'&&typeof item==='string')names.add(item);else walk(item,key);}}
     else if(value&&typeof value==='object')for(const [field,item]of Object.entries(value)){if(key==='env_http_headers'&&typeof item==='string')names.add(item);else walk(item,field);}
   };
-  for(const file of host==='codex'?['config.toml']:['settings.json','config/config.json','antigravity-cli/settings.json']){
+  for(const file of host==='codex'?['config.toml']:['settings.json','config/config.json',...AGY_APP_DATA_SUBDIRS.map(name=>path.join(name,'settings.json'))]){
     const filename=path.join(home,file);if(!existsSync(filename))continue;
     try{walk(file.endsWith('.toml')?parse(readFileSync(filename,'utf8')):JSON.parse(readFileSync(filename,'utf8')));}catch{}
   }
-  return Object.fromEntries([...names].filter(name=>current[name]!==undefined).map(name=>[name,current[name]]));
+  return Object.fromEntries([...names].filter(name=>current[name]!==undefined&&!sessionVariable.test(name)).map(name=>[name,current[name]]));
 }

@@ -18,7 +18,7 @@ export function resolveCli(host: Host, configured?: string,pathValue=process.env
     if (/\.(?:cmd|bat|ps1)$/i.test(configured)) throw new BridgeError('cli_shim', '请指定原生可执行文件或 npm 包的 JavaScript 入口，避免 shell 包装和参数转义。');
     return { command: configured, prefix: [] };
   }
-  const extra=host==='agy'?[path.join(homedir(),'.local','bin'),path.join(homedir(),'.gemini','antigravity-cli','bin')]:[];
+  const extra=host==='agy'?[path.join(homedir(),'.local','bin'),path.join(homedir(),'.gemini','antigravity-cli','bin'),path.join(homedir(),'.gemini','antigravity','bin')]:[];
   const directories = [...pathValue.split(path.delimiter), path.dirname(process.execPath), ...extra];
   for (const directory of directories) {
     if (!directory) continue;

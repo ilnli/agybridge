@@ -4,7 +4,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { BridgeError } from '../../shared/errors.js';
-import { agyAppDataDir, agyHome } from '../../shared/local-paths.js';
+import { agyAppDataDirs, agyHome, findAgySessionAppDataDirs, resolveAgyAppDataDir } from '../../shared/local-paths.js';
 import type { Actor, Endpoint, RegisterInput } from '../../types.js';
 
 export interface AgyCandidateParent {
@@ -18,7 +18,7 @@ export interface AgySubagentLineage {
 }
 
 export function agyArtifactsDir(configHome:string,conversationId:string):string{
-  return path.join(agyAppDataDir(configHome),'brain',conversationId);
+  return path.join(resolveAgyAppDataDir(configHome,conversationId),'brain',conversationId);
 }
 
 function transcriptIn(artifactsDir:string):string{
@@ -50,10 +50,9 @@ export function mergeAgyNativeSession(previous:Endpoint['nativeSession'],input:R
 }
 
 export function agySessionExists(configHome:string,conversationId:string):boolean{
-  const appData=agyAppDataDir(configHome);
-  return existsSync(path.join(appData,'conversations',conversationId+'.db'))
-    ||existsSync(path.join(appData,'conversations',conversationId+'.pb'))
-    ||existsSync(path.join(appData,'brain',conversationId));
+  const matches=findAgySessionAppDataDirs(configHome,conversationId);
+  if(matches.length>1)throw new BridgeError('session_store_ambiguous','多个 AGY 数据目录包含该会话，无法核验原始来源。');
+  return matches.length===1;
 }
 
 function nonEmptyString(value:unknown):string|undefined{
@@ -128,8 +127,9 @@ export function detectAgySubagentLineage(options:{
     const fromTranscript=inspectTranscriptHead(file,conversationId);
     if(fromTranscript)return fromTranscript;
   }
-  const summariesDb=path.join(agyAppDataDir(configHome),'conversation_summaries.db');
-  if(existsSync(summariesDb)){
+  for(const dir of new Set([resolveAgyAppDataDir(configHome,conversationId),...agyAppDataDirs(configHome)])){
+    const summariesDb=path.join(dir,'conversation_summaries.db');
+    if(!existsSync(summariesDb))continue;
     let db:DatabaseSync|undefined;
     try{
       const {DatabaseSync:SqliteDb}=createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
@@ -142,7 +142,7 @@ export function detectAgySubagentLineage(options:{
         return{isSubagent:false};
       }
     }catch{
-      return undefined;
+      continue;
     }finally{
       try{db?.close();}catch{}
     }

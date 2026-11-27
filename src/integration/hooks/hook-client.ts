@@ -46,6 +46,8 @@ export async function hookClient(host:Host,input:any,provided:(ack:()=>Promise<v
   const timeout=()=>Math.max(1,(host==='codex'&&['Interrupt','SessionEnd'].includes(event??'')?2300:9000)-(Date.now()-startedAt));
   let reply:any;
   const peerId=process.env.AGYBRIDGE_MANAGED_PEER,marker=process.env.AGYBRIDGE_OWNED_LAUNCH;
+  const lsAddr=host==='agy'?process.env.ANTIGRAVITY_LS_ADDRESS?.trim():undefined;
+  const lsCsrf=host==='agy'?process.env.ANTIGRAVITY_CSRF_TOKEN?.trim():undefined;
   try{
     reply=await request(home,host==='agy'?'hook.client.agy':'hook.client',{
       hook_pid:process.pid,
@@ -57,6 +59,7 @@ export async function hookClient(host:Host,input:any,provided:(ack:()=>Promise<v
       ...(host==='agy'?{
         ...(sessionId?{conversation_id:sessionId}:{}),
         ...(peerId&&marker?.startsWith('agy:')?{owned_launch:{peerId,launchId:marker.slice(4)}}:{}),
+        ...(lsAddr&&lsCsrf&&lsCsrf.length<=512?{agy_ls:{address:lsAddr,csrfToken:lsCsrf}}:{}),
       }:{}),
     },timeout());
   }

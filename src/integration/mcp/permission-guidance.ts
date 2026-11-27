@@ -7,7 +7,12 @@ export interface PermissionGuidance {
 }
 
 export function permissionFacts(peer:Peer,endpoint?:Endpoint){
-  return{class:peer.permission,...(peer.host==='codex'?{...endpoint?.codexPermission,...(endpoint?.codexPermissionObservation?{source:endpoint.codexPermissionObservation.source,observed_at:endpoint.codexPermissionObservation.observedAt}:{})}:{})};
+  if(peer.host==='agy'){
+    const native=endpoint?.nativePermission;
+    return {class:peer.permission,...(native?.mode?{mode:native.mode}:{}),...(native?{observed_at:native.observedAt}:{})};
+  }
+  const observation=endpoint?.codexPermissionObservation;
+  return {class:peer.permission,...endpoint?.codexPermission,...(observation?{source:observation.source,observed_at:observation.observedAt}:{})};
 }
 
 export function permissionGuidance(_codex:Peer,_agy:Peer,_endpoint?:Endpoint):PermissionGuidance|undefined{

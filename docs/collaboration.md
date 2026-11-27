@@ -17,6 +17,7 @@ AGY and Codex are equal peer partners and coworkers. Neither is the other's suba
 - **Native Multimodal & Visual Intelligence**: Directly reads images, screenshots, PDFs, audio, and video via `read_file`; generates/edits visual assets via built-in `image-generator` subagent; performs live UI/DOM/visual verification via `/browser` and specialized design/UI skills.
 - **Interactive Alignment & User UX**: Excels at requirement discovery (`/grill-me`, `/plan`, `ask_question`), live execution checklists (`update_steps`), structured Markdown **Artifacts** (`<artifacts_dir>/*.md` with Mermaid diagrams, carousels, and feedback-enabled plans), and natural user communication.
 - **Broad Fan-Out Orchestration**: Spawns parallel `research` / `self` subagents (`invoke_subagent`, `send_message`) and multi-stage Python agent pipelines (`run_workflow`) to survey wide codebases quickly.
+- **Multi-Surface & Managed ACP Parity**: Works seamlessly across Antigravity CLI (`~/.gemini/antigravity-cli`) and Antigravity 2.0 IDE (`~/.gemini/antigravity`), with managed `agy acp` background sessions preserving permission boundaries (`bypass` vs `prompting` -> `needsHuman` escalation) and ACP execution `mode`s (`default`, `accept-edits`, `plan`).
 - **Typical Blind Spots vs GPT**: Less exhaustive than high-effort GPT on subtle backend race conditions, tricky OS/process edge cases, and adversarial security corner cases.
 
 ### Codex (GPT Models)

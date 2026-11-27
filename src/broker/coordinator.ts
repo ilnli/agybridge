@@ -17,6 +17,7 @@ import { observeBrokerReachable, brokerOutageDiagnostic } from './broker-outage.
 import { CodexAdapter, codexContextReceipts, type CodexContextReceipt, type CodexThread } from '../hosts/codex/adapter.js';
 import { readCodexHistory, type HistoryCheckpoint } from '../hosts/codex/codex-history.js';
 import { AgyAdapter } from '../hosts/agy/adapter.js';
+import { AgyConversationTracker } from '../hosts/agy/conversation-service.js';
 import { agyToolReferenceDecision } from '../integration/hooks/agy-tool-references.js';
 import { agyArtifactsDir, detectAgySubagentLineage, mergeAgyNativeSession, type AgyCandidateParent } from '../hosts/agy/identity.js';
 import { agyHome } from '../shared/local-paths.js';
@@ -161,6 +162,7 @@ export class Broker {
   private agyWaiters=new Map<string,AgyWaiter>();
   private agyRecentWake=new Map<string,number>();
   private agySubagentSpawns=new Map<string,Map<string,number>>();
+  readonly agyConversations=new AgyConversationTracker();
   private lastReconcile=0;
   private lastMaintenance=0;
   private recordMaintenance?:Promise<void>;
@@ -246,6 +248,14 @@ export class Broker {
       consumeIdle:(peer,id)=>{const pair=store.pairFor(peer.id);if(pair)this.deliveryHealth.outcome(pair.id,peer.id,id,'submitted');},
     });
     store.onCooperationChange=ids=>{for(const id of ids)store.faults.sync('cooperation_clock:'+id,()=>this.communicationTips.cooperation.changed(store.peer(id)));};
+    store.onPairChange=(agyPeerId,paired)=>{
+      try{
+        const peer=this.store.getPeer(agyPeerId);
+        if(!peer?.sessionId)return;
+        const ep=this.store.endpoints(peer.id).filter(e=>e.active).sort((a,b)=>b.seenAt-a.seenAt)[0],native=ep?.native??ep;
+        void this.agyConversations.syncPairedBestEffort({pid:native?.pid,procStart:native?.procStart,sessionId:peer.sessionId},paired);
+      }catch{/* Best-effort tag sync must never affect pairing state transitions. */}
+    };
     this.configurationReload=new ConfigurationReload(home);this.configuration=new InHostConfiguration(home,Date.now,()=>this.applyConfiguration(),(name,data)=>this.store.event(name,data));
     this.runtimeHealth=new BrokerHealthCoordinator({store,config,adapters,home,resources},{incidents:this.incidents,deliveryHealth:this.deliveryHealth,communicationTips:this.communicationTips,pairAnomalies:this.pairAnomalies,idleNotices:this.idleNotices,profiles:this.profiles,foregroundHealth:this.foregroundHealth,managedRecovery:this.managedRecovery,health:this.health,codexDirect:this.codexDirect,daemons:this.daemons,questions:this.questions},{stopped:()=>this.stopped,actor:(...args)=>this.actor(...args),enabled:(...args)=>this.enabled(...args),requireEnabled:(...args)=>this.requireEnabled(...args),hasAgyWaiter:id=>this.hasAgyWaiter(id),wakeAgyWaiter:id=>this.wakeAgyWaiter(id),signalCodexWake:(...args)=>this.signalCodexWake(...args),signalEmbeddedWake:(...args)=>this.signalEmbeddedWake(...args),refreshHookTrust:(...args)=>this.refreshHookTrust(...args),pumpStage:(...args)=>this.pumpStage(...args)});
     this.memberLifecycle=new BrokerLifecycleCoordinator({store,config,adapters,home},{profileCoordination:this.profileCoordination,deletedSessions:this.deletedSessions,takeovers:this.takeovers,managedRecovery:this.managedRecovery,transfers:this.transfers,runtimeHealth:this.runtimeHealth,deliveryHealth:this.deliveryHealth,daemons:this.daemons,codexDirect:this.codexDirect},{
@@ -351,6 +361,14 @@ export class Broker {
       if(peer&&this.enabled(peer.id)){
         const profile=runtimeProfile(peer,input);
         this.profiles.observed(this.store.updatePeer(peer.id,{model:profile.model,effort:profile.effort}),input);
+      }
+    });
+    on(adapters.agy,'permission',(sessionId:string,permission:Peer['permission'],mode?:string)=>{
+      const peer=this.agyRuntimePeer(sessionId);
+      if(!peer||!this.enabled(peer.id))return;
+      if(peer.permission!==permission)this.store.updatePeer(peer.id,{permission});
+      for(const ep of this.store.endpoints(peer.id))if(ep.active&&ep.mode==='agy-acp'){
+        this.store.saveEndpoint({...ep,nativePermission:{permission,...(mode?{mode}:ep.nativePermission?.mode?{mode:ep.nativePermission.mode}:{}),observedAt:Date.now()}});
       }
     });
     on(adapters.agy,'usage',(sessionId:string,usage:{tokens:number;at:number})=>{
@@ -1865,7 +1883,12 @@ export class Broker {
         return registerPendingCodex(this.store,p);
       }
       case'mcp.register':{
-        const {context_key,...registration}=mcpRegisterSchema.parse(raw),input:RegisterInput={...registration,...(context_key?{hookContextKey:context_key}:{})};
+        const {context_key,agyLs,...registration}=mcpRegisterSchema.parse(raw),input:RegisterInput={...registration,...(context_key?{hookContextKey:context_key}:{})};
+        if(input.host==='agy'&&agyLs){
+          this.agyConversations.observe({pid:input.endpoint.pid,procStart:input.endpoint.procStart,sessionId:input.sessionId,ls:agyLs});
+          const paired=this.store.peers().find(p=>p.host==='agy'&&p.sessionId===input.sessionId&&this.store.pairFor(p.id));
+          if(paired)void this.agyConversations.syncPairedBestEffort({pid:input.endpoint.pid,procStart:input.endpoint.procStart,sessionId:input.sessionId},true);
+        }
         if(input.host==='codex'){
           const child=this.store.peers().find(peer=>peer.host==='codex'&&peer.sessionId===input.sessionId&&peer.kind==='subagent');
           if(child){input.kind='subagent';input.parentId=child.parentId??undefined;}
@@ -2180,7 +2203,16 @@ export class Broker {
       this.hookIdentity??=new WindowsIdentitySession(home);return this.hookIdentity.read(pid,timeout,true,host);
     };
     if(host==='codex')execution.runtime=await codexProcessIdentity(remainingTime(deadline,2000),p.hook_pid,process.platform==='win32'?async(pid,_home,_host,timeout)=>nativeIdentity(pid,timeout):undefined,true);
-    else execution.agy={identity:await agyProcessIdentity(remainingTime(deadline,2000),p.hook_pid,process.platform==='win32'?async(pid,_home,_host,timeout)=>nativeIdentity(pid,timeout):undefined,true),configHome:p.config_home,ownedLaunch:agy?.owned_launch};
+    else{
+      execution.agy={identity:await agyProcessIdentity(remainingTime(deadline,2000),p.hook_pid,process.platform==='win32'?async(pid,_home,_host,timeout)=>nativeIdentity(pid,timeout):undefined,true),configHome:p.config_home,ownedLaunch:agy?.owned_launch};
+      if(agy?.agy_ls){
+        this.agyConversations.observe({pid:execution.agy.identity.pid,procStart:execution.agy.identity.procStart,sessionId,ls:agy.agy_ls});
+        const paired=this.store.peers().find(peer=>peer.host==='agy'&&peer.sessionId===sessionId&&this.store.pairFor(peer.id));
+        if(paired&&['SessionStart','PreInvocation'].includes(event)){
+          void this.agyConversations.syncPairedBestEffort({pid:execution.agy.identity.pid,procStart:execution.agy.identity.procStart,sessionId},true);
+        }
+      }
+    }
     if(mcpInput){
       const native=execution.runtime!;
       const known=this.store.peers().filter(peer=>peer.host==='codex'&&peer.sessionId===sessionId&&['root','fork'].includes(peer.kind)&&this.store.endpoints(peer.id).some(endpoint=>{const identity=endpoint.native??endpoint;return endpoint.active&&identity.pid===native.pid&&identity.procStart===native.procStart&&endpoint.configHome&&sameDirectory(endpoint.configHome,p.config_home);}));

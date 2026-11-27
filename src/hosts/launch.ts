@@ -1,5 +1,5 @@
 import { brokerCall } from '../ipc/ipc.js';
-import {bridgeHome} from '../shared/local-paths.js';
+import {agyAppDataDir,bridgeHome,findAgySessionAppDataDirs} from '../shared/local-paths.js';
 import {loadConfig} from '../config/load.js';
 import {runCli} from '../process/host-command.js';
 import {sameDirectory} from '../shared/files.js';
@@ -51,6 +51,13 @@ export function tokenFromEnvironment(name?:string):string|undefined{
 export async function interactive(host:Host,args:string[],onStarted?:(child:ChildProcess)=>Promise<void>,options?:{cwd?:string;sessionId?:string;configHome?:string;launch?:HostLaunch}):Promise<number>{
   const authentication=host==='codex'?await managedRemoteAuthentication(bridgeHome(),args):{args,env:{}},selection=options?.launch??selectHostLaunch(host,loadConfig(),{...options,foreground:true});
   Object.assign(selection.env,authentication.env);
+  if(host==='agy'&&options?.sessionId){
+    const matches=findAgySessionAppDataDirs(selection.configHome,options.sessionId);
+    if(matches.length>1)throw new BridgeError('agy_session_ambiguous','多个 AGY 数据目录含有相同会话，无法确认前台接管所使用的应用目录。');
+    if(matches.length===1&&!sameDirectory(matches[0]!,agyAppDataDir(selection.configHome))){
+      selection.env.ANTIGRAVITY_APP_DATA_DIR=matches[0]!;
+    }
+  }
   if(host==='codex'){
     const index=args.indexOf('--remote'),endpoint=index>=0?args[index+1]:args.find(arg=>arg.startsWith('--remote='))?.slice(9);
     if(endpoint)try{if(runtimeFor(bridgeHome(),{endpoint})){

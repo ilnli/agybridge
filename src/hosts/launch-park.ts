@@ -5,6 +5,7 @@ import { profileState } from './launch-profiles.js';
 import { desktopHostImages, relaunchHostImage } from './host-image.js';
 import { sameHostImage } from './host-launch.js';
 import { executableStamp, sessionEvidenceFile } from './session-launch.js';
+import {AGY_APP_DATA_SUBDIRS} from '../shared/local-paths.js';
 import {sameDirectory} from '../shared/files.js';
 import type { BridgeConfig, Peer } from '../types.js';
 import { deterministicLaunchFailure } from './launch-failure.js';
@@ -21,7 +22,7 @@ export function launchInputFingerprint(home:string,config:BridgeConfig,peer:Pick
   let history:unknown;try{history=fileStamp(peer.sessionId?sessionEvidenceFile(peer.host,configHome,peer.sessionId):undefined);}catch(error){history=[(error as {code?:string}).code??'history_unavailable'];}
   const successors=executables.map(value=>desktopHostImages(value,peer.host)).map(value=>value?[value.version,value.images.map(executableStamp)]:null);
   const present=(directory:string)=>{try{return statSync(directory).isDirectory();}catch{return false;}};
-  const configStamp=peer.host==='codex'?fileStamp(path.join(configHome,'config.toml')):[fileStamp(path.join(configHome,'config','config.json')),fileStamp(path.join(configHome,'antigravity-cli','settings.json'))];
+  const configStamp=peer.host==='codex'?fileStamp(path.join(configHome,'config.toml')):[fileStamp(path.join(configHome,'config','config.json')),...AGY_APP_DATA_SUBDIRS.map(name=>fileStamp(path.join(configHome,name,'settings.json')))];
   const input=[peer.host,peer.sessionId,peer.cwd,configHome,pinHome,binary,command,[proof.executable,proof.profileId],present(peer.cwd),present(configHome),records.map(value=>[value.id,value.exe,value.version,value.capturedAt]),executables.flatMap(value=>[executableStamp(value),executableStamp(relaunchHostImage(value,peer.host))]),successors,history,configStamp,fileStamp(path.join(configHome,'settings.json')),fileStamp(path.join(home,'run','background-state.json'))];
   return createHash('sha256').update(JSON.stringify(input)).digest('hex');
 }

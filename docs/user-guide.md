@@ -8,7 +8,7 @@
 
 **常见用法（AGY 主窗口 ↔ Codex 后台/前台）：** 在项目目录里打开 `agy` TUI，照常交代任务或明确要求与 Codex 分工（例如“把后端实现和单测交给 Codex，你负责整体架构和前端”）。如果同目录没有已打开的 Codex 窗口，`agybridge` 会自动在后台启动一个专用 Codex App Server 搭档；AGY 通过 `codex.send_message` 发信并调用 `codex.wait_partner` 在后台挂起监听，Codex 完成后通过 `agy.send_message` 回信，**空闲中的 AGY 前台窗口会被自动唤醒并收到完整回复**。
 
-**双向对等协作（Codex 窗口 ↔ AGY 后台/前台）：** 从 Codex 窗口发起协作时，若同目录没有未配对的 AGY 窗口，`agybridge` 可通过 **`agy acp --stdio`** 在后台拉起并托管 AGY 会话，支持 `session/resume` 断线续接、动态切换模型与推理强度（`thought_level`），以及随时用 `agybridge open agy` 转到前台交互接管。
+**双向对等协作（Codex 窗口 ↔ AGY 后台/前台）：** 从 Codex 窗口发起协作时，若同目录没有未配对的 AGY 窗口，`agybridge` 可通过 **`agy acp --stdio`** 在后台拉起并托管 AGY 会话，支持 `session/resume` 断线续接、动态切换模型与推理强度（`thought_level`）、ACP 执行模式（`default` / `accept-edits` / `plan`）与细粒度权限对齐（非 `bypass` 源会话绝不静默跳过审批，遇到权限请求时自动转为 `needsHuman` 等待 `agybridge open agy` 前台接管），同时兼容 Antigravity CLI（`~/.gemini/antigravity-cli`）与 Antigravity 2.0 IDE（`~/.gemini/antigravity`）双路径会话历史及本地 `ConversationService` 配对标签自动同步（`agybridge:paired`）。
 
 | 组成部分 | 作用 |
 |---|---|

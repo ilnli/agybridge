@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { BrokerSession } from '../../ipc/ipc.js';
 import { sameDirectory } from '../../shared/files.js';
 import { agyMcpIdentity } from '../../hosts/agy/identity.js';
+import { extractAgyLsConnection } from '../../hosts/agy/conversation-service.js';
 import { agyProcessIdentity, codexProcessIdentity, processIdentity } from '../../process/process.js';
 import { BridgeError } from '../../shared/errors.js';
 import { AGY_PARTNER_INSTRUCTIONS, CODEX_PARTNER_INSTRUCTIONS } from '../instructions.js';
@@ -168,7 +169,8 @@ export async function serveMcp(host:Host,options:{connection?:BrokerSession;tran
         }else{
           locallyDisabled=false;
           identity.registration.endpoint.bridge=await bridgeIdentity();
-          const registered=await registerMcpIdentity<{id:string;enabled?:boolean;binding?:Actor['binding']}>(connection,'mcp.register',identity.registration);
+          const agyLs=extractAgyLsConnection(process.env);
+          const registered=await registerMcpIdentity<{id:string;enabled?:boolean;binding?:Actor['binding']}>(connection,'mcp.register',{...identity.registration,...(agyLs?{agyLs}:{})});
           if(registered.enabled===false)return{content:[{type:'text' as const,text:JSON.stringify(memberOffResultFor({host:'agy',id:registered.id}))}]};
           await capture(identity.actor.sessionId,{pid:runtime.pid,procStart:runtime.procStart});
           actor={...identity.actor,memberId:registered.id,...(registered.binding?{binding:registered.binding}:{})};

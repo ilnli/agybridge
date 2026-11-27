@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { AGY_APP_DATA_SUBDIRS, findAgySessionEvidence } from '../../shared/local-paths.js';
 import type { Store } from '../../storage/store.js';
 import type { Endpoint, Host, Peer } from '../../types.js';
 
@@ -21,7 +22,7 @@ const scans=new WeakMap<Store,Map<string,HistoryCache>>();
 const verifications=new WeakMap<Store,Map<string,Promise<SessionHistoryState>>>();
 const pathKey=(value:string)=>process.platform==='win32'?path.resolve(value).toLowerCase():path.resolve(value);
 const missing=(error:unknown)=>(error as NodeJS.ErrnoException)?.code==='ENOENT';
-const storesFor=(host:Host)=>host==='codex'?['sessions','archived_sessions']:[path.join('antigravity-cli','brain')];
+const storesFor=(host:Host)=>host==='codex'?['sessions','archived_sessions']:AGY_APP_DATA_SUBDIRS.map(subdir=>path.join(subdir,'brain'));
 const nativeFile=(endpoint:Endpoint)=>(endpoint as NativeEndpoint).nativeSession?.transcriptPath;
 const within=(root:string,file:string)=>{const relative=path.relative(root,file);return !!relative&&!path.isAbsolute(relative)&&relative!=='..'&&!relative.startsWith('..'+path.sep);};
 
@@ -69,10 +70,11 @@ function accessibleStores(home:string,host:Host,previous:string[]=[]):Accessible
   for(const name of storesFor(host)){
     const directory=path.join(home,name);let stat:fs.BigIntStats;
     try{stat=fs.statSync(directory,{bigint:true});}
-    catch(error){if(name==='archived_sessions'&&missing(error)&&!previous.includes(name))continue;throw error;}
+    catch(error){if((host==='agy'||name==='archived_sessions')&&missing(error)&&!previous.includes(name))continue;throw error;}
     if(!stat.isDirectory()||stat.ino===0n)return;
     names.push(name);paths[name]=pathKey(fs.realpathSync.native(directory));identities[name]={dev:String(stat.dev),ino:String(stat.ino),birthtime:String(stat.birthtimeNs)};
   }
+  if(!names.length)return;
   return{names,paths,identities};
 }
 
@@ -117,8 +119,10 @@ export function recordSessionHistory(store:Store,peer:Peer,endpoint:Endpoint,fil
   else if(invalid&&same)store.setSetting(key,null);
 }
 
-function auxiliaryDirectory(_proof:HistoryProof,_file:string):boolean{
-  return false;
+function auxiliaryDirectory(proof:HistoryProof,file:string):boolean{
+  if(proof.host!=='agy'||path.basename(file)!=='scratch')return false;
+  const brain=path.dirname(path.dirname(file));
+  return proof.stores.some(name=>pathKey(brain)===pathKey(path.join(proof.realHome,name)));
 }
 
 const yieldScan=()=>new Promise<void>(resolve=>setImmediate(resolve));
@@ -171,6 +175,7 @@ function plainHistory(proof:HistoryProof,file:string):HistoryResult|undefined{
 }
 
 function knownHistory(proof:HistoryProof):HistoryResult|undefined{
+  if(proof.host==='agy'&&findAgySessionEvidence(proof.realHome,proof.sessionId).length>1)return{state:'unknown'};
   for(const file of new Set([proof.file,proof.observedFile].filter((file):file is string=>!!file))){const result=plainHistory(proof,file);if(result)return result;}
   if(proof.compressedFile){
     try{
@@ -186,12 +191,16 @@ function compressedMatches(proof:HistoryProof,file:string):boolean{
 }
 
 function snapshotResult(proof:HistoryProof,snapshot:HistorySnapshot):HistoryResult{
+  // A native conversation database can outlive its transcript. Never use it as a transcript path.
+  const agyEvidence=proof.host==='agy'?findAgySessionEvidence(proof.realHome,proof.sessionId):[];
+  if(agyEvidence.length>1)return{state:'unknown'};
   for(const file of snapshot.sessions.get(proof.sessionId)??[]){const result=plainHistory(proof,file);if(result)return result;}
   for(const file of snapshot.compressed){
     if(compressedMatches(proof,file)){
       try{if(fs.lstatSync(file).isFile())return{state:'present',compressedFile:pathKey(file)};}catch(error){if(!missing(error))throw error;}
     }
   }
+  if(agyEvidence[0]&&/\.(db|pb)$/.test(agyEvidence[0].file))return{state:'present'};
   return{state:snapshot.complete&&!snapshot.unknown&&!snapshot.compressed.size?'missing':'unknown'};
 }
 

@@ -25,6 +25,8 @@ export interface AcpPermissionRequest {
   options?:{optionId:string;name?:string;kind?:string}[];
 }
 
+export type AcpPermissionOutcome={outcome:{outcome:'selected';optionId:string}|{outcome:'cancelled'}};
+
 interface PendingRpc {
   resolve:(value:any)=>void;
   reject:(error:unknown)=>void;
@@ -39,7 +41,7 @@ export class AcpClient extends EventEmitter {
   private stderrTail='';
   constructor(
     readonly child:ChildProcessWithoutNullStreams,
-    private permissionHandler?:(params:AcpPermissionRequest)=>Promise<{outcome:{outcome:'selected';optionId:string}|{outcome:'cancelled'}}>,
+    private permissionHandler?:(params:AcpPermissionRequest)=>Promise<AcpPermissionOutcome>,
   ){
     super();
     child.stderr.setEncoding('utf8');
@@ -164,6 +166,10 @@ export class AcpClient extends EventEmitter {
 
   async setConfigOption(sessionId:string,configId:string,value:string,timeoutMs=15000):Promise<{configOptions?:AcpConfigOption[]}>{
     return this.request('session/set_config_option',{sessionId,configId,value},timeoutMs);
+  }
+
+  async setMode(sessionId:string,modeId:string,timeoutMs=15000):Promise<AcpSessionResult>{
+    return this.request('session/set_mode',{sessionId,modeId},timeoutMs);
   }
 
   prompt(sessionId:string,text:string):Promise<{stopReason?:string}>{
