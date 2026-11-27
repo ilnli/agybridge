@@ -8,7 +8,7 @@ import {BridgeError} from '../shared/errors.js';
 import {type BridgeConfig,type Host} from '../types.js';
 import { CONFIG_FIELDS, configurationField, configValue, legacyDocument, normalizeConfiguration, withConfigValue } from './config-schema.js';
 import { configLocation, parseConfiguration } from '../storage/toml-document.js';
-import { frozenProfileStatus, syncFrozenProfiles } from '../broker/profiles/frozen-profile.js';
+import { freezesProfile, frozenProfileStatus, resolveProfileDefaults, syncFrozenProfiles } from '../broker/profiles/frozen-profile.js';
 
 export interface ConfigurationDocument {
   filename:string;userFile:string;source:'toml'|'legacy-json'|'default';text:string;userText:string;
@@ -38,10 +38,12 @@ export function readConfiguration(home:string):ConfigurationDocument{
   }else if(source==='toml'&&existsSync(legacy))warnings.push(`${legacy} 仅作为旧配置备份保留；已有 TOML 配置，不合并旧 JSON。`);
   const userDocument=user===undefined?{}:parseConfiguration(user,userFile);
   const active=source==='legacy-json'?legacy:filename;
-  const normalized=normalizeConfiguration(document,key=>configLocation(managed??'',key,active));
-  const userNormalized=normalizeConfiguration(userDocument,key=>configLocation(user??'',key,userFile));
+  const normalized=normalizeConfiguration(document,key=>configLocation(managed??'',key,active),{readLegacyProfiles:'managed'});
+  const userNormalized=normalizeConfiguration(userDocument,key=>configLocation(user??'',key,userFile),{readLegacyProfiles:'user'});
   let config=normalized.config as unknown as Record<string,unknown>;
   for(const field of CONFIG_FIELDS)if(configValue(userDocument,field.key)!==undefined)config=withConfigValue(config,field.internal,configValue(userNormalized.config,field.internal));
+  const profileWarnings=[...normalized.config.profileWarnings??[],...userNormalized.config.profileWarnings??[]];
+  if(profileWarnings.length){config={...config,profileWarnings};warnings.push(...profileWarnings);}
   for(const [items,text,file]of [[normalized.unknown,managed??'',active],[userNormalized.unknown,user??'',userFile]] as const)
     for(const key of items)warnings.push(`${configLocation(text,key,file)}：未知配置项 ${key.map(part=>/^[\w-]+$/.test(part)?part:JSON.stringify(part)).join('.')}，已保留但未使用。`);
   return{filename,userFile,source,text:managed??'',userText:user??'',managedExists:managed!==undefined,userExists:user!==undefined,legacyText,document,userDocument,config:config as unknown as BridgeConfig,warnings};
@@ -58,7 +60,7 @@ function unchanged(current:ConfigurationDocument):void{
 function persist(current:ConfigurationDocument,document:Record<string,unknown>,keys:string[],origin:ConfigurationOrigin){
   const migrated=current.source==='legacy-json';
   unchanged(current);
-  atomicText(current.filename,MANAGED_HEADER+stringify(withConfigValue(document,'schema_version',1))+'\n');
+  atomicText(current.filename,MANAGED_HEADER+stringify(withConfigValue(compatibleManagedDocument(document),'schema_version',1))+'\n');
   const home=path.dirname(current.filename);syncFrozenProfiles(home,readConfiguration(home).config);
   atomicText(path.join(path.dirname(current.filename),'config-last-change.json'),JSON.stringify({at:Date.now(),origin,keys,migrated},null,2)+'\n');
   return{changed:true,filename:current.filename,keys,migrated};
@@ -70,7 +72,7 @@ export function writeConfiguration(home:string,edits:ConfigurationEdit[],origin:
   return commitConfiguration(prepareConfiguration(home,edits),origin);
 }
 export function prepareConfiguration(home:string,edits:ConfigurationEdit[]):PreparedConfiguration{
-  const current=readConfiguration(home);let document=current.document;
+  const current=readConfiguration(home);let document=compatibleManagedDocument(current.document);
   for(const edit of edits){
     const field=configurationField(edit.key);
     if(field.immutable)throw new BridgeError('config_key_immutable',`${edit.key} 由配置版本管理，不能用 set/unset 修改。`);
@@ -80,19 +82,22 @@ export function prepareConfiguration(home:string,edits:ConfigurationEdit[]):Prep
   normalizeConfiguration(document,key=>configLocation(current.text,key,current.filename));
   return{current,document,keys:[...new Set(edits.map(edit=>edit.key))],changed:!current.managedExists||!isDeepStrictEqual(current.document,document)};
 }
+function compatibleManagedDocument(document:Record<string,unknown>):Record<string,unknown>{
+  return configValue(document,'partners.codex.service_tier')==='flex'?withConfigValue(document,'partners.codex.service_tier',undefined):document;
+}
 export function commitConfiguration(prepared:PreparedConfiguration,origin:ConfigurationOrigin):{changed:boolean;filename:string;keys:string[];migrated:boolean}{
   const {current,document,keys,changed}=prepared;
-                                       
   if(!changed){unchanged(current);syncFrozenProfiles(path.dirname(current.filename),current.config);return{changed:false,filename:current.filename,keys:[],migrated:false};}
   return persist(current,document,keys,origin);
 }
 export function configurationStatus(home:string){
   const current=readConfiguration(home),frozen=frozenProfileStatus(home,current.config),captured=frozen.profiles,last=path.join(home,'config-last-change.json');let lastChange:unknown=null;
+  const partnerDefaults=Object.fromEntries((['codex','agy'] as const).map(host=>[host,frozen.warnings.length&&freezesProfile(current.config,host)?null:resolveProfileDefaults(home,current.config,host)]));
   if(existsSync(last))try{
     const raw=JSON.parse(readFileSync(last,'utf8'));
     if(raw&&typeof raw==='object')lastChange={at:typeof raw.at==='number'?raw.at:null,origin:['terminal','migration','setup','agy-user','codex-user','agy-model','codex-model'].includes(raw.origin)?raw.origin:null,keys:Array.isArray(raw.keys)?raw.keys.filter((key:unknown)=>typeof key==='string'&&CONFIG_FIELDS.some(field=>field.key===key)):[],migrated:raw.migrated===true};
-  }catch{                             }
-  return{file:current.filename,userFile:current.userFile,source:current.source,warnings:[...current.warnings,...frozen.warnings],lastChange,frozen_profiles:captured,entries:CONFIG_FIELDS.map(field=>{
+  }catch{}
+  return{file:current.filename,userFile:current.userFile,source:current.source,warnings:[...current.warnings,...frozen.warnings],lastChange,frozen_profiles:captured,partner_defaults:partnerDefaults,entries:CONFIG_FIELDS.map(field=>{
     const user=configValue(current.userDocument,field.key)!==undefined,managed=configValue(current.document,field.key);
     return{key:field.key,value:redactConfigValue(field.key,configValue(current.config,field.internal)),source:user?'user-toml':managed!==undefined?(current.source==='legacy-json'?'legacy-json':'managed-toml'):'default',safe:field.safe,editable:!field.immutable&&!user,...(user&&managed!==undefined?{shadowed:redactConfigValue(field.key,managed)}:{}),...(field.key.endsWith('.profile_source')?{captured:captured[field.key.split('.')[1] as Host]??null}:{})};
   })};

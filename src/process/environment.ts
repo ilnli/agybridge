@@ -1,4 +1,5 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
@@ -12,6 +13,14 @@ export interface WindowsEnvironment {machine:Record<string,string>;user:Record<s
 const essential=['SYSTEMROOT','WINDIR','COMSPEC','USERPROFILE','HOMEDRIVE','HOMEPATH','APPDATA','LOCALAPPDATA','TEMP','TMP','USERNAME','USERDOMAIN','USERDOMAIN_ROAMINGPROFILE','LOGONSERVER','SESSIONNAME','PROGRAMDATA','ALLUSERSPROFILE','PROGRAMFILES','PROGRAMFILES(X86)','COMMONPROGRAMFILES','COMMONPROGRAMFILES(X86)','NUMBER_OF_PROCESSORS','PROCESSOR_ARCHITECTURE','PROCESSOR_IDENTIFIER','OS'];
 const upper=(env:NodeJS.ProcessEnv)=>Object.fromEntries(Object.entries(env).filter((entry):entry is [string,string]=>typeof entry[1]==='string').map(([key,value])=>[key.toUpperCase(),value]));
 let cachedWindows:NodeJS.ProcessEnv|undefined;
+let pendingWindows:Promise<NodeJS.ProcessEnv>|undefined;
+const executeEnvironment=promisify(execFile);
+const environmentQuery=()=>{
+  const executable=path.win32.join(process.env.SystemRoot??process.env.SYSTEMROOT??'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
+
+  const script="[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); function Read-Env($root,$sub){$r=@{};$k=$root.OpenSubKey($sub);if($k){try{foreach($n in $k.GetValueNames()){$v=$k.GetValue($n,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames);if($v -is [string]){$r[$n]=$v}}}finally{$k.Dispose()}};return $r}; @{machine=(Read-Env ([Microsoft.Win32.Registry]::LocalMachine) 'SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment');user=(Read-Env ([Microsoft.Win32.Registry]::CurrentUser) 'Environment');volatile=(Read-Env ([Microsoft.Win32.Registry]::CurrentUser) 'Volatile Environment')} | ConvertTo-Json -Compress";
+  return {executable,args:['-NoLogo','-NoProfile','-NonInteractive','-Command',script]};
+};
 const sessionVariable=/^(?:ANTIGRAVITY_(?:CONVERSATION|SESSION|PARENT|AGENT|PLUGIN_ROOT|PLUGIN_DATA|HOOK|IPC|TASK|LS_ADDRESS|LS_VERSION|CSRF_TOKEN|TRAJECTORY_ID|SOURCE_METADATA|PROJECT_ID|SIDECAR_|APP_DATA_DIR)|PLUGIN_ROOT$|PLUGIN_DATA$|CODEX_(?:THREAD|SESSION|PARENT|PLUGIN_ROOT|HOOK|SANDBOX|INTERNAL_|MANAGED_BY_|MANAGED_PACKAGE_ROOT$|ORIGINATOR)|AGYBRIDGE_(?!HOME$))/i;
 
 export function environmentPath(env:NodeJS.ProcessEnv):string{
@@ -37,10 +46,21 @@ export function mergeWindowsEnvironment(raw:WindowsEnvironment,current:NodeJS.Pr
 export function persistentEnvironment(refresh=false):NodeJS.ProcessEnv{
   if(process.platform!=='win32')return cleanInstanceEnvironment(process.env).env;
   if(cachedWindows&&!refresh)return{...cachedWindows};
-  const executable=path.win32.join(process.env.SystemRoot??process.env.SYSTEMROOT??'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
-  const script="[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); function Read-Env($root,$sub){$r=@{};$k=$root.OpenSubKey($sub);if($k){try{foreach($n in $k.GetValueNames()){$v=$k.GetValue($n,$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames);if($v -is [string]){$r[$n]=$v}}}finally{$k.Dispose()}};return $r}; @{machine=(Read-Env ([Microsoft.Win32.Registry]::LocalMachine) 'SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment');user=(Read-Env ([Microsoft.Win32.Registry]::CurrentUser) 'Environment');volatile=(Read-Env ([Microsoft.Win32.Registry]::CurrentUser) 'Volatile Environment')} | ConvertTo-Json -Compress";
-  const raw=JSON.parse(execFileSync(executable,['-NoLogo','-NoProfile','-NonInteractive','-Command',script],{encoding:'utf8',windowsHide:true,timeout:10000,maxBuffer:2*1024*1024}));
+  const {executable,args}=environmentQuery();
+  const raw=JSON.parse(execFileSync(executable,args,{encoding:'utf8',windowsHide:true,timeout:10000,maxBuffer:2*1024*1024}));
   cachedWindows=mergeWindowsEnvironment(raw,process.env);return{...cachedWindows};
+}
+
+export async function persistentEnvironmentAsync():Promise<NodeJS.ProcessEnv>{
+  if(process.platform!=='win32')return persistentEnvironment();
+  if(cachedWindows)return{...cachedWindows};
+  if(!pendingWindows){
+    const {executable,args}=environmentQuery();
+    pendingWindows=executeEnvironment(executable,args,{encoding:'utf8',windowsHide:true,timeout:10000,maxBuffer:2*1024*1024})
+      .then(({stdout})=>cachedWindows=mergeWindowsEnvironment(JSON.parse(stdout),process.env))
+      .finally(()=>{pendingWindows=undefined;});
+  }
+  return{...await pendingWindows};
 }
 
 export function temporaryPath(directory:string,env:NodeJS.ProcessEnv=process.env):boolean{
@@ -67,7 +87,13 @@ export function loopbackProxyNames(env:NodeJS.ProcessEnv):string[]{
 }
 
 export function neutralEnvironment(overrides:NodeJS.ProcessEnv={},refresh=false):EnvironmentResult{
-  const input=process.env,ownership=Object.fromEntries(['AGYBRIDGE_PROCESS_REGISTRY','AGYBRIDGE_TEST_SCOPE'].filter(key=>input[key]!==undefined).map(key=>[key,input[key]])),env=Object.fromEntries(Object.entries({...persistentEnvironment(refresh),...ownership,...overrides}).filter(([,value])=>value!==undefined));
+  return neutralFrom(persistentEnvironment(refresh),overrides);
+}
+export async function neutralEnvironmentAsync(overrides:NodeJS.ProcessEnv={}):Promise<EnvironmentResult>{
+  return neutralFrom(await persistentEnvironmentAsync(),overrides);
+}
+function neutralFrom(persistent:NodeJS.ProcessEnv,overrides:NodeJS.ProcessEnv):EnvironmentResult{
+  const input=process.env,ownership=Object.fromEntries(['AGYBRIDGE_PROCESS_REGISTRY','AGYBRIDGE_TEST_SCOPE'].filter(key=>input[key]!==undefined).map(key=>[key,input[key]])),env=Object.fromEntries(Object.entries({...persistent,...ownership,...overrides}).filter(([,value])=>value!==undefined));
   if(input.AGYBRIDGE_TEST_SCOPE&&input.DISABLE_AUTOUPDATER==='1')env.DISABLE_AUTOUPDATER='1';
   const before=process.platform==='win32'?upper(input):input,after=process.platform==='win32'?upper(env):env;
   return{env,report:{source:process.platform==='win32'?'windows-persistent':'unix-inherited-filtered',dropped:Object.keys(before).filter(key=>after[key]===undefined),replaced:Object.keys(before).filter(key=>after[key]!==undefined&&after[key]!==before[key]),inheritedLoopbackProxy:loopbackProxyNames(input).filter(key=>{const name=process.platform==='win32'?key.toUpperCase():key;return after[name]!==before[name];})}};

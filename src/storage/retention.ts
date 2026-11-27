@@ -30,8 +30,9 @@ export function pruneHistory(db:DatabaseSync,policy:RetentionConfig,now:number,p
     DELETE FROM messages WHERE id NOT IN (SELECT id FROM retained_messages)`));
 
   const protectedRefs=new Set(db.prepare(                          embeddedSource("sql", `SELECT 'ref:message:'||id AS key FROM protected_messages
-    UNION SELECT s.key FROM settings s,json_each(CASE WHEN json_valid(s.value) THEN s.value ELSE '{}' END,'$.messages') j JOIN messages m ON m.id=json_extract(j.value,'$.message_id')
-      WHERE s.key LIKE 'receive:%' AND m.id IN (SELECT id FROM protected_messages)`)).all().map(r=>r.key as string));
+    UNION SELECT s.key FROM settings s,json_each(CASE WHEN json_valid(s.value) THEN s.value ELSE '{}' END,'$.messages') j
+      WHERE s.key LIKE 'receive:%' AND EXISTS (SELECT 1 FROM messages m WHERE m.id=json_extract(j.value,'$.message_id')
+        AND m.id IN (SELECT id FROM protected_messages))`)).all().map(r=>r.key as string));
   const refs=db.prepare(                          embeddedSource("sql", `SELECT key,updated_at,length(CAST(value AS BLOB)) AS bytes FROM settings WHERE key LIKE 'ref:%' OR key LIKE 'receive:%' ORDER BY updated_at DESC,rowid DESC`)).all();
   let count=0,bytes=0;
   for(const r of refs)if(protectedRefs.has(r.key as string)){count++;bytes+=Number(r.bytes);}
@@ -69,6 +70,7 @@ export function pruneHistory(db:DatabaseSync,policy:RetentionConfig,now:number,p
     statement(db,'DELETE FROM settings WHERE key IN (?,?,?)').run('cooperationUnpaired:'+peer.id,'codexTranscript:'+peer.id,'codexRecoveryFence:'+peer.id);
     statement(db,'DELETE FROM settings WHERE key IN (?,?)').run('checkpoint:'+peer.id,'recoveryRevision:'+peer.id);
     statement(db,'DELETE FROM settings WHERE key=?').run('codexWake:'+peer.id);
+    statement(db,'DELETE FROM settings WHERE key IN (?,?,?,?,?,?)').run('turnEndFact:'+peer.id,'turnEndIntervention:'+peer.id,'turnEndStop:'+peer.id,'turnEndOrigins:'+peer.id,'turnEndForeground:'+peer.id,'completionWakeBudget:'+peer.id);
   }
   for(const ep of endpoints){
     if(dead.has(ep.peerId)||ep.seenAt>=idleCutoff)continue;
@@ -84,8 +86,9 @@ export function pruneHistory(db:DatabaseSync,policy:RetentionConfig,now:number,p
   db.exec(                          embeddedSource("sql", `UPDATE events SET data=json_remove(data,'$.health.fingerprint') WHERE seq IN
     (SELECT seq FROM events WHERE type='health.alert' AND json_type(data,'$.health.fingerprint') IS NOT NULL ORDER BY seq LIMIT 8)`));
   db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'turnHealthDelivery:%' AND updated_at<? AND NOT EXISTS (SELECT 1 FROM pairs WHERE archived=0 AND settings.key LIKE 'turnHealthDelivery:'||pairs.id||':%')`)).run(cutoff);
-  db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'communicationTip:message:%' AND NOT EXISTS (SELECT 1 FROM messages WHERE settings.key='communicationTip:message:'||messages.id)`)).run();
-  db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'syncTip:message:%' AND NOT EXISTS (SELECT 1 FROM messages WHERE settings.key='syncTip:message:'||messages.id)`)).run();
+  db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'codexFinalForward:%' OR key LIKE 'codexFinalForwardStreak:%'`)).run();
+  db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'communicationTip:message:%' AND NOT EXISTS (SELECT 1 FROM messages WHERE messages.id=substr(settings.key,length('communicationTip:message:')+1) AND settings.key='communicationTip:message:'||messages.id)`)).run();
+  db.prepare(                          embeddedSource("sql", `DELETE FROM settings WHERE key LIKE 'syncTip:message:%' AND NOT EXISTS (SELECT 1 FROM messages WHERE messages.id=substr(settings.key,length('syncTip:message:')+1) AND settings.key='syncTip:message:'||messages.id)`)).run();
   db.prepare(                          embeddedSource("sql", `DELETE FROM context_notices WHERE json_extract(data,'$.at')<? OR id NOT IN (SELECT id FROM context_notices ORDER BY rowid DESC LIMIT ?)`)).run(cutoff,policy.maxEvents);
   db.prepare(                          embeddedSource("sql", `DELETE FROM session_lineage WHERE peer_id NOT IN (SELECT agy FROM pairs WHERE archived=0 UNION SELECT codex FROM pairs WHERE archived=0)
     AND epoch NOT IN (SELECT json_extract(data,'$.epoch') FROM window_bindings WHERE active=1)

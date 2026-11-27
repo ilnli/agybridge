@@ -4,7 +4,7 @@ import type { CodexAdapter } from '../../hosts/codex/adapter.js';
 import type { AgyAdapter } from '../../hosts/agy/adapter.js';
 import { BridgeError, describeError } from '../../shared/errors.js';
 import { hostingGate } from '../recovery/session-hosting.js';
-import { PartnerProfiles, modelProfileSchema, hasProfile, type EffectiveModelProfile } from './partner-profile.js';
+import { PartnerProfiles, codexProfileSchema, hasProfile, type EffectiveModelProfile } from './partner-profile.js';
 import { syncFrozenProfiles } from './frozen-profile.js';
 
 interface ProfileEnvironment {
@@ -94,10 +94,11 @@ export class PartnerProfileCoordination {
     }catch(error){if((error as BridgeError).code==='profile_verification_failed')this.profiles.failed(peer,error);else this.profiles.waiting(peer,error);}
   }
   async command(peer:Peer,action:'get'|'set'|'reset',profile:ModelProfile):Promise<unknown>{
+    if(profile.serviceTier!==undefined&&(peer.host!=='codex'||action!=='set'))throw new BridgeError('invalid_arguments','service_tier 只能用于修改 Codex 后台搭档。');
     if(action!=='get'){
       if(peer.owner!=='nxbridge')throw new BridgeError('process_owned_by_user','只能修改 agybridge 自己启动的后台搭档的模型和推理强度；你自己打开的窗口请在那个窗口里设置。');
-      if(action==='set'&&!hasProfile(profile))throw new BridgeError('invalid_arguments','修改时至少要指定模型或推理强度其中一项。');
-      this.profiles.set(peer,modelProfileSchema.parse(profile),action==='reset');await this.apply(peer);
+      if(action==='set'&&!hasProfile(profile))throw new BridgeError('invalid_arguments','修改时至少要指定模型、推理强度或 Codex 服务档位其中一项。');
+      this.profiles.set(peer,codexProfileSchema.parse(profile),action==='reset');await this.apply(peer);
       queueMicrotask(()=>void this.hooks.pump());
     }
     return{member_id:peer.id,host:peer.host,session_id:peer.sessionId,...this.profiles.view(this.environment.store.peer(peer.id))};

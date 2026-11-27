@@ -4,6 +4,7 @@ import { storageError, type StoragePhase } from '../../storage/storage-errors.js
 export const errors:Record<string,string>={
   shared_runtime:'runtime also hosts another Codex root session; restart refused; nothing stopped; tell user',
   subagent_active:'own subagent thread(s) still running on this runtime; restart refused; nothing stopped; retry once after they finish; no loop',
+  subagent_control_unverified:'subagent workload check unconfirmed; runtime preserved; retry after native child unload; no loop',
   storage_busy:'agybridge storage busy; retry only when uncertain=false and phase=prepare|enqueue; otherwise check delivery before retry',
   member_disabled:'agybridge is off for this member; nothing sent or started; pair + queued msgs kept. Human re-enables from either window: agybridge on <host>, or independent terminal agybridge on <host> --member <id>',
   member_enable_human_required:'only human input can enable either side: agybridge on [codex|agy|self], or independent terminal agybridge on <host> --member <id>',

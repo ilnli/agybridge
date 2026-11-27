@@ -221,15 +221,18 @@ public static class NxHookIdentity {
     long created,exited,kernel,user;
     if(WaitForSingleObject(handle,0)==0){rows.Add("{\\"pid\\":"+pid+",\\"missing\\":true}");continue;}
     if(!GetProcessTimes(handle,out created,out exited,out kernel,out user))continue;
-    if(WaitForSingleObject(handle,0)!=258){rows.Add("{\\"pid\\":"+pid+",\\"missing\\":true}");continue;}
+    uint state=WaitForSingleObject(handle,0);
+    if(state==0){rows.Add("{\\"pid\\":"+pid+",\\"missing\\":true}");continue;}
+    if(state!=258)continue;
     rows.Add("{\\"pid\\":"+pid+",\\"generation\\":"+Json(created.ToString())+",\\"ticks\\":"+Json(DateTime.FromFileTimeUtc(created).Ticks.ToString())+"}");
    }finally{CloseHandle(handle);}
   }
   Console.Write("["+String.Join(",",rows.ToArray())+"]");return 0;
  }
  static int Stop(string[] args) {
-  uint pid,timeout;long generation;
-  if(args.Length!=4||!UInt32.TryParse(args[1],out pid)||pid==0||!Int64.TryParse(args[2],out generation)||!UInt32.TryParse(args[3],out timeout))throw new ArgumentException("invalid stop request");
+  uint pid,timeout;long generation,deadline=0;
+  if((args.Length!=4&&args.Length!=5)||!UInt32.TryParse(args[1],out pid)||pid==0||!Int64.TryParse(args[2],out generation)||!UInt32.TryParse(args[3],out timeout)
+    ||(args.Length==5&&!Int64.TryParse(args[4],out deadline)))throw new ArgumentException("invalid stop request");
   IntPtr handle=OpenProcess(0x101000,false,pid),termination=IntPtr.Zero;
   if(handle==IntPtr.Zero){if(Marshal.GetLastWin32Error()==87){Console.Write("\\"dead\\"");return 0;}throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());}
   try {
@@ -238,6 +241,7 @@ public static class NxHookIdentity {
    if(created!=generation||WaitForSingleObject(handle,0)==0){Console.Write("\\"dead\\"");return 0;}
                                               
    if(!DuplicateHandle(GetCurrentProcess(),handle,GetCurrentProcess(),out termination,1,false,0))throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+   if(deadline!=0&&DateTime.UtcNow.ToFileTimeUtc()>=deadline){Console.Write("\\"pending\\"");return 0;}
    if(!TerminateProcess(termination,1)){int error=Marshal.GetLastWin32Error();if(error!=5)throw new System.ComponentModel.Win32Exception(error);}
    uint state=WaitForSingleObject(handle,timeout);
    if(state!=0&&state!=258)throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
@@ -303,9 +307,36 @@ public static class NxHookIdentity {
    Console.Write("["+String.Join(",",result.ToArray())+"]");return 0;
   }finally{if(rows!=null)foreach(HeldProcess row in rows)CloseHandle(row.handle);CloseHandle(job);}
  }
+ [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr GetStdHandle(int id);
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool WriteFile(IntPtr handle,IntPtr bytes,uint count,out uint written,IntPtr overlapped);
  public static int Main(string[] args) {
   if(args.Length>0&&args[0]=="run")return NxOwnedCommand.Run(args);
   Console.InputEncoding=new UTF8Encoding(false);Console.OutputEncoding=new UTF8Encoding(false);
+  if(args.Length>=2&&args[0]=="read-result"){
+   if(args[1]!="probe"&&args[1]!="ancestors"&&args[1]!="process"&&args[1]!="job-members"
+    &&args[1]!="codex"&&args[1]!="agy"&&args[1]!="codex-hook"&&args[1]!="agy-hook")return 1;
+   TextWriter originalOutput=Console.Out;
+   using(StringWriter result=new StringWriter()){
+    int code;Console.SetOut(result);
+    try{code=Execute(new List<string>(args).GetRange(1,args.Length-1).ToArray());}finally{Console.SetOut(originalOutput);}
+    if(code!=0)return code;
+
+    try{
+     byte[] bytes=new UTF8Encoding(false).GetBytes(result.ToString()+"\\nNXBRIDGE_READ_COMPLETE\\n");
+     if(bytes.Length>16*1024*1024)throw new IOException("native process snapshot too large");
+     IntPtr stdout=GetStdHandle(-11);GCHandle pinned=GCHandle.Alloc(bytes,GCHandleType.Pinned);
+     try{
+      for(int offset=0;offset<bytes.Length;){
+       uint written,count=(uint)Math.Min(bytes.Length-offset,32768);
+       if(!WriteFile(stdout,IntPtr.Add(pinned.AddrOfPinnedObject(),offset),count,out written,IntPtr.Zero)||written==0||written>count)
+        throw new IOException("native process snapshot write incomplete");
+       offset+=(int)written;
+      }
+     }finally{pinned.Free();}
+    }catch(Exception error){Console.Error.WriteLine(error.Message);return 1;}
+    return 0;
+   }
+  }
   if(args.Length!=1||args[0]!="serve")return Execute(args);
                                             
   TextWriter output=Console.Out,errors=Console.Error;string line;

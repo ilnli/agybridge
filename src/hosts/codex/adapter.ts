@@ -618,7 +618,7 @@ export class CodexAdapter extends EventEmitter {
     const registration={...threadRegistration({...thread,name:peer.name},endpoint,result)!,permission:codexPermission(result)};registration.endpoint.configHome=this.configHomes.get(endpoint);const runtime=runtimeFor(this.home,{endpoint})?.value;if(runtime){recordManagedSessionLaunch(this.home,thread.id,thread.cwd,runtime);registration.endpoint.runtimeId=runtime.id;registration.endpoint.pid=runtime.pid??null;registration.endpoint.procStart=runtime.procStart??null;}return registration;
   }
                                        
-  async setProfile(peer:Peer,endpoint:Endpoint,profile:import('../../types.js').ModelProfile,guard:()=>void):Promise<import('../../types.js').ModelProfile>{
+  async setProfile(peer:Peer,endpoint:Endpoint,profile:import('../../types.js').ModelProfile,guard:()=>void):Promise<import('../../broker/profiles/partner-profile.js').EffectiveModelProfile>{
     let submitted=false,accepted=false;
     return this.threadOperation(peer,endpoint,async()=>{
       guard();this.requireMember(peer.id);
@@ -633,7 +633,7 @@ export class CodexAdapter extends EventEmitter {
       return{model:actual.thread.model,effort:actual.thread.reasoningEffort};
     }).catch(error=>{throw profileChangeFailure(error,submitted,accepted);});
   }
-  async readProfile(peer:Peer,endpoint:Endpoint,guard:()=>void):Promise<import('../../types.js').ModelProfile>{
+  async readProfile(peer:Peer,endpoint:Endpoint,guard:()=>void):Promise<import('../../broker/profiles/partner-profile.js').EffectiveModelProfile>{
     return this.threadOperation(peer,endpoint,async()=>{
       guard();this.requireMember(peer.id);const runtime=runtimeFor(this.home,{endpoint:endpoint.address})?.value;
       if(endpoint.daemon||runtime?.kind!=='owned'||runtime.peerId!==peer.id)throw new BridgeError('process_owned_by_user','只能核对自有后台运行时的设置。');

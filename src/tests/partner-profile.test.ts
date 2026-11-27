@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {fixture, lifecycle} from './support/broker-fixture.js';
 import { temporary } from './support/temporary.js';
 import { registration } from './support/registration.js';
-import { PartnerProfiles, modelProfileSchema, profileChangeFailure } from '../broker/profiles/partner-profile.js';
+import { PartnerProfiles, modelProfileSchema, codexProfileSchema, profileChangeFailure } from '../broker/profiles/partner-profile.js';
 import {DEFAULT_CONFIG} from '../config/defaults.js';
 import {DeliveryError} from '../shared/errors.js';
 import {type Endpoint,type ModelProfile,type Peer} from '../types.js';
@@ -15,15 +15,45 @@ import { CodexAdapter } from '../hosts/codex/adapter.js';
 import { saveManagedRuntime } from '../hosts/managed-runtimes.js';
 import { managedMarker } from '../install/installation.js';
 import { randomUUID } from 'node:crypto';
-import { formatPartnerProfile } from '../app/commands/partner-profile-command.js';
+import { formatPartnerProfile, partnerProfileCommand } from '../app/commands/partner-profile-command.js';
 
 const actor={host:'agy' as const,sessionId:'c',callId:'profile'};
+
+test('可选档位只保留 standard 与 fast，CLI 和配置请求不能选择 flex',async()=>{
+  assert.equal(codexProfileSchema.safeParse({serviceTier:'standard'}).success,true);
+  assert.equal(codexProfileSchema.safeParse({serviceTier:'fast'}).success,true);
+  assert.equal(codexProfileSchema.safeParse({serviceTier:'flex'}).success,false);
+  await assert.rejects(partnerProfileCommand(['codex','--service-tier','flex']),{code:'invalid_arguments',message:/standard 或 fast/});
+});
+
 function owned(t:Parameters<typeof fixture>[0]){
   const f=fixture(t);f.store.pair(f.c.id,f.x.id);f.store.updatePeer(f.x.id,{owner:'nxbridge',state:'ready',model:'old',effort:'low'});
   const calls:ModelProfile[]=[];
   (f.codex as unknown as {setProfile:(peer:Peer,endpoint:Endpoint,profile:ModelProfile,guard:()=>void)=>Promise<ModelProfile>}).setProfile=async(peer,_endpoint,profile,guard)=>{guard();calls.push(profile);return{model:peer.model,effort:peer.effort,...profile};};
   return{...f,calls};
 }
+
+test('旧持久选择中的 flex 单独撤销，保留其它选择和原生观测且诊断不重复',async t=>{
+  const f=owned(t);f.store.updatePeer(f.x.id,{serviceTier:'flex'});const peer=f.store.peer(f.x.id);
+  f.store.setSetting('partnerProfile:'+peer.id,{requested:{model:'chosen',effort:'high',serviceTier:'flex'},resolved:{model:'chosen',effort:'high',serviceTier:'flex'},sources:{model:'explicit',effort:'explicit',serviceTier:'explicit'},explicitFields:['model','effort','serviceTier'],source:'explicit',status:'pending',at:1,sessionId:peer.sessionId});
+  assert.deepEqual(f.broker.profiles.requested(peer),{model:'chosen',effort:'high'});
+  assert.deepEqual(f.broker.profiles.intent(peer)?.resolved,{model:'chosen',effort:'high'});
+  assert.deepEqual(f.broker.profiles.intent(peer)?.explicitFields,['model','effort']);
+  assert.equal(f.broker.profiles.intent(peer)?.sources?.serviceTier,undefined);
+  assert.equal(f.broker.profiles.intent(peer)?.warnings?.length,1);assert.equal(f.broker.profiles.intent(peer)?.warnings?.length,1);
+  assert.match((f.broker.status() as any).capabilities.profile_warnings.join('\n'),/flex.*没有改动/);
+  await (f.broker as any).profileCoordination.apply(peer);
+  assert.deepEqual(f.calls,[{model:'chosen',effort:'high'}]);assert.equal(f.store.peer(peer.id).serviceTier,'flex');
+  assert.equal(f.broker.profiles.blocks(f.store.peer(peer.id)),false);
+});
+
+test('只选了旧 flex 的待生效意图不会拦住消息，也不会修改宿主档位',async t=>{
+  const f=owned(t),peer=f.store.peer(f.x.id);
+  f.store.setSetting('partnerProfile:'+peer.id,{requested:{serviceTier:'flex'},source:'explicit',status:'failed',blocked:true,error:{code:'profile_verification_failed',message:'旧档位不匹配'},at:1,sessionId:peer.sessionId});
+  assert.deepEqual(f.broker.profiles.requested(peer),{});assert.equal(f.broker.profiles.blocks(peer),false);
+  assert.equal(f.broker.profiles.view(peer).status,'applied');assert.equal(f.broker.profiles.intent(peer)?.error,undefined);
+  await (f.broker as any).profileCoordination.apply(peer);assert.equal(f.calls.length,0);
+});
 
 test('搭档设置在空闲时核验生效，观察事件不覆盖持久选择；reset 保持当前会话设置',async t=>{
   const f=owned(t),before=f.store.peer(f.x.id).sessionId;
@@ -94,12 +124,14 @@ test('设置回读期间关闭成员不确认过期结果，失败后释放跨�
   assert.equal(applied.status,'applied');assert.equal(applied.effective.model,'fresh');
 });
 
-test('拒绝用户窗口、子代理与自身宿主会话变更',async t=>{
+test('拒绝用户窗口、子代理、自身宿主与非 Codex 服务档位变更',async t=>{
   const f=owned(t);
   f.store.updatePeer(f.x.id,{owner:'user'});
   await assert.rejects(f.broker.dispatch('partner.profile',{actor,action:'set',model:'x'}),{code:'process_owned_by_user'});
   await assert.rejects(f.broker.dispatch('partner.profile',{actor:{...actor,via:'child'},action:'set',model:'x'}),{code:'subagent_denied'});
   await assert.rejects(f.broker.dispatch('partner.profile',{actor,host:'agy',action:'set',model:'x'}),{code:'invalid_target'});
+  f.store.updatePeer(f.c.id,{owner:'nxbridge'});
+  await assert.rejects(f.broker.dispatch('partner.profile',{host:'agy',peer_id:f.c.id,action:'set',serviceTier:'fast'}),{code:'invalid_arguments'});
 });
 
 test('新建默认配置只解析一次；冻结仅采集新后台的同事件配置',t=>{
@@ -121,18 +153,29 @@ test('模型和 effort 输入不限定模型列表，拒绝空值；零值及逐
 test('创建时只指定一个字段仍逐字段继承默认值；明确拒绝不拦住原会话',async t=>{
   const f=owned(t);f.broker.config.partnerProfiles={codex:{model:'default',effort:'high'}};
   const fresh=f.store.placeholder('codex',f.c.cwd);f.broker.profiles.set(fresh,{model:'picked'});
-  assert.deepEqual(f.broker.profiles.requested(fresh),{model:'picked',effort:'high'});
+  assert.deepEqual(f.broker.profiles.requested(fresh),{model:'picked',effort:'high',serviceTier:'standard'});
   (f.codex as any).setProfile=async()=>{throw Object.assign(Error('宿主拒绝参数'),{code:-32602});};
   const result=await f.broker.dispatch('partner.profile',{actor,action:'set',model:'rejected'}) as any;
   assert.equal(result.status,'failed');assert.equal(result.delivery_held,false);assert.equal(result.effective.model,'old');
 });
 
-test('Claude 别名保留原请求并以已核验解析结果判断观察，偏离选择时拦住后续投递',t=>{
+test('只给原生明确拒绝的新搭档推荐模型附上换模型提示',t=>{
+  const home=temporary(t),store=new Store(':memory:'),profiles=new PartnerProfiles(store,home,DEFAULT_CONFIG);t.after(()=>store.close());
+  const peer=store.placeholder('codex',home);profiles.initialize(peer);
+  const rejection=Object.assign(Error('model gpt-6.2-sol is not available'),{code:-32602});
+  assert.match((profiles.launchError(peer,rejection) as Error).message,/agybridge config set partners\.codex\.profile_source host/);
+  const network=Object.assign(Error('model gpt-6.2-sol is not available after network timeout'),{code:'timeout'});
+  assert.equal(profiles.launchError(peer,network),network);
+  assert.equal(profiles.launchError({...peer,sessionId:'existing'},rejection),rejection);
+  profiles.set(peer,{model:'gpt-6.2-sol'});assert.equal(profiles.launchError(peer,rejection),rejection);
+});
+
+test('AGY 别名保留原请求并以已核验解析结果判断观察，偏离选择时拦住后续投递',t=>{
   const f=owned(t);f.store.updatePeer(f.c.id,{owner:'nxbridge',model:'previous',effort:'low'});const peer=f.store.peer(f.c.id);
-  f.broker.profiles.set(peer,{model:'opus',effort:'high'});
-  f.broker.profiles.applied(peer,{model:'claude-opus-current',effort:'high',requestedModel:'opus'});
-  assert.deepEqual(f.broker.profiles.requested(peer),{model:'opus',effort:'high'});assert.equal(f.broker.profiles.view(f.store.peer(peer.id)).status,'applied');
-  f.broker.profiles.observed(f.store.peer(peer.id),{model:'claude-opus-current',effort:'high'});assert.equal(f.broker.profiles.blocks(peer),false);
+  f.broker.profiles.set(peer,{model:'gemini-pro',effort:'high'});
+  f.broker.profiles.applied(peer,{model:'gemini-4-neon',effort:'high',requestedModel:'gemini-pro'});
+  assert.deepEqual(f.broker.profiles.requested(peer),{model:'gemini-pro',effort:'high'});assert.equal(f.broker.profiles.view(f.store.peer(peer.id)).status,'applied');
+  f.broker.profiles.observed(f.store.peer(peer.id),{model:'gemini-4-neon',effort:'high'});assert.equal(f.broker.profiles.blocks(peer),false);
   f.broker.profiles.observed(f.store.peer(peer.id),{model:'other'});assert.equal(f.broker.profiles.blocks(peer),true);
 });
 
@@ -155,7 +198,7 @@ test('提交边界区分读取失败与提交后回读失败，不让 RPC 缺省
   assert.equal(profileChangeFailure(Object.assign(new DeliveryError('disconnected','连接失败'),{phase:'prepare'}),true).uncertain,false);
   assert.equal(profileChangeFailure(Object.assign(Error('明确拒绝'),{code:-32602}),true).uncertain,false);
   assert.equal(profileChangeFailure(Object.assign(Error('回读拒绝'),{code:-32602}),true,true).uncertain,true);
-  assert.equal(profileChangeFailure(profileChangeFailure(Object.assign(Error('回读拒绝'),{code:'claude_control_rejected'}),true,true),true).uncertain,true);
+  assert.equal(profileChangeFailure(profileChangeFailure(Object.assign(Error('回读拒绝'),{code:'agy_control_rejected'}),true,true),true).uncertain,true);
 });
 
 test('Codex 长会话设置只读取摘要；提交前失败不暂停，提交后超时保留不确定性',async t=>{
@@ -224,7 +267,7 @@ test('明确指定创建设置时替换已启动预备成员，回收旧后台�
   const choice={actor:sender,selection_id:view.selection_id,action:'create',model:'chosen',effort:'high'};
   const result=await f.broker.dispatch('pair.selection.commit',choice) as any;
   const target=f.store.peer(f.store.pairFor(f.c.id)!.codex);assert.notEqual(target.id,provisional.id);
-  assert.deepEqual(f.broker.profiles.requested(target),{model:'chosen',effort:'high'});
+  assert.deepEqual(f.broker.profiles.requested(target),{model:'chosen',effort:'high',serviceTier:'standard'});
   assert.equal(f.codex.released.some(peer=>peer.id===provisional.id),true);
   assert.deepEqual(await f.broker.dispatch('pair.selection.commit',choice),result);assert.equal(f.store.messages().length,1);assert.equal(f.store.messages()[0]!.body,'唯一的原草稿');
 });
@@ -253,7 +296,7 @@ test('已生效或缺省成员的重复状态事件不产生数据库写入',t=>
 test('新 Codex 的身份登记晚于创建，后台阶段仍可只读核验并解除首轮暂停',async t=>{
   const f=owned(t),peer=f.store.placeholder('codex',f.c.cwd);f.broker.profiles.set(peer,{model:'chosen',effort:'high'});
   f.store.adopt(peer.id,registration('codex','late-codex'));
-  let reads=0;(f.codex as any).readProfile=async()=>{reads++;return{model:'chosen',effort:'high'};};
+  let reads=0;(f.codex as any).readProfile=async()=>{reads++;return{model:'chosen',effort:'high',serviceTier:'standard'};};
   await (f.broker as any).profileCoordination.verifyInitial(f.store.peer(peer.id));
   assert.equal(reads,1);assert.equal(f.broker.profiles.blocks(f.store.peer(peer.id)),false);
 });
@@ -266,7 +309,7 @@ test('首次设置回读的拥塞或能力错误保持等待，不能误报为�
     await (f.broker as any).profileCoordination.verifyInitial(f.store.peer(peer.id));
     assert.equal(f.broker.profiles.intent(peer)?.status,'pending');assert.equal(f.broker.profiles.intent(peer)?.error?.code,code);assert.equal(f.broker.profiles.blocks(f.store.peer(peer.id)),true);
   }
-  (f.codex as any).readProfile=async()=>({model:'chosen',effort:'high'});
+  (f.codex as any).readProfile=async()=>({model:'chosen',effort:'high',serviceTier:'standard'});
   await (f.broker as any).profileCoordination.verifyInitial(f.store.peer(peer.id));assert.equal(f.broker.profiles.blocks(f.store.peer(peer.id)),false);
 });
 

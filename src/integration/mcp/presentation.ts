@@ -3,6 +3,7 @@ import {delay} from '../../shared/time.js';
 import {describeError} from '../../shared/errors.js';
 import {type DeliveryState,type Message,type Peer} from '../../types.js';
 import type { PartnerQuestion } from './questions.js';
+import {completionGuardText} from '../../broker/turn-end-text.js';
 
 export const DELIVERY_LABELS:Record<DeliveryState,string>={accepted:'已持久化',sending:'正在提交',runtimeQueued:'运行时已接受',held:'等待人工放行',contextObserved:'已观察到上下文记录',responded:'已有明确关联回复',refused:'已拒收',expired:'已过期',unknown:'接受情况待核对'};
 
@@ -30,7 +31,30 @@ export function providerStatusText(health:any):string|undefined{
   const at=new Date(r.at).toLocaleTimeString('zh-CN',{hour12:false,hour:'2-digit',minute:'2-digit'}),next=r.kind==='auth'?'需要你检查 Codex 的登录或密钥':'等服务恢复，或到供应商那边查看';
   return r.state==='failed'?`这一轮已停止：${providerCause(r)}，最近一次 ${at}；${next}`:`在等模型服务：${providerCause(r)}，正在自动重试，最近一次 ${at}；${next}`;
 }
-const profileText=(p:{model?:string;effort?:string|number}|undefined)=>[p?.model!==undefined?'模型 '+p.model:'',p?.effort!==undefined?'推理强度 '+p.effort:''].filter(Boolean).join('，');
+const profileText=(p:{model?:string;effort?:string|number;serviceTier?:string|null}|undefined)=>[p?.model!==undefined?'模型 '+p.model:'',p?.effort!==undefined?'推理强度 '+p.effort:'',p?.serviceTier!==undefined?'服务档位 '+(p.serviceTier??'未指定'):''].filter(Boolean).join('，');
+const profileSourceText=(p:any)=>{const view=p.partner_profile;if(view?.delivery_held||!['applied','host'].includes(view?.status))return'';const tags:Record<string,string>={recommended:'agybridge 推荐',config:'agybridge 配置',explicit:'此搭档单独指定',host:'宿主配置',frozen:'冻结'};const labels=[['model','模型'],['effort','强度'],['serviceTier','档位']].flatMap(([key,label])=>view.effective?.[key!]!==undefined&&tags[view.sources?.[key!]]?[label+'来自'+tags[view.sources[key!]]]:[]);return labels.length?'（'+labels.join('，')+'）':'';};
+
+function completionGuardNotices(members:any[]):string[]{
+  const seen=new Set<string>(),lines:string[]=[];
+  for(const member of members){
+    const view=member?.completion_guard;if(!view||typeof view!=='object')continue;
+    const key=view.background_id+'>'+view.foreground_id;if(seen.has(key))continue;seen.add(key);
+    if(view.state==='completed'&&view.reason==='reported')continue;
+    const host=view.background_host??members.find(m=>m?.id===view.background_id)?.host;
+    const text=typeof view.user_text==='string'&&view.user_text.trim()?view.user_text.trim():completionGuardText({...view,...(host==='agy'||host==='codex'?{background_host:host}:{})});
+    if(text)lines.push(text);
+  }
+  return lines;
+}
+
+export function restartPauseText(detail:any):string{
+  if(detail?.code==='service_tier_mismatch')return'后台 Codex 重启后服务档位和原来对不上'+(detail.saved!==undefined||detail.live!==undefined?`（原来 ${detail.saved??'未指定'}，现在 ${detail.live??'未指定'}）`:'')+'，为免改用别的档位已暂停投递，消息已保留';
+  if(detail?.code==='service_tier_unverified')return'后台 Codex 重启后没能确认服务档位和原来一致，为免改用别的档位已暂停投递，消息已保留';
+  return'后台 Codex 的重启没有完整完成，已暂停投递，消息已保留';
+}
+function restartPauseNotice(member:any):string[]{
+  return member?.state==='paused'&&(member.pause_reason??member.pauseReason)==='restart_incomplete'?[restartPauseText(member.pause_detail)]:[];
+}
 
 function profileNotice(member:any):string[]{
   const view=member?.partner_profile,wanted=profileText(view?.requested),who='后台 '+(member?.host==='codex'?'Codex':'AGY');
@@ -43,15 +67,19 @@ function profileNotice(member:any):string[]{
 export function formatStatus(status:any):string{
   const labels:Record<string,string>={ready:'就绪',busy:'工作中',needsHuman:'等待用户',offline:'离线',unknown:'未知',paused:'已暂停',starting:'启动中'};
   const health=(p:any)=>providerStatusText(p.health)?` · ${providerStatusText(p.health)}`:p.health?.state==='networkRetrying'?` · 网络重连中${p.health.retry?.attempt!==undefined?`，第 ${p.health.retry.attempt}/${p.health.retry.max} 次`:''}，从 ${new Date(p.health.retry.since).toLocaleString('zh-CN',{hour12:false})} 开始`:p.health?.state==='silent'?(p.health.progressEvidence===false?' · 进度暂时无法观测（读不到最新一步，不代表卡住）':` · 已 ${Math.floor((Date.now()-p.health.lastProgressAt)/60000)} 分钟未见进展，原因未知`):p.health?.state==='waitingTool'?' · 正在等待工具或命令执行完成':p.health?.state==='failed'?` · 这一轮执行失败：${p.health.error??'原因未知'}`:'';
-  const line=(title:string,p:any)=>`${title}：${p.name} · ${labels[p.state]??p.state}${p.launchFailure?' · 启动失败：'+p.launchFailure.message+'；消息已保留。修复后重试：agybridge open '+p.host+' --member '+p.id:''}${p.context?.transitioning?' · 正在切换对话，消息等新对话开始后送达':''}${p.model?' · '+p.model:''}${p.effort!==undefined?' / '+p.effort:''}${health(p)}`;
+  const line=(title:string,p:any)=>`${title}：${p.name} · ${labels[p.state]??p.state}${p.launchFailure?' · 启动失败：'+p.launchFailure.message+'；消息已保留。修复后重试：agybridge open '+p.host+' --member '+p.id:''}${p.context?.transitioning?' · 正在切换对话，消息等新对话开始后送达':''}${p.model?' · '+p.model:''}${p.effort!==undefined?' / '+p.effort:''}${p.serviceTier!==undefined?' / 服务档位 '+(p.serviceTier??'未指定'):''}${profileSourceText(p)}${health(p)}`;
   const summary=!status.paired?(status.pair_lost?'原配对 '+status.pair_lost.pair_id+' 被意外解除；原搭档「'+status.pair_lost.partner_name+'」。原因：'+lossReason(status.pair_lost.reason)+(status.pair_lost.actor?'（'+status.pair_lost.actor+'）':'')+'。\n'+lossRestore(status.pair_lost)+'\n不再需要时清除提示：agybridge unpair --member '+status.self.id:'待配对。首次发信按需配对。'):[
     `${status.paused?'配对已暂停（agybridge resume'+(status.self?.id?' --member '+status.self.id:'')+' 恢复）':'已配对'}`,
     line('本窗口',status.self),line('搭档',status.partner),
     ...[status.self,status.partner].flatMap(p=>p.delivery_wait?[p.delivery_wait.message]:[]),
+    ...[status.self,status.partner].flatMap(p=>p?.hosting?.held_unsent&&p.hosting.delivery_hold?.status?[`消息暂缓：${p.hosting.delivery_hold.status}`]:[]),
     ...(status.self.enabled===false?['本窗口的 agybridge 已关闭；窗口和配对保留。']:[]),
     ...(status.partner.enabled===false?['搭档的 agybridge 已关闭；发信已停用，不会自动启动替代窗口。']:[]),
     ...(status.partner.retryBudget?.warning?[status.partner.retryBudget.warning]:[]),
     ...[status.self,status.partner].flatMap(profileNotice),
+    ...[status.self,status.partner].flatMap(restartPauseNotice),
+    ...[status.self,status.partner].flatMap(p=>{const hold=p?.childCompletions?.hold;if(!hold?.reason)return[];return hold.observing?[`Codex 的子代理已做完，正在核对主线程有没有接着处理（${hold.reason}），不用操作`]:[`Codex 的子代理已做完，尚未确认主线程接着处理：${hold.reason}。没动的话到原 Codex 窗口说一句继续，不用重跑子代理`];}),
+    ...completionGuardNotices([status.self,status.partner]),
     `待处理消息：${status.pending}；待处理问题：${status.questions?.length??0}`,
     ...(status.identityIssues??[]).map((issue:{message:string})=>'Codex 客户端身份：'+issue.message),
     ...(status.communicationTips?[`发送提示：长报告 ${status.communicationTips.firings.report} 次，引用复用 ${status.communicationTips.firings.reuse} 次；最近 ${status.communicationTips.window.samples} 条字符中位数 ${status.communicationTips.window.median}，P90 ${status.communicationTips.window.p90}；详细统计见 agybridge status/doctor`]:[]),
@@ -65,6 +93,8 @@ export function formatGlobalStatus(status:any):string{
     return `配对 ${index+1} · ${terminalText(agy.cwd)}\n`+formatStatus({paired:true,paused:pair.paused,self:agy,partner:codex,pending:status.messages.filter((m:Message)=>m.pairId===pair.id&&['accepted','sending','runtimeQueued','held','unknown'].includes(m.state)).length,questions:status.questions.filter((q:PartnerQuestion)=>q.pairId===pair.id&&['pending','awaiting_user','needs_user'].includes(q.status))});
   });
   sections.push(...(status.capabilities?.identityIssues??[]).map((issue:{message:string})=>terminalText('Codex 客户端身份：'+issue.message)));
+  sections.push(...(status.capabilities?.startupRoutes??[]).map((route:{memberId:string;reason:string})=>
+    terminalText('会话核对：「'+(status.peers.find((peer:Peer)=>peer.id===route.memberId)?.name??route.memberId)+'」'+route.reason)));
   const lost=[...new Map((status.lostPairs??[]).map((loss:any)=>[loss.pair_id,loss])).values()] as any[];
   sections.push(...lost.map(loss=>terminalText('原配对 '+loss.pair_id+' 被意外解除：「'+loss.member_name+'」与「'+loss.partner_name+'」，原因：'+lossReason(loss.reason)+(loss.actor?'（'+loss.actor+'）':'')+'。\n'+lossRestore(loss))));
   sections.push(...Object.entries(status.capabilities?.frozen_profiles??{}).flatMap(([host,profile]:[string,any])=>profileText(profile)?[`新建的后台 ${host==='codex'?'Codex':'AGY'} 固定用：${profileText(profile)}（${new Date(profile.at).toLocaleString('zh-CN',{hour12:false})} 记下）`]:[]));

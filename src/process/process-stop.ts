@@ -25,20 +25,22 @@ export function verifyStopAncestry(identity:OwnedIdentity,chain:ProcessAncestry)
   const newer=oldest&&(/^\d+$/.test(oldest)&&/^\d+$/.test(identity.startedAt)?BigInt(identity.startedAt)>BigInt(oldest):Date.parse(identity.startedAt+' UTC')>Date.parse(oldest+' UTC'));
   if(!newer)throw new BridgeError('process_identity_unknown','调用者的祖先链尚不可完整核验，保留进程及归属记录。');
 }
-export async function stopOwnedProcess(identity:OwnedIdentity,options:{timeout?:number;force?:boolean}={}):Promise<void>{
+export async function stopOwnedProcess(identity:OwnedIdentity,options:{timeout?:number;deadline?:number;force?:boolean;beforeSignal?:()=>void}={}):Promise<void>{
   if(!Number.isSafeInteger(identity.pid)||identity.pid<=0||!identity.startedAt)throw new BridgeError('process_identity_unknown','无法核验自有进程代次，保留进程及归属记录。');
   verifyStopAncestry(identity,await processAncestry(process.pid,64));
   if(process.platform==='win32'){
                                                    
     if(!/^\d+$/.test(identity.startedAt))return;
-    await stopWindowsProcess(identity,options.timeout??5000);return;
+    await stopWindowsProcess(identity,options.timeout??5000,options);return;
   }else{
                                       
     const current=await ownedProcessState(identity);if(current==='dead')return;
     if(current==='unknown')throw new BridgeError('process_identity_unknown','发出信号前无法核验自有进程代次，保留归属记录。');
+    options.beforeSignal?.();
+    if(options.deadline!==undefined&&Date.now()>=options.deadline)throw new BridgeError('process_stop_pending','停止期限已到，保留自有进程和归属记录。');
     try{process.kill(identity.pid,options.force?'SIGKILL':'SIGTERM');}catch(error){if((error as NodeJS.ErrnoException).code!=='ESRCH')throw error;}
   }
-  const end=Date.now()+(options.timeout??5000);
+  const end=options.deadline??Date.now()+(options.timeout??5000);
   for(;;){
     const current=await ownedProcessState(identity);if(current==='dead')return;
     if(current==='unknown')throw new BridgeError('process_identity_unknown','停止后无法核验进程状态，保留归属记录。');
@@ -68,7 +70,7 @@ export async function ownedGroupState(identity:OwnedIdentity):Promise<ProcessSta
 }
 
                                         
-export async function stopOwnedGroup(identity:OwnedIdentity,timeout=5000):Promise<void>{
-  await stopOwnedProcess(identity,{timeout});
+export async function stopOwnedGroup(identity:OwnedIdentity,timeout=5000,beforeSignal?:()=>void):Promise<void>{
+  await stopOwnedProcess(identity,{timeout,beforeSignal});
   if(await ownedGroupState(identity)!=='dead')throw new BridgeError('process_identity_unknown','监督进程已退出，但组内仍可能有未确认的后代；数字组号不能授权停止，保留记录。');
 }

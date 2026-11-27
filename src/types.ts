@@ -1,6 +1,7 @@
 import type { FieldObservation } from './storage/observed-fields.js';
 export type Host = 'agy' | 'codex';
-export interface ModelProfile {model?:string;effort?:string|number}
+export interface ModelProfile {model?:string;effort?:string|number;serviceTier?:string}
+export type PartnerProfileSource='recommended'|'host'|'frozen';
 export type PeerState = 'ready' | 'busy' | 'needsHuman' | 'offline' | 'unknown' | 'paused' | 'starting';
 export type DeliveryState = 'accepted' | 'sending' | 'runtimeQueued' | 'held' | 'contextObserved' | 'responded' | 'refused' | 'expired' | 'unknown';
 export type PermissionClass = 'prompting' | 'bypass' | 'unknown';
@@ -55,6 +56,7 @@ export interface Peer {
   permission: PermissionClass;
   model?: string;
   effort?: string | number;
+  serviceTier?: string | null;
   updatedAt: number;
   stateSince?: number;
   activityAt?: number;
@@ -136,6 +138,7 @@ export interface RegisterInput {
   replyContract?: 1;
   model?: string | null;
   effort?: string | number | null;
+  serviceTier?: string | null;
   endpoint: Omit<Endpoint, 'peerId' | 'seenAt' | 'active'>;
   contextStart?: boolean;
   hookContextKey?: string;
@@ -170,12 +173,14 @@ export interface BridgeConfig {
   agyCommand?: string[];
   codexEndpoint?: string;
   codexAuthTokenEnv?: string;
-  partnerProfiles?: Partial<Record<Host, ModelProfile & {source?:'host'|'frozen'}>>;
+  partnerProfiles?: Partial<Record<Host, ModelProfile & {source?:PartnerProfileSource}>>;
+  profileWarnings?: string[];
   subagentSend: 'allow-verified' | 'deny';
   questionTimeoutMs?: number;
   syncTipMinutes: number;
   contextTipTokens: number[];
   idleNoticeMinutes: number;
+  completionWakeLimit: number;
   retention?: Partial<RetentionConfig>;
 }
 
@@ -198,6 +203,7 @@ export interface RetentionConfig {
 export const WAKE_NOTICE = 'agybridge pickup notice (not user msg): agy msg pending -> agy.receive_messages()';
 export const AGY_WAKE_NOTICE = 'agybridge pickup notice (not user msg): codex msg pending -> receive_messages()';
 export const HEALTH_WAKE_NOTICE = 'agybridge: runtime health notice pending; current hook provides verified facts; no partner message pickup required';
-export const isEmbeddedWake=(prompt:unknown):boolean=>prompt===WAKE_NOTICE||prompt==='agybridge: agy msg pending -> agy.receive_messages()'||prompt===HEALTH_WAKE_NOTICE;
+export const completionWakeId=(prompt:unknown):string|undefined=>typeof prompt==='string'&&prompt.startsWith(HEALTH_WAKE_NOTICE+'\n')?/^\[agybridge completion_notice=([^\]\s]+)\]/.exec(prompt.slice(HEALTH_WAKE_NOTICE.length+1))?.[1]:undefined;
+export const isEmbeddedWake=(prompt:unknown):boolean=>prompt===WAKE_NOTICE||prompt==='agybridge: agy msg pending -> agy.receive_messages()'||prompt===HEALTH_WAKE_NOTICE||completionWakeId(prompt)!==undefined;
 
 export function otherHost(host: Host): Host { return host === 'agy' ? 'codex' : 'agy'; }

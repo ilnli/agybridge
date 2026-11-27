@@ -84,17 +84,48 @@ test('nxref 和取件缓存共享数量/字节/年龄额度；终态快照过期
   refs.capture(c,'new','新答案');store.maintain({referenceMaxAgeMs:1},Date.now()+10);assert.equal(store.setting('ref:agent:'+c.id+':new'),undefined);
 });
 
+test('混合取件缓存只要仍包含受保护的实际消息，就不受引用配额裁剪',t=>{
+  const {store,c,x}=fixture(t),pair=store.pair(c.id,x.id);
+  const pending=store.accept(pair,c,'待处理正文','cache-pending');
+  const expired=store.accept(pair,c,'已完成正文','cache-expired');store.transition(expired.id,'responded');
+  const mixed='receive:'+x.id+':mixed',finished='receive:'+x.id+':finished',missing='receive:'+x.id+':missing';
+  store.setSetting(mixed,{messages:[{message_id:expired.id},{message_id:pending.id},{message_id:pending.id},{message_id:'absent'}]});
+  store.setSetting(finished,{messages:[{message_id:expired.id}]});store.setSetting(missing,{messages:[{message_id:'absent'}]});
+  store.maintain({historyMaxAgeMs:1,maxReferences:1,maxReferenceBytes:1},Date.now()+2000);
+  assert.ok(store.setting(mixed));assert.equal(store.setting(finished),undefined);assert.equal(store.setting(missing),undefined);
+  assert.equal(store.message(pending.id).body,'待处理正文');assert.throws(()=>store.message(expired.id),{code:'message_missing'});
+});
+
+test('消息提示缓存按完整消息键保留，清除已过期、缺失、后缀或前缀大小写不同的孤儿键',t=>{
+  const {store,c,x}=fixture(t),pair=store.pair(c.id,x.id),pending=store.accept(pair,c,'待处理正文','tip-pending');
+  const expired=store.accept(pair,c,'已完成正文','tip-expired');store.transition(expired.id,'responded');
+  const retained=[],removed=[];
+  for(const prefix of ['communicationTip:message:','syncTip:message:']){
+    retained.push(prefix+pending.id);
+    removed.push(prefix+expired.id,prefix+'absent',prefix+pending.id+':extra',prefix.toUpperCase()+pending.id);
+  }
+  const unrelated='custom:communicationTip:message:absent';retained.push(unrelated);
+  for(const key of [...retained,...removed])store.setSetting(key,{present:true});
+  store.maintain({historyMaxAgeMs:1},Date.now()+2000);
+  for(const key of retained)assert.deepEqual(store.setting(key),{present:true},key);
+  for(const key of removed)assert.equal(store.setting(key),undefined,key);
+});
+
 test('归档空配对和长期离线死会话被回收，当前配对与活进程保留',t=>{
   const temp=temporaryDirectory(),home=temp.directory,filename=path.join(home,'history.db'),store=new Store(filename);t.after(async()=>{store.close();await temp.cleanup();});
-  const c=store.register(registration('agy','c')),x=store.register(registration('codex','x'));store.pair(c.id,x.id);store.unpair();
+  const c=store.register(registration('agy','c')),x=store.register(registration('codex','x')),archived=store.pair(c.id,x.id);store.unpair();
   store.deactivate(c.id);store.updatePeer(c.id,{state:'offline'});
   const live=store.register(registration('agy','live')),current=store.pair(live.id,x.id);
   const dead=store.register(registration('codex','dead'));store.deactivate(dead.id);store.updatePeer(dead.id,{state:'offline'});
+  store.setSetting('codexFinalForward:'+dead.id,{final:'应随死会话清理的最终回复'});
+  store.setSetting('codexFinalForwardStreak:'+archived.id,{used:2});store.setSetting('codexFinalForwardStreak:'+current.id,{used:1});
   store.setSetting('windowRecoveryPending',{[dead.id]:{peerId:dead.id},[live.id]:{peerId:live.id}});
   store.setSetting('managedSessionConflict:'+live.id,{memberId:dead.id});store.setSetting('managedSessionConflict:'+dead.id,{memberId:c.id});
   const later=Date.now()+2000;store.maintain({historyMaxAgeMs:1000,peerMaxIdleMs:1000},later);
   assert.equal(store.currentPair()?.id,current.id);assert.equal(store.peer(live.id).id,live.id);assert.equal(store.peer(x.id).id,x.id);
   assert.throws(()=>store.peer(dead.id),/不存在/);assert.throws(()=>store.peer(c.id),/不存在/);
+  assert.equal(store.setting('codexFinalForward:'+dead.id),undefined);assert.equal(store.setting('codexFinalForwardStreak:'+archived.id),undefined);
+  assert.equal(store.setting('codexFinalForwardStreak:'+current.id),undefined,'旧转发账本即使仍配对也应删除');
   assert.deepEqual(store.setting('windowRecoveryPending'),{[live.id]:{peerId:live.id}});assert.equal(store.setting('managedSessionConflict:'+live.id),undefined);assert.equal(store.setting('managedSessionConflict:'+dead.id),undefined);
 });
 

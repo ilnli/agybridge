@@ -35,7 +35,7 @@ import { Questions } from '../integration/mcp/questions.js';
 import { fileHintFields } from './delivery/file-references.js';
 import { References } from './delivery/references.js';
 import { runtimeProfile } from './profiles/runtime-profile.js';
-import { type PartnerProfiles, modelProfileSchema, hasProfile } from './profiles/partner-profile.js';
+import { type PartnerProfiles, modelProfileSchema, codexProfileSchema, hasProfile } from './profiles/partner-profile.js';
 import { PartnerProfileCoordination } from './profiles/coordination.js';
 import { frozenProfileStatus, profileDefaults, syncFrozenProfiles } from './profiles/frozen-profile.js';
 import { modelError, modelPeerName, modelStatus, referenceDeny } from '../integration/mcp/model-output.js';
@@ -340,7 +340,7 @@ export class Broker {
       if(p&&['busy','needsHuman'].includes(state))return this.observeActiveCodex(this.store.peer(p.id),newActivity);
     });
     on(adapters.codex,'permission',(id:string,permission:Peer['permission'],address?:string)=>{const p=this.runtimePeer(id,address);if(p&&this.enabled(p.id))this.store.updatePeer(p.id,{permission});});
-    on(adapters.codex,'profile',(id:string,input:RegisterInput,address?:string)=>{const p=this.runtimePeer(id,address);if(p&&this.enabled(p.id)){const profile=runtimeProfile(p,input);this.profiles.observed(this.store.updatePeer(p.id,{model:profile.model,effort:profile.effort}),input);}});
+    on(adapters.codex,'profile',(id:string,input:RegisterInput,address?:string)=>{const p=this.runtimePeer(id,address);if(p&&this.enabled(p.id)){const profile=runtimeProfile(p,input);this.profiles.observed(this.store.updatePeer(p.id,{model:profile.model,effort:profile.effort,...(profile.serviceTier===undefined?{}:{serviceTier:profile.serviceTier})}),input);}});
     on(adapters.codex,'interrupted',(id:string,address?:string,turnId?:string)=>{const p=this.runtimePeer(id,address);if(p&&this.enabled(p.id)&&!this.recoveredCodexInterrupt(p,turnId)){this.questions.cancelPeer(p.id);this.store.updatePeer(p.id,{state:'paused'});}});
     on(adapters.codex,'turnStarted',(id:string,address?:string)=>{const p=this.runtimePeer(id,address);if(p&&this.enabled(p.id)&&(p.state!=='paused'||p.kind==='subagent'))this.store.updatePeer(p.id,{state:'busy'});});
     on(adapters.codex,'runtimeStopped',(runtime:Endpoint)=>this.retireCodexRuntime(runtime));
@@ -1041,7 +1041,7 @@ export class Broker {
   }
   private syncPartnerProfile(id:string):Promise<void>{return this.profileCoordination.synchronize(id);}
   private async partnerProfile(raw:unknown):Promise<unknown>{
-    const p=targetSchema.extend({host:host.optional(),action:z.enum(['get','set','reset']).default('get'),...modelProfileSchema.shape}).parse(raw);
+    const p=targetSchema.extend({host:host.optional(),action:z.enum(['get','set','reset']).default('get'),...codexProfileSchema.shape}).parse(raw);
     if(p.actor){const caller=this.actor(p.actor);if(!['root','fork'].includes(caller.kind)||p.actor.via)throw new BridgeError('subagent_denied','只有主会话能修改搭档的模型和推理强度。');if(p.host&&p.host===caller.host)throw new BridgeError('invalid_target','这里只能修改你的搭档的模型和推理强度，不能改自己的。');}
     const pair=this.targetPair(p),targetHost=p.actor?otherHost(p.actor.host):p.host;
     if(!targetHost)throw new BridgeError('invalid_arguments','在终端里要指明改哪一方：agybridge partner-profile codex 或 agybridge partner-profile agy。');
@@ -1275,7 +1275,7 @@ export class Broker {
     const capability={identityIssues:this.store.faults.map('status_identity',ids,id=>id,peerId=>{const issue=this.store.setting('codexIdentity:'+peerId);return issue?[{peerId,...issue as object}]:[];}).flat(),pluginCaches:installedCacheStatus(this.home),processProbes:processProbeStatus(),processAncestry:processAncestryStatus(),...(this.resources?{resources:this.resources.snapshot()}:{}),integrationIssues:this.store.faults.map('status_integration',ids,id=>id,peerId=>this.runtimeHealth.integrationIssues(peerId,true)).flat()};
     Object.assign(capability,{retirements:actor?retirements.filter(value=>ids.includes(value.peerId)):retirements,incidents:this.runtimeHealth.incidentViews(ids),notes:this.runtimeHealth.incidentNotes(ids),rpc:this.adapters.codex.rpcMetrics?.(),degraded:this.store.faults.status().filter(value=>value.degraded).map(value=>actor?{stage:value.stage.split(':')[0],count:value.count,retryAt:value.retryAt}:value),outageLedger:brokerOutageDiagnostic(this.home)});
     Object.assign(capability,{hookTimings:ids.flatMap(id=>{const timing=this.pairAnomalies.hookTimings(this.store.peer(id));return timing?[timing]:[];})});
-    const frozen=frozenProfileStatus(this.home,this.config);Object.assign(capability,{configurationReload:this.configurationReload.status,frozen_profiles:frozen.profiles,...(frozen.warnings.length?{profile_warnings:frozen.warnings}:{})});
+    const frozen=frozenProfileStatus(this.home,this.config),profileWarnings=[...this.config.profileWarnings??[],...frozen.warnings,...this.profiles.warnings()];Object.assign(capability,{configurationReload:this.configurationReload.status,frozen_profiles:frozen.profiles,...(profileWarnings.length?{profile_warnings:profileWarnings}:{})});
     const artifactPaths=(p:Peer,endpoint:Endpoint|undefined)=>{
       if(p.host!=='agy')return {};
       const directory=endpoint?.nativeSession?.artifactsDir||(p.sessionId&&agyArtifactsDir(endpoint?.configHome??this.config.agyHome??agyHome(),p.sessionId));
@@ -1976,7 +1976,7 @@ export class Broker {
         if(target.host==='agy'&&this.hasAgyWaiter(target.id))queueMicrotask(()=>void this.wakeAgyWaiter(target.id));
         queueMicrotask(()=>void this.pump());return value;
       }
-      case'question.get':case'question.wait':case'question.cancel':{const p=z.object({actor:actorSchema,request_id:text,form_lease:text.optional()}).parse(raw),peer=method==='question.cancel'?this.partnerActor(p.actor):this.actor(p.actor);return method==='question.wait'?this.questions.wait(peer,p.request_id):method==='question.cancel'?this.questions.cancel(peer,p.request_id,p.form_lease):this.questions.view(peer,p.request_id);}
+      case'question.get':case'question.wait':case'question.cancel':{const p=z.object({actor:actorSchema,request_id:text,form_lease:text.optional(),handoff:z.literal(1).optional()}).parse(raw),peer=method==='question.cancel'?this.partnerActor(p.actor):this.actor(p.actor);return method==='question.wait'?this.questions.wait(peer,p.request_id,p.handoff===1):method==='question.cancel'?this.questions.cancel(peer,p.request_id,p.form_lease):this.questions.view(peer,p.request_id);}
       case'question.cancel_turn':{const p=z.object({actor:actorSchema,turn_id:z.string().optional()}).parse(raw),peer=this.partnerActor(p.actor);for(const q of this.store.questions(true))if((q.from===peer.id&&(!p.turn_id||q.turnId===p.turn_id))||(q.to===peer.id&&q.status==='awaiting_user'))this.questions.cancel(peer,q.id);return{cancelled:true};}
       case'question.answer':case'question.answer_user':{const p=z.object({actor:actorSchema,input:z.unknown(),form_lease:text.optional()}).parse(raw);const value=this.questions.answer(this.partnerActor(p.actor),p.actor,p.input,method==='question.answer_user',p.form_lease);queueMicrotask(()=>void this.pump());return value;}
       case'send':return this.runtimeHealth.trackHealth(this.sendWithHealth(z.object({actor:actorSchema,message:text,in_reply_to:z.string().optional(),auto_reply_to:z.string().optional(),auto_reply_text:z.string().optional(),reply_expected:z.boolean().optional()}).parse(raw)));
@@ -2171,12 +2171,12 @@ export class Broker {
       default:throw new BridgeError('unknown_method',`不支持的操作：${method}`);
     }
   }
-  private peerState(p:{actor:Actor;state:PeerState;model?:string|null;effort?:string|number|null}):Peer{
+  private peerState(p:{actor:Actor;state:PeerState;model?:string|null;effort?:string|number|null;serviceTier?:string|null}):Peer{
     const peer=this.actor(p.actor);
     if(p.actor.sessionId!==peer.sessionId)throw new BridgeError('subagent_denied','子代理不能改写根会话状态。');
     if(p.state==='offline'||p.state==='paused'){this.questions.cancelPeer(peer.id);this.cancelAgyWaiter(peer.id,'state_'+p.state);}
     if(p.state==='offline'){this.configuration.cancel(p.actor);this.store.deactivate(peer.id);}
-    const profile=runtimeProfile(peer,p),updated=this.store.updatePeer(peer.id,{state:peer.state==='paused'&&p.state!=='offline'?'paused':p.state,model:profile.model,effort:profile.effort});this.profiles.observed(updated,p);return updated;
+    const profile=runtimeProfile(peer,p),updated=this.store.updatePeer(peer.id,{state:peer.state==='paused'&&p.state!=='offline'?'paused':p.state,model:profile.model,effort:profile.effort,...(profile.serviceTier===undefined?{}:{serviceTier:profile.serviceTier})});this.profiles.observed(updated,p);return updated;
   }
   private changePair<T>(work:()=>Promise<T>,scope='admin',members:string[]=[]):Promise<T>{
     if(this.stopped)return Promise.reject(new BridgeError('stopping','协调器正在关闭，未切换配对。'));
