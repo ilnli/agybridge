@@ -7,7 +7,7 @@ export function requireCodexVersion(reported:string):void{
   if(!compatibility.version||compatibility.status==='older-than-tested')throw new BridgeError('codex_version',`需要 Codex ${MIN_CODEX_VERSION} 或更高版本，当前为 ${reported}。请先升级 Codex；未执行安装或更新。`);
 }
 
-export const TESTED_VERSIONS:Record<Host,string[]>={codex:['0.164.0','0.166.0','0.171.0','0.172.0'],agy:['1.5.14','1.5.17']};
+export const TESTED_VERSIONS:Record<Host,string[]>={codex:['0.164.0','0.166.0','0.171.0','0.172.0'],agy:['1.5.14','1.5.17','1.5.18']};
 
 export function versionCompatibility(host:Host,reported:string){
   const version=(host==='codex'?/codex-cli\s+(\d+\.\d+\.\d+)/:/(\d+\.\d+\.\d+)/).exec(reported)?.[1];

@@ -2224,10 +2224,14 @@ export class Broker {
     if(event==='SessionStart'||event==='PreInvocation'){
       const key='agyCompaction:'+peer.id,compaction=transcript?.compaction;
       const unseen=compaction&&this.store.setting<string>(key)!==compaction.id?compaction:undefined;
-      if((event==='SessionStart'||unseen)&&(this.store.pairFor(peer.id)||pairLoss(this.store,peer))){
+      const epochKey='agyRecoveryEpoch:'+peer.id,currentEpoch=actor.binding?.epoch;
+      const resumed=event==='PreInvocation'&&!isWaiterWake&&currentEpoch&&
+        this.store.setting<string>(epochKey)!==currentEpoch&&this.store.bindings.lineage(peer.id).length>1;
+      if((event==='SessionStart'||resumed||unseen)&&(this.store.pairFor(peer.id)||pairLoss(this.store,peer))){
         const recovery=this.recovery.facts(actor,unseen?{includeMessages:true,messageIds:unseen.compactedMessageIds}:{includeMessages:false});
         if(recovery?.text){
           contexts.push(recovery.text);
+          if(currentEpoch&&(event==='SessionStart'||resumed))this.store.setSetting(epochKey,currentEpoch);
           if(unseen)this.store.setSetting(key,unseen.id);
         }
       }
@@ -2265,7 +2269,7 @@ export class Broker {
     const actor:Actor=p.actor?actorSchema.parse(p.actor):{host:rawHost,sessionId:id,callId:randomUUID()};
     if(!actor.memberId&&!actor.binding&&typeof p.context_key==='string'){
       const key=p.context_key,candidates=this.store.peers().filter(peer=>peer.host===actor.host&&peer.sessionId===id&&this.store.endpoints(peer.id).some(endpoint=>{
-        const native=endpoint.native??endpoint;return endpoint.active&&!!native.pid&&!!native.procStart&&hookContextMatches(key,id,{pid:native.pid,procStart:native.procStart});
+        const native=endpoint.native??endpoint;return endpoint.active&&!!native.pid&&!!native.procStart&&hookContextMatches(key,id,{host:peer.host,pid:native.pid,procStart:native.procStart});
       }));
       if(candidates.length>1)throw new BridgeError('ambiguous_context','同一原生代次对应多个活动会话，hook 未执行。');
       if(candidates.length===1)actor.memberId=candidates[0]!.id;
@@ -2281,7 +2285,7 @@ export class Broker {
       if(this.store.setting(key)===undefined){
         const binding=this.store.bindings.validate(actor);let native:{pid:number|null;procStart:string|null}|undefined=binding;
         if(!native&&!this.store.bindings.current(peer.id))try{const endpoint=this.store.endpoint(peer.id);if(endpoint?.active)native=endpoint.native??endpoint;}catch(error){if((error as {code?:string}).code!=='ambiguous_endpoint')throw error;this.store.warnHookContext(p.context_key,id,event,'ambiguous_endpoint',peer.id);}
-        if(native?.pid&&native.procStart&&hookContextMatches(p.context_key,id,{pid:native.pid,procStart:native.procStart})){
+        if(native?.pid&&native.procStart&&hookContextMatches(p.context_key,id,{host:peer.host,pid:native.pid,procStart:native.procStart})){
           this.store.transaction(()=>{this.store.setSetting(key,id);this.store.event('hook.context.recovered',{peerId:peer.id,sessionId:id,event});});
         }
       }

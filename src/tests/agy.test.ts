@@ -12,6 +12,7 @@ import { AgyAdapter } from '../hosts/agy/adapter.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 import { AGY_WAKE_NOTICE, type Peer, type BridgeConfig } from '../types.js';
 import { hook as runHook } from '../integration/hooks/hook-control.js';
+import { hookContextMatches } from '../integration/hooks/session-bindings.js';
 
 const FAKE_ACP_SCRIPT = `
 import { createInterface } from 'node:readline';
@@ -662,4 +663,41 @@ test('恢复原 AGY 会话时提供已丢失配对的原因和原配对标识',a
   assert.match(text,/identity_mismatch/);
   assert.ok(text.includes(f.pair.id));
   assert.doesNotMatch(text,/partner recovery digest/);
+});
+
+test('AGY 重启跳过 SessionStart 时按进程代次恢复一次配对事实',async t=>{
+  const f=foregroundPair(t);
+  const proc={host:'agy' as const,configHome:f.store.endpoint(f.a.id)!.configHome!,pid:5000};
+  const activate=(procStart:string)=>f.store.bindings.activate({...proc,procStart},f.a.id,'c','resume');
+  const facts=async(event:string,binding:ReturnType<typeof activate>)=>{
+    const result=await f.hook(event,{actor:{...f.actor,binding:{key:binding.key,epoch:binding.epoch}}});
+    return result.injectSteps?.map(step=>step.systemMessage.systemMessage).filter(text=>text.includes('agybridge recovery facts rev'))??[];
+  };
+  const first=activate('first');
+  assert.deepEqual(await facts('PreInvocation',first),[]);
+  const resumed=activate('second');
+  f.store.accept(f.pair,f.x,'已通过等待器投递的正文','wake-reply');
+  const wake=await f.broker.dispatch('agy.wait',{actor:{...f.actor,binding:{key:resumed.key,epoch:resumed.epoch}},timeout_ms:5000}) as {status:string};
+  assert.equal(wake.status,'received');
+  assert.deepEqual(await facts('PreInvocation',resumed),[]);
+  const restored=await facts('PreInvocation',resumed);
+  assert.equal(restored.length,1);
+  assert.ok(restored[0]!.includes(f.pair.id)&&restored[0]!.includes(resumed.epoch));
+  assert.doesNotMatch(restored[0]!,/partner recovery digest|已通过等待器投递的正文/);
+  assert.deepEqual(await facts('PreInvocation',resumed),[]);
+  const restarted=activate('third');
+  assert.equal((await facts('SessionStart',restarted)).length,1);
+  assert.deepEqual(await facts('PreInvocation',restarted),[]);
+});
+
+test('AGY 转录路径按会话目录、文件名及原生进程代次匹配',()=>{
+  const native={host:'agy' as const,pid:321,procStart:'start'};
+  const key='321:start:/profile/brain/conv-1/.system_generated/logs/transcript.jsonl';
+  assert.equal(hookContextMatches(key,'conv-1',native),true);
+  assert.equal(hookContextMatches(String.raw`321:start:C:\profile\brain\conv-1\.system_generated\logs\transcript_full.jsonl`,'conv-1',native),true);
+  assert.equal(hookContextMatches(key,'conv',native),false);
+  assert.equal(hookContextMatches(key.replace('transcript.jsonl','other.jsonl'),'conv-1',native),false);
+  assert.equal(hookContextMatches(key,'conv-1',{...native,procStart:'old'}),false);
+  const codex={...native,host:'codex' as const};
+  assert.equal(hookContextMatches(key,'conv-1',codex),false);
 });

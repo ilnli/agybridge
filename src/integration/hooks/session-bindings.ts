@@ -18,9 +18,10 @@ export function windowKey(identity: WindowIdentity): string {
 }
 
                                           
-export function hookContextMatches(key:string,sessionId:string,native:{pid:number;procStart:string}):boolean{
+export function hookContextMatches(key:string,sessionId:string,native:Pick<WindowIdentity,'host'|'pid'|'procStart'>):boolean{
   const prefix=native.pid+':'+native.procStart+':';if(!key.startsWith(prefix))return false;
-  const transcript=key.slice(prefix.length),name=path.posix.basename(transcript.replaceAll('\\','/'));
+  const transcript=key.slice(prefix.length),normalized=path.posix.normalize(transcript.replaceAll('\\','/')),name=path.posix.basename(normalized);
+  if(native.host==='agy'&&(name==='transcript.jsonl'||name==='transcript_full.jsonl')&&normalized.includes('/brain/'+sessionId+'/'))return true;
   return transcript===sessionId||name===sessionId+'.jsonl'||name.startsWith('rollout-')&&name.endsWith('-'+sessionId+'.jsonl');
 }
 
