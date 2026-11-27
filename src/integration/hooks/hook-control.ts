@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { brokerCall as callBroker } from '../../ipc/ipc.js';
-import { agyHookRegistration } from '../../hosts/agy/identity.js';
+import { agyHookRegistration, agyInputSubagentLineage } from '../../hosts/agy/identity.js';
 import { inspectAgyTranscript } from '../../hosts/agy/agy-transcript.js';
 import { agyProcessIdentity, codexProcessIdentity } from '../../process/process.js';
 import { codexAgentPath } from '../../hosts/codex/adapter.js';
@@ -69,29 +69,35 @@ export async function hook(host:Host,input:any,provided:(ack:()=>Promise<void>)=
     const contextKey=`${runtime.pid}:${runtime.procStart}:${input.transcriptPath??sessionId}`;
     const registrationStartedAt=performance.now();
     let actor:Actor|undefined;
+    let isSubagent=Boolean(sessionId&&agyInputSubagentLineage(input,sessionId));
     try{
       if(['SessionStart','PreInvocation'].includes(event)&&sessionId){
         const registration=agyHookRegistration(input,runtime,configHome);
         registration.hookContextKey=contextKey;
-        registration.contextStart=event==='SessionStart';
+        registration.contextStart=event==='SessionStart'&&registration.kind!=='subagent';
         registration.contextReason='unknown';
         registration.boundaryStartedAt=startedAt;
-        const registered=await brokerCall<{id?:string;binding?:Actor['binding']}>('mcp.register',registration,{start:event==='SessionStart'||event==='PreInvocation',timeout:event==='SessionStart'?8000:4000});
-        actor={host:'agy',sessionId,callId:randomUUID(),...(registered.id?{memberId:registered.id}:{}),...(registered.binding?{binding:registered.binding}:{})};
+        const registered=await brokerCall<{id?:string;kind?:string;binding?:Actor['binding']}>('mcp.register',registration,{start:event==='SessionStart'||event==='PreInvocation',timeout:event==='SessionStart'?8000:4000});
+        if(registered.kind==='subagent'){
+          isSubagent=true;
+          actor={host:'agy',sessionId,callId:randomUUID(),via:sessionId,...(registered.id?{memberId:registered.id}:{})};
+        }else{
+          actor={host:'agy',sessionId,callId:randomUUID(),...(registered.id?{memberId:registered.id}:{}),...(registered.binding?{binding:registered.binding}:{})};
+        }
       }
     }catch(error){
       process.stderr.write('agybridge AGY hook 登记：'+describeError(error)+'\n');
       if(!['ENOENT','ECONNREFUSED','EPIPE','disconnected','broker_timeout','timeout','starting','unverified_parent'].includes((error as {code?:string}).code??''))throw error;
     }
-    if(!actor&&sessionId){
+    if(!isSubagent&&(!actor||!actor.binding)&&sessionId){
       try{
         const current=await brokerCall<{binding?:Actor['binding']}>('context.lookup',{host:'agy',configHome,pid:runtime.pid,procStart:runtime.procStart,session_id:sessionId,boundary_started_at:startedAt},{start:false,timeout:2000});
-        if(current.binding)actor={host:'agy',sessionId,callId:randomUUID(),binding:current.binding};
+        if(current.binding)actor=actor?{...actor,binding:current.binding}:{host:'agy',sessionId,callId:randomUUID(),binding:current.binding};
       }catch(error){
         if(!['ENOENT','ECONNREFUSED','EPIPE','disconnected','broker_timeout','timeout','starting'].includes((error as {code?:string}).code??''))throw error;
       }
     }
-    if(control){
+    if(control&&!isSubagent){
       const resolvedActor=actor??{host:'agy',sessionId,callId:randomUUID()};
       if(control[1]==='status'){
         const text=formatStatus(await brokerCall('status',{actor:resolvedActor},{timeout:8000}))||'当前无状态信息。';
@@ -107,17 +113,17 @@ export async function hook(host:Host,input:any,provided:(ack:()=>Promise<void>)=
       hook_event_name:event,
       session_id:sessionId,
       context_key:contextKey,
-      ...(actor?{actor}:{}),
+      ...(actor?{actor}:isSubagent?{actor:{host:'agy',sessionId,callId:randomUUID(),via:sessionId}}:{}),
     };
     const registrationMs=performance.now()-registrationStartedAt;
-    if((event==='PreInvocation'||event==='PostToolUse')&&typeof input.transcriptPath==='string'&&input.transcriptPath){
+    if(!isSubagent&&(event==='PreInvocation'||event==='PostToolUse')&&typeof input.transcriptPath==='string'&&input.transcriptPath){
       try{
         const snapshot=await inspectAgyTranscript(input.transcriptPath,remainingTime(deadline,2000));
         if(snapshot.compaction||snapshot.usage||snapshot.subagents?.length)payload.agy_transcript=snapshot;
       }catch(error){process.stderr.write('agybridge AGY 转录读取：'+describeError(error)+'\n');}
     }
     payload.agybridge_timing={identityMs,registrationMs,elapsedBeforeBrokerMs:execution.elapsedMs===undefined?performance.now():execution.elapsedMs+identityMs+performance.now()-began};
-    const monitor=['SessionStart','PreInvocation'].includes(event);
+    const monitor=!isSubagent&&['SessionStart','PreInvocation'].includes(event);
     let result:any,notices:RuntimeNotice[]=[];
     try{
       result=await brokerCall('hook',payload,{timeout:4000,start:event==='SessionStart'||event==='PreInvocation'});

@@ -28,7 +28,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "mcp_agybridge_codex_.*",
+        "matcher": "mcp_agybridge_codex_.*|invoke_subagent|run_workflow",
         "hooks": [
           {
             "type": "command",

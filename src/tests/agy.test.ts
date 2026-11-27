@@ -1,13 +1,13 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { AcpClient } from '../hosts/agy/acp-client.js';
 import { fixture } from './support/broker-fixture.js';
-import { temporaryDirectory } from './support/temporary.js';
-import { agyArtifactsDir, agyMcpIdentity, agyHookRegistration, agyTranscriptPath } from '../hosts/agy/identity.js';
+import { temporary, temporaryDirectory } from './support/temporary.js';
+import { agyArtifactsDir, agyMcpIdentity, agyHookRegistration, agyTranscriptPath, detectAgySubagentLineage } from '../hosts/agy/identity.js';
 import { AgyAdapter } from '../hosts/agy/adapter.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 import { AGY_WAKE_NOTICE, type Peer, type BridgeConfig } from '../types.js';
@@ -207,6 +207,13 @@ test('agyMcpIdentity 与 agyHookRegistration 准确解析根会话、子代理�
   );
   assert.equal(resumedHookReg.cwd, '/proj/new');
   assert.equal(resumedHookReg.endpoint.nativeSession?.artifactsDir, agyArtifactsDir('/home/u/.gemini','conv-hook'));
+  const subHookReg = agyHookRegistration(
+    { conversationId: 'conv-child', parentConversationId: 'conv-hook', agentName: 'research' },
+    { pid: 9999, procStart: 'start-hook' },
+    '/home/u/.gemini',
+  );
+  assert.equal(subHookReg.kind, 'subagent');
+  assert.equal(subHookReg.parentId, 'conv-hook');
   assert.throws(() => agyHookRegistration({}, { pid: 1, procStart: 's' }), { code: 'unverified_identity' });
 });
 
@@ -803,4 +810,94 @@ test('AGY 原生发信和工作流展开引用，保留脚本和字面量并拒�
       assert.equal(result.decision,'deny');assert.match(result.reason!,/nxref/);
     }
   }
+});
+
+test('AGY 同进程子代理触发 SessionStart/PreInvocation/Stop 时不抢占根窗口绑定，不泄漏恢复事实且不导致根发信 stale_context',async t=>{
+  const f=foregroundPair(t),ep=f.store.endpoint(f.a.id)!,home=ep.configHome!;
+  const runtime={pid:ep.pid!,procStart:ep.procStart!,acp:false};
+  const callBroker=async <T>(method:string,params?:unknown)=>await f.broker.dispatch(method,params) as T;
+  const execHook=(conversationId:string,hookEventName:string,extra:Record<string,unknown>={})=>runHook(
+    'agy',
+    {conversationId,hookEventName,...extra},
+    ()=>{},
+    {home,agy:{configHome:home,identity:runtime},call:callBroker},
+  ) as Promise<any>;
+
+  // 1. Register and bind root conversation 'c' on foreground window
+  const rootStart=await execHook('c','SessionStart');
+  assert.ok(Array.isArray(rootStart.injectSteps));
+  const initialBinding=f.store.bindings.current(f.a.id)!;
+  assert.equal(initialBinding.sessionId,'c');
+
+  // 2. Scenario A: Subagent discovered via parent .system_generated/subagents/<id>.json (real InvokeSubagent order)
+  const subA='sub-hub-86950829';
+  const hubDir=path.join(agyArtifactsDir(home,'c'),'.system_generated','subagents');
+  mkdirSync(hubDir,{recursive:true});
+  writeFileSync(path.join(hubDir,`${subA}.json`),JSON.stringify({conversationId:subA,state:'SUBAGENT_STATE_ALIVE'}));
+
+  assert.deepEqual(await execHook(subA,'SessionStart'),{});
+  assert.deepEqual(await execHook(subA,'PreInvocation'),{});
+  assert.deepEqual(await execHook(subA,'PreToolUse',{toolCall:{id:'st-1',name:'invoke_subagent',args:{Prompt:'nested research'}}}),{decision:'allow'});
+  const subDeniedRef=await execHook(subA,'PreToolUse',{toolCall:{id:'st-2',name:'invoke_subagent',args:{Prompt:'nxref:agent:missing'}}});
+  assert.equal(subDeniedRef.decision,'deny');
+  assert.deepEqual(await execHook(subA,'Stop',{terminationReason:'USER_CANCELED'}),{});
+
+  const subPeerA=f.store.find('agy',subA)!;
+  assert.equal(subPeerA.kind,'subagent');
+  assert.equal(subPeerA.parentId,'c');
+  assert.equal(subPeerA.rootPeerId,f.a.id);
+  assert.equal(f.store.peer(f.a.id).sessionId,'c');
+  assert.equal(f.store.peer(f.a.id).state,'ready');
+  assert.equal(f.store.bindings.current(f.a.id)?.epoch,initialBinding.epoch);
+
+  // 3. Scenario B: Pure in-flight PreToolUse(invoke_subagent) without disk files (e.g. workflow/synthetic spawn)
+  const subB='991195eb-a7ca-4bd1-a023-950d0460330e';
+  assert.deepEqual(await execHook('c','PreToolUse',{toolCall:{id:'root-inv-1',name:'invoke_subagent',args:{Prompt:'scan codebase'}}}),{decision:'allow'});
+  assert.deepEqual(await execHook(subB,'SessionStart'),{});
+  assert.deepEqual(await execHook(subB,'Stop',{terminationReason:'NO_TOOL_CALL'}),{});
+  const rootTranscript=path.join(agyArtifactsDir(home,'c'),'.system_generated','logs','transcript.jsonl');
+  mkdirSync(path.dirname(rootTranscript),{recursive:true});
+  writeFileSync(rootTranscript,subagentReport(subB,'子代理扫描完成：共 3 处改动点。'));
+  assert.deepEqual(await execHook('c','PostToolUse',{transcriptPath:rootTranscript,toolCall:{id:'root-inv-1',name:'invoke_subagent'}}),{});
+
+  const subPeerB=f.store.find('agy',subB)!;
+  assert.equal(subPeerB.kind,'subagent');
+  assert.equal(subPeerB.parentId,'c');
+  assert.equal(f.store.bindings.current(f.a.id)?.sessionId,'c');
+  assert.equal(f.store.bindings.current(f.a.id)?.epoch,initialBinding.epoch);
+
+  // 4. Root conversation immediately sends message referencing nxref:agent:<subB> + parks wait_partner -> NO stale_context!
+  const rootActor={host:'agy' as const,sessionId:'c',callId:'after-sub-send',binding:{key:initialBinding.key,epoch:initialBinding.epoch}};
+  const sent=await f.broker.dispatch('send',{actor:rootActor,message:`结果：nxref:agent:${subB}`,reply_expected:true}) as {message_id:string};
+  assert.ok(sent.message_id);
+  const codexReceived=f.broker.receive({host:'codex',sessionId:'x',callId:'rx-after-sub'}) as {messages:{message:string}[]};
+  assert.match(codexReceived.messages[0]!.message,/子代理扫描完成：共 3 处改动点。/);
+});
+
+test('detectAgySubagentLineage 识别转录头部与 conversation_summaries.db 并区分真实用户根会话',async t=>{
+  const home=temporary(t),appData=path.join(home,'antigravity-cli');
+  mkdirSync(appData,{recursive:true});
+
+  // 1. Transcript starting with USER_EXPLICIT -> confirmed root
+  const rootLogs=path.join(appData,'brain','root-1','.system_generated','logs');
+  mkdirSync(rootLogs,{recursive:true});
+  writeFileSync(path.join(rootLogs,'transcript.jsonl'),JSON.stringify({step_index:0,source:'USER_EXPLICIT',type:'USER_INPUT',content:'hello'})+'\n');
+  assert.deepEqual(detectAgySubagentLineage({conversationId:'root-1',configHome:home}),{isSubagent:false});
+
+  // 2. Transcript starting with SYSTEM [Message] sender=<parent> -> confirmed subagent
+  const childLogs=path.join(appData,'brain','child-1','.system_generated','logs');
+  mkdirSync(childLogs,{recursive:true});
+  writeFileSync(path.join(childLogs,'transcript.jsonl'),subagentReport('root-1','请扫描文件'));
+  assert.deepEqual(detectAgySubagentLineage({conversationId:'child-1',configHome:home}),{isSubagent:true,parentId:'root-1'});
+
+  // 3. conversation_summaries.db fallback (before transcript exists at SessionStart)
+  const {DatabaseSync}=await import('node:sqlite');
+  const db=new DatabaseSync(path.join(appData,'conversation_summaries.db'));
+  db.exec('CREATE TABLE conversation_summaries (conversation_id TEXT PRIMARY KEY, agent_name TEXT NOT NULL DEFAULT "", parent_conversation_id TEXT NOT NULL DEFAULT "", nesting_depth INTEGER NOT NULL DEFAULT 0)');
+  db.prepare('INSERT INTO conversation_summaries VALUES (?,?,?,?)').run('child-db','research','root-1',1);
+  db.prepare('INSERT INTO conversation_summaries VALUES (?,?,?,?)').run('root-db','','',0);
+  db.close();
+
+  assert.deepEqual(detectAgySubagentLineage({conversationId:'child-db',configHome:home}),{isSubagent:true,parentId:'root-1'});
+  assert.deepEqual(detectAgySubagentLineage({conversationId:'root-db',configHome:home}),{isSubagent:false});
 });

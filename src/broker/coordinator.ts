@@ -18,7 +18,7 @@ import { CodexAdapter, codexContextReceipts, type CodexContextReceipt, type Code
 import { readCodexHistory, type HistoryCheckpoint } from '../hosts/codex/codex-history.js';
 import { AgyAdapter } from '../hosts/agy/adapter.js';
 import { agyToolReferenceDecision } from '../integration/hooks/agy-tool-references.js';
-import { agyArtifactsDir, mergeAgyNativeSession } from '../hosts/agy/identity.js';
+import { agyArtifactsDir, detectAgySubagentLineage, mergeAgyNativeSession, type AgyCandidateParent } from '../hosts/agy/identity.js';
 import { agyHome } from '../shared/local-paths.js';
 import { liveProcess, processIdentity, probeProcesses, codexIsAppServer, processProbeStatus, processAncestryStatus, codexProcessIdentity, agyProcessIdentity } from '../process/process.js';
 import { BridgeError, DeliveryError, describeError } from '../shared/errors.js';
@@ -160,6 +160,7 @@ export class Broker {
   private codexDirect:CodexDirectDelivery;
   private agyWaiters=new Map<string,AgyWaiter>();
   private agyRecentWake=new Map<string,number>();
+  private agySubagentSpawns=new Map<string,Map<string,number>>();
   private lastReconcile=0;
   private lastMaintenance=0;
   private recordMaintenance?:Promise<void>;
@@ -374,6 +375,64 @@ export class Broker {
   private agyRuntimePeer(sessionId:string):Peer|undefined{
     const matches=this.store.peers().filter(p=>p.host==='agy'&&p.sessionId===sessionId&&this.store.endpoints(p.id).some(e=>e.mode==='agy-acp'));
     return matches.length===1?matches[0]:this.store.find('agy',sessionId);
+  }
+
+  private markAgySubagentSpawn(peerId:string,toolId?:string):void{
+    const now=Date.now(),existing=this.agySubagentSpawns.get(peerId)??new Map<string,number>();
+    for(const [key,expiresAt] of existing)if(expiresAt<=now)existing.delete(key);
+    existing.set(toolId??'__anon__',now+600_000);
+    this.agySubagentSpawns.set(peerId,existing);
+  }
+
+  private clearAgySubagentSpawn(peerId:string,toolId?:string):void{
+    if(!toolId){this.agySubagentSpawns.delete(peerId);return;}
+    const existing=this.agySubagentSpawns.get(peerId);
+    if(!existing)return;
+    existing.delete(toolId);
+    existing.delete('__anon__');
+    if(!existing.size)this.agySubagentSpawns.delete(peerId);
+  }
+
+  private hasActiveAgySubagentSpawn(peerId:string):boolean{
+    const existing=this.agySubagentSpawns.get(peerId);
+    if(!existing)return false;
+    const now=Date.now();
+    for(const [key,expiresAt] of existing)if(expiresAt<=now)existing.delete(key);
+    if(!existing.size){this.agySubagentSpawns.delete(peerId);return false;}
+    return true;
+  }
+
+  private resolveAgySubagentRegistration(input:RegisterInput):{parentId?:string}|undefined{
+    const sameSession=this.store.peers().filter(peer=>peer.host==='agy'&&peer.sessionId===input.sessionId);
+    const existingChild=sameSession.find(peer=>peer.kind==='subagent');
+    if(existingChild)return{parentId:existingChild.parentId??input.parentId};
+    const probeWindow=registrationWindow({...input,kind:'root'}),bound=probeWindow?this.store.bindings.get(windowKey(probeWindow)):undefined;
+    if(input.kind!=='subagent'&&bound?.active&&bound.sessionId===input.sessionId)return undefined;
+    const candidates:AgyCandidateParent[]=[];
+    const addCandidate=(peer:Peer|undefined)=>{
+      if(!peer?.sessionId||peer.sessionId===input.sessionId||candidates.some(c=>c.sessionId===peer.sessionId))return;
+      candidates.push({sessionId:peer.sessionId,artifactsDir:this.store.endpoint(peer.id)?.nativeSession?.artifactsDir});
+    };
+    if(bound?.active)addCandidate(this.store.getPeer(bound.peerId));
+    for(const peer of this.store.peers()){
+      if(peer.host!=='agy'||!peer.sessionId)continue;
+      if(input.endpoint.pid&&input.endpoint.procStart&&this.store.endpoints(peer.id).some(ep=>{const native=ep.native??ep;return native.pid===input.endpoint.pid&&native.procStart===input.endpoint.procStart;})){
+        addCandidate(peer);
+      }
+    }
+    const detected=detectAgySubagentLineage({
+      conversationId:input.sessionId,
+      configHome:input.endpoint.configHome,
+      transcriptPath:input.endpoint.nativeSession?.transcriptPath,
+      candidates,
+    });
+    if(detected?.isSubagent)return{parentId:input.parentId??detected.parentId??(bound?.active&&bound.sessionId!==input.sessionId?bound.sessionId:undefined)};
+    if(input.kind==='subagent')return{parentId:input.parentId??(bound?.active&&bound.sessionId!==input.sessionId?bound.sessionId:undefined)};
+    if(detected?.isSubagent===false)return undefined;
+    if(bound?.active&&bound.sessionId!==input.sessionId&&this.hasActiveAgySubagentSpawn(bound.peerId)&&!this.store.bindings.known(bound.peerId,input.sessionId)){
+      return{parentId:bound.sessionId};
+    }
+    return undefined;
   }
 
   hasAgyWaiter(peerId:string):boolean{
@@ -1810,6 +1869,13 @@ export class Broker {
         if(input.host==='codex'){
           const child=this.store.peers().find(peer=>peer.host==='codex'&&peer.sessionId===input.sessionId&&peer.kind==='subagent');
           if(child){input.kind='subagent';input.parentId=child.parentId??undefined;}
+        }else if(input.host==='agy'){
+          const subagent=this.resolveAgySubagentRegistration(input);
+          if(subagent){
+            input.kind='subagent';
+            if(subagent.parentId)input.parentId=subagent.parentId;
+            input.contextStart=false;
+          }
         }
         const disabled=this.disabledRegistration(input);if(disabled)return disabled;
         const owned=await managedCodexRegistration(this.store,this.home,input,(runtime,id)=>this.adapters.codex.inspectThread(runtime,id));if(owned)return owned;
@@ -2137,15 +2203,21 @@ export class Broker {
     const toolName=typeof toolCall?.name==='string'?toolCall.name:undefined;
     const toolArgs=toolCall?.args&&typeof toolCall.args==='object'?toolCall.args as Record<string,unknown>:undefined;
     const toolId=typeof toolCall?.id==='string'?toolCall.id:undefined;
+    const isSubagent=Boolean(actor.via||peer?.kind==='subagent');
 
     if(event==='PreToolUse'){
       if(toolName&&/^mcp_(?:agybridge_)?codex_/.test(toolName)){
-        if(peer&&!toolName.endsWith('wait_partner')&&!toolName.endsWith('receive_messages'))this.foregroundHealth.observe(peer,'tool_start',undefined,toolId,true);
+        if(peer&&!isSubagent&&!toolName.endsWith('wait_partner')&&!toolName.endsWith('receive_messages'))this.foregroundHealth.observe(peer,'tool_start',undefined,toolId,true);
         return{decision:'allow'};
       }
-      return agyToolReferenceDecision(toolName,toolArgs,peer&&['root','fork'].includes(peer.kind)&&!actor.via
-        ?text=>this.references.expand(peer,text):'root session not registered');
+      const decision=agyToolReferenceDecision(toolName,toolArgs,peer&&!isSubagent&&['root','fork'].includes(peer.kind)
+        ?text=>this.references.expand(peer,text):isSubagent?'subagent context cannot expand root nxref':'root session not registered');
+      if(decision.decision==='allow'&&peer&&!isSubagent&&(toolName==='invoke_subagent'||toolName==='run_workflow')){
+        this.markAgySubagentSpawn(peer.id,toolId);
+      }
+      return decision;
     }
+    if(isSubagent)return{};
     const transcript=peer&&p.agy_transcript&&(event==='PreInvocation'||event==='PostToolUse')?z.object({
       compaction:z.object({id:z.string().min(1).max(256),at:z.number().finite().nonnegative(),compactedMessageIds:z.array(z.string().min(1).max(128))}).optional(),
       usage:z.object({tokens:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),at:z.number().finite().nonnegative()}).optional(),
@@ -2159,7 +2231,10 @@ export class Broker {
     if(peer&&transcript?.compaction)this.communicationTips.cooperation.compacted(peer,transcript.compaction.id,transcript.compaction.at);
     if(peer&&transcript?.usage)this.communicationTips.cooperation.usage(peer,transcript.usage);
     if(event==='PostToolUse'){
-      if(peer)this.foregroundHealth.observe(peer,'tool_end',undefined,toolId,!String(toolName??'').endsWith('receive_messages'),undefined,toolName);
+      if(peer&&(toolName==='invoke_subagent'||toolName==='run_workflow'))this.clearAgySubagentSpawn(peer.id,toolId);
+      if(peer&&toolName&&/^mcp_(?:agybridge_)?codex_/.test(toolName)){
+        this.foregroundHealth.observe(peer,'tool_end',undefined,toolId,!toolName.endsWith('receive_messages'),undefined,toolName);
+      }
       return{};
     }
 
@@ -2219,6 +2294,7 @@ export class Broker {
 
     const contexts:string[]=[];
     if(event==='PreInvocation'){
+      this.clearAgySubagentSpawn(peer.id);
       this.store.setSetting('communicationTurn:'+peer.id,randomUUID());
       this.foregroundHealth.observe(peer,'start');
       this.store.updatePeer(peer.id,{state:'busy',...(!isWaiterWake&&typeof prompt==='string'&&prompt.trim()?{activityAt:Date.now()}:{})});
@@ -2255,6 +2331,7 @@ export class Broker {
     }
 
     if(event==='Stop'){
+      this.clearAgySubagentSpawn(peer.id);
       const reason=typeof p.terminationReason==='string'?p.terminationReason:undefined;
       if(reason==='USER_CANCELED'){
         this.questions.cancelPeer(peer.id);

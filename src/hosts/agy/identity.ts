@@ -1,9 +1,21 @@
-import { existsSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import type { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { BridgeError } from '../../shared/errors.js';
 import { agyAppDataDir, agyHome } from '../../shared/local-paths.js';
 import type { Actor, Endpoint, RegisterInput } from '../../types.js';
+
+export interface AgyCandidateParent {
+  sessionId:string;
+  artifactsDir?:string;
+}
+
+export interface AgySubagentLineage {
+  isSubagent:boolean;
+  parentId?:string;
+}
 
 export function agyArtifactsDir(configHome:string,conversationId:string):string{
   return path.join(agyAppDataDir(configHome),'brain',conversationId);
@@ -39,7 +51,103 @@ export function mergeAgyNativeSession(previous:Endpoint['nativeSession'],input:R
 
 export function agySessionExists(configHome:string,conversationId:string):boolean{
   const appData=agyAppDataDir(configHome);
-  return existsSync(path.join(appData,'conversations',conversationId+'.pb'))||existsSync(path.join(appData,'brain',conversationId));
+  return existsSync(path.join(appData,'conversations',conversationId+'.db'))
+    ||existsSync(path.join(appData,'conversations',conversationId+'.pb'))
+    ||existsSync(path.join(appData,'brain',conversationId));
+}
+
+function nonEmptyString(value:unknown):string|undefined{
+  return typeof value==='string'&&value.length>0?value:undefined;
+}
+
+export function agyInputSubagentLineage(input:Record<string,unknown>,conversationId:string):{parentId?:string}|undefined{
+  const parentId=nonEmptyString(input.parentConversationId)??nonEmptyString(input.parent_conversation_id);
+  if(parentId&&parentId!==conversationId)return{parentId};
+  const rootId=nonEmptyString(input.rootConversationId)??nonEmptyString(input.root_conversation_id);
+  if(rootId&&rootId!==conversationId)return{parentId:rootId};
+  if(input.startedByAgent===true||input.started_by_agent===true||Boolean(nonEmptyString(input.agentName)??nonEmptyString(input.agent_name)))return{};
+  return undefined;
+}
+
+function inspectTranscriptHead(file:string,conversationId:string):AgySubagentLineage|undefined{
+  if(!existsSync(file))return undefined;
+  let fd:number|undefined;
+  try{
+    fd=openSync(file,'r');
+    const buf=Buffer.allocUnsafe(8192);
+    const bytes=readSync(fd,buf,0,buf.length,0);
+    if(bytes<=0)return undefined;
+    const text=buf.subarray(0,bytes).toString('utf8');
+    const lines=bytes===buf.length?text.slice(0,Math.max(0,text.lastIndexOf('\n'))).split('\n'):text.split('\n');
+    for(const raw of lines){
+      const line=raw.trim();
+      if(!line)continue;
+      let step:Record<string,unknown>;
+      try{step=JSON.parse(line) as Record<string,unknown>;}catch{continue;}
+      if(step.source==='USER_EXPLICIT')return{isSubagent:false};
+      if(step.source==='SYSTEM'&&typeof step.content==='string'){
+        const match=/\[Message\]\s+timestamp=\S+\s+sender=([\w-]+)\b/.exec(step.content);
+        if(match?.[1]&&match[1]!==conversationId)return{isSubagent:true,parentId:match[1]};
+      }
+    }
+  }catch{
+    return undefined;
+  }finally{
+    if(fd!==undefined)try{closeSync(fd);}catch{}
+  }
+  return undefined;
+}
+
+export function detectAgySubagentLineage(options:{
+  conversationId:string;
+  configHome?:string;
+  transcriptPath?:string;
+  candidates?:readonly AgyCandidateParent[];
+}):AgySubagentLineage|undefined{
+  const {conversationId}=options;
+  if(!/^[\w-]+$/.test(conversationId))return undefined;
+  const configHome=options.configHome??agyHome();
+  for(const candidate of options.candidates??[]){
+    if(!candidate.sessionId||candidate.sessionId===conversationId)continue;
+    const dir=candidate.artifactsDir??agyArtifactsDir(configHome,candidate.sessionId);
+    if(existsSync(path.join(dir,'.system_generated','subagents',`${conversationId}.json`))){
+      return{isSubagent:true,parentId:candidate.sessionId};
+    }
+  }
+  const transcriptFiles=new Set<string>();
+  if(options.transcriptPath){
+    if(path.basename(options.transcriptPath)==='transcript_full.jsonl'){
+      transcriptFiles.add(path.join(path.dirname(options.transcriptPath),'transcript.jsonl'));
+    }
+    transcriptFiles.add(options.transcriptPath);
+  }
+  const defaultLogsDir=path.join(agyArtifactsDir(configHome,conversationId),'.system_generated','logs');
+  transcriptFiles.add(path.join(defaultLogsDir,'transcript.jsonl'));
+  transcriptFiles.add(path.join(defaultLogsDir,'transcript_full.jsonl'));
+  for(const file of transcriptFiles){
+    const fromTranscript=inspectTranscriptHead(file,conversationId);
+    if(fromTranscript)return fromTranscript;
+  }
+  const summariesDb=path.join(agyAppDataDir(configHome),'conversation_summaries.db');
+  if(existsSync(summariesDb)){
+    let db:DatabaseSync|undefined;
+    try{
+      const {DatabaseSync:SqliteDb}=createRequire(import.meta.url)('node:sqlite') as typeof import('node:sqlite');
+      db=new SqliteDb(summariesDb,{open:true,readOnly:true});
+      const row=db.prepare('SELECT parent_conversation_id,agent_name,nesting_depth FROM conversation_summaries WHERE conversation_id=?').get(conversationId) as {parent_conversation_id?:unknown;agent_name?:unknown;nesting_depth?:unknown}|undefined;
+      if(row){
+        const parentId=nonEmptyString(row.parent_conversation_id);
+        if(parentId&&parentId!==conversationId)return{isSubagent:true,parentId};
+        if(Number(row.nesting_depth)>0||nonEmptyString(row.agent_name))return{isSubagent:true};
+        return{isSubagent:false};
+      }
+    }catch{
+      return undefined;
+    }finally{
+      try{db?.close();}catch{}
+    }
+  }
+  return undefined;
 }
 
 export function agyMcpIdentity(
@@ -118,13 +226,15 @@ export function agyHookRegistration(
   const transcriptPathFallback=typeof reportedTranscript!=='string'||!reportedTranscript;
   const transcriptPath=transcriptPathFallback?transcriptIn(artifactsDir):reportedTranscript;
   const model=typeof input.modelName==='string'&&input.modelName?input.modelName:undefined;
+  const subagent=agyInputSubagentLineage(input,conversationId);
   const mode=runtime.acp?'agy-acp':'agy-tui';
   return{
     host:'agy',
     sessionId:conversationId,
     cwd,
     name:'AGY',
-    kind:'root',
+    kind:subagent?'subagent':'root',
+    ...(subagent?.parentId?{parentId:subagent.parentId}:{}),
     permission:'unknown',
     ...(model?{model}:{}),
     replyContract:1,

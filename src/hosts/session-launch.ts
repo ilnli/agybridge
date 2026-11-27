@@ -21,6 +21,8 @@ export function sessionEvidenceFile(host:Host,home:string,id:string):string|unde
   if(host==='codex')return sessionFile(home,id);
   if(!/^[\w-]+$/.test(id))return;
   const appData=agyAppDataDir(home);
+  const db=path.join(appData,'conversations',id+'.db');
+  if(existsSync(db))return db;
   const pb=path.join(appData,'conversations',id+'.pb');
   if(existsSync(pb))return pb;
   const transcript=path.join(appData,'brain',id,'.system_generated','logs','transcript_full.jsonl');
