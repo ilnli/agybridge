@@ -1,6 +1,7 @@
 import type { Peer } from '../../types.js';
 import { codexView, agyView } from './questions.js';
-import {errors} from './model-error.js';
+import { errors } from './model-error.js';
+import { missingCodexSocketModelText } from '../../broker/health/runtime-incidents.js';
 export { modelError, MODEL_ERROR_FALLBACK, referenceDeny } from './model-error.js';
 
 export function modelPeerName(peer:Peer):string{
@@ -11,6 +12,12 @@ export function modelStatus(status:any):Record<string,unknown>{
   if(status.identityIssues?.length)status={...status,integrationIssues:[...(status.integrationIssues??[]),...status.identityIssues]};
   const visible=(p:any)=>p?{...p,...(p.native_issue?.kind==='tool_failed'?{native_issue:undefined}:{}),...(p.health?.nativeIssue?.kind==='tool_failed'?{health:{...p.health,nativeIssue:undefined}}:{})}:p;
   status={...status,self:visible(status.self),partner:visible(status.partner)};
+  status={...status,incidents:status.incidents?.map((incident:any)=>{
+    if(!['codex_socket_target_missing','reply_socket_conflict'].includes(incident.code))return incident;
+    const {userText:_userText,action,...facts}=incident,self=incident.peerId===status.self?.id;
+    const message=incident.state==='recovering'?(self?'Your Codex':'Codex partner')+' transport is responding again; observing stability. Uncertain sends are not replayed.':incident.code==='codex_socket_target_missing'?missingCodexSocketModelText(self?status.self:status.partner,self):'Reply listener address is occupied by another file; delivery is blocked before submission. Tell user to inspect the occupied path in agybridge status; do not resend tasks.';
+    return{...facts,message,...(action?{action:{owner:action.owner,text:message}}:{})};
+  })};
   const peer=(p:any,self=false)=>({member_id:p.id,session_id:p.sessionId,enabled:p.enabled!==false,...(p.host==='agy'&&p.artifacts_dir?{artifacts_dir:p.artifacts_dir,scratch_dir:p.scratch_dir}:{}),...(p.partner_profile?{partner_profile:p.partner_profile}:{}),...(p.recovery?{recovery:p.recovery}:{}),...(p.context?{context_state:p.context.transitioning?'transitioning; msgs held until next verified context':'current',lineage_count:p.context.lineage.length}:{}),...(!self||!['ready','busy'].includes(p.state)?{state:p.state}:{}),permission:p.permission,...(p.permission_facts?{permission_facts:p.permission_facts}:{}),...(p.model?{model:p.model}:{}),...(p.effort!==undefined?{effort:p.effort}:{}),...(p.health?{health:p.health}:{}),...(p.native_issue?{native_issue:p.native_issue}:{}),...(p.delivery_mode?{delivery_mode:p.delivery_mode}:{}),...(p.delivery_wait?{delivery_wait:p.delivery_wait}:{}),...(p.retryBudget?.warning?{retryBudget:{requestMaxRetries:p.retryBudget.requestMaxRetries,streamMaxRetries:p.retryBudget.streamMaxRetries}}:{})});
   const questions=(status.questions??[]).filter((q:any)=>['pending','awaiting_user','needs_user'].includes(q.status)).map((q:any)=>{
     const asker=q.from===status.self.id,active=['pending','awaiting_user'].includes(q.status);

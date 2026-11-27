@@ -12,6 +12,8 @@ import { HEALTH_UNVERIFIED_MS } from '../health/notice-policy.js';
 import { hookTrustMessage, type HookTrustIssue } from '../../hosts/codex/codex-hook-trust.js';
 import { diagnosisAdvice, partnerRestartAdvice } from '../../app/commands/agent-command.js';
 import { daemonDelivery } from '../delivery/delivery-guidance.js';
+import {memberEnabled} from '../member-control.js';
+import type {CodexDeliveryHold} from '../delivery/codex-delivery-gate.js';
 
 export interface IntegrationEvidence {
   nativeHookDurations?:{event:string;durationMs:number}[];
@@ -19,14 +21,16 @@ export interface IntegrationEvidence {
   nativeSessionAt?:number;firstNativeInteractionAt?:number;mcpInteractionAt?:number;
   hookTimeouts?:{count:number;firstAt:number;lastAt:number;limitSeconds?:number};hookTrustIssue?:HookTrustIssue;
   wakeQueueError?:string;pickup?:{exhausted?:boolean;attempts:number;error?:string;anchor?:string;scope?:string};
+  subagentHold?:{batchId:string;reason:string;observing?:true};
   failedTurnId?:string;
 }
 export const hookTimedOut=(error:string)=>/\bhook timed out\b|\bhook[^;\n]*\btimeout\b/i.test(error);
 
 export interface PairIssue {kind:string;message:string;factKey?:string;terminal?:boolean;firstSeenAt?:number;asOf?:number}
 
-const TERMINAL_KINDS=new Set(['turn_failed','continuation_failed','pickup_exhausted']);
+const FACT_KINDS=new Set(['turn_failed','continuation_failed','pickup_exhausted','subagent_completion_held']);
 export interface PairObservation {
+  deliveryHold?:CodexDeliveryHold;
   nativeHistory?:{status:string;reason?:string};
   continuation?:{anchor:string;attempts:number;uncertain?:boolean;error?:string;scope?:string};
   pair:Pair;peer:Peer;endpoint?:Endpoint;now:number;messages:MessageFacts[];transitioning:boolean;
@@ -44,6 +48,7 @@ export function pairIssues(value:PairObservation):PairIssue[]{
 
   const failedTurn=()=>{if(health?.state==='failed'&&!value.questionPending)add('turn_failed',`${peer.host} turn ${health.turnId} failed${health.error?': '+health.error:''}`,JSON.stringify([peer.id,health.turnId]),true);};
   if(value.pair.archived||endpoint?.pendingContext)return issues;
+  if(peer.host==='codex'&&integration.subagentHold&&!integration.subagentHold.observing)add('subagent_completion_held','Codex 的子代理已做完，尚未确认主线程接着处理（'+integration.subagentHold.reason+'）；请在原 Codex 窗口继续或查看 agybridge status/doctor；不要重跑子代理',integration.subagentHold.batchId);
 
   if(peer.state==='offline'){if(endpoint)failedTurn();return issues;}
   if(providerBlocked(health)){
@@ -79,7 +84,7 @@ export function pairIssues(value:PairObservation):PairIssue[]{
     if(['accepted','sending','runtimeQueued'].includes(state)&&peer.state!=='ready'&&!stalled)continue;
     const rows=pending.filter(m=>m.state===state);
     const daemonWait=state==='accepted'?daemonDelivery(peer,endpoint,rows.length,value.transitioning).delivery_wait:undefined;
-    add('delivery_'+state,`${rows.length} msg(s) remain ${state} for 2+ min: ${rows.slice(-5).map(m=>m.id).join(', ')}; ${daemonWait?daemonWait.message:state==='runtimeQueued'?'native queued != observed in context; an interrupted turn may discard its pending output; inspect original history/replies before any manual resend':state==='unknown'?'submission outcome unknown; never auto-replay':state==='held'?'native admission held; inspect original window':'inspect delivery/status before any resend'}`,state==='unknown'?JSON.stringify([value.pair.id,...rows.map(m=>m.id).sort()]):undefined);
+    add('delivery_'+state,`${rows.length} msg(s) remain ${state} for 2+ min: ${rows.slice(-5).map(m=>m.id).join(', ')}; ${daemonWait?daemonWait.message:state==='runtimeQueued'?'native queued != observed in context; an interrupted turn may discard its pending output; inspect original history/replies before any manual resend':state==='unknown'?'submission outcome unknown; never auto-replay':state==='held'?'native admission held; inspect original window':'inspect delivery/status before any resend'}`+(state==='accepted'&&value.deliveryHold?'; '+value.deliveryHold.model+' ['+value.deliveryHold.code+']':''),state==='unknown'?JSON.stringify([value.pair.id,...rows.map(m=>m.id).sort()]):undefined);
   }
   if(value.transitioning&&pending.length)add('context_stuck','window context transition still holds pending msgs after 2+ min; next verified native context required');
   if(peer.state==='busy'&&!value.questionPending){
@@ -144,7 +149,13 @@ function turnFailedText(peer:Peer,health:TurnHealth|undefined,issue:PairIssue):s
 const FLAP_MS=120_000;
 const DEPENDENCY_MS=5*60_000,QUIET_MS=15*60_000,DELIVERY_STUCK_MS=3*60_000;
 export class PairAnomalies {
-  constructor(private store:Store,private notices:DeliveryHealth,private version:string,private resources?:ResourceHealth,private home?:string){}
+  constructor(private store:Store,private notices:DeliveryHealth,private version:string,private resources?:ResourceHealth,private home?:string,private deliveryHold?:(peer:Peer)=>CodexDeliveryHold|undefined){}
+  async reconcileAtStartup():Promise<void>{
+    for(const pair of this.store.pairs())for(const id of [pair.agy,pair.codex])await this.store.faults.run('startup_integration:'+id,()=>{
+      const peer=this.store.getPeer(id);
+      if(peer&&memberEnabled(this.store,peer))this.integration(this.store.peer(id),{});
+    });
+  }
   private scope(peer:Peer):string{return JSON.stringify([peer.sessionId,this.store.bindings.current(peer.id)?.epoch]);}
   private currentEvidence(peer:Peer,scope=this.scope(peer)):IntegrationEvidence{
     const value=this.store.setting<IntegrationEvidence>('integration:'+peer.id);
@@ -164,11 +175,12 @@ export class PairAnomalies {
     });
     return{peerId:peer.id,source:'codex hook/completed',events};
   }
-  integration(peer:Peer,input:{nativeHook?:{event:string;durationMs:number};turn?:true;turnFailed?:true;turnId?:string;hook?:true;hookSeen?:true;sessionStart?:true;nativeInput?:true;hookError?:string;hookTrustIssue?:HookTrustIssue|null;mcp?:true;wakeQueueError?:string|null;pickup?:IntegrationEvidence['pickup']|null}):void{
+  integration(peer:Peer,input:{nativeHook?:{event:string;durationMs:number};turn?:true;turnFailed?:true;turnId?:string;hook?:true;hookSeen?:true;sessionStart?:true;nativeInput?:true;hookError?:string;hookTrustIssue?:HookTrustIssue|null;mcp?:true;wakeQueueError?:string|null;pickup?:IntegrationEvidence['pickup']|null;subagentHold?:IntegrationEvidence['subagentHold']|null}):void{
     const value=this.currentEvidence(peer);
     if(input.sessionStart){value.nativeSessionAt=Date.now();delete value.firstNativeInteractionAt;}
     if((input.nativeInput||input.turn)&&value.firstNativeInteractionAt===undefined)value.firstNativeInteractionAt=Date.now();
     if(input.pickup!==undefined){if(input.pickup)value.pickup=input.pickup;else delete value.pickup;}
+    if(input.subagentHold!==undefined){if(input.subagentHold)value.subagentHold=input.subagentHold;else delete value.subagentHold;}
     if(input.wakeQueueError!==undefined){if(input.wakeQueueError)value.wakeQueueError=input.wakeQueueError;else delete value.wakeQueueError;}
     if(input.turn){value.lastTurnAt=Date.now();value.lastTurnId=input.turnId;value.turnsWithoutHook=input.turnId&&value.lastHookTurnId===input.turnId?0:value.turnsWithoutHook+1;}
     if(input.hook||input.hookSeen){value.lastHookAt=Date.now();value.turnsWithoutHook=0;}
@@ -194,8 +206,8 @@ export class PairAnomalies {
       const binding=this.store.bindings.current(peer.id),peerScope=JSON.stringify([peer.sessionId,binding?.epoch]),scope=JSON.stringify([pair.id,peerScope]);
       const key='pairIssues:'+peer.id,previous=this.store.setting<Incidents>(key),recipient=pair[peer.host==='codex'?'agy':'codex'],partner=this.store.peer(recipient),partnerBinding=this.store.bindings.current(recipient),endpoint=this.store.endpoint(peer.id),now=Date.now();
       const integration=this.currentEvidence(peer,peerScope),direct=this.store.setting<{scope?:string;continuation?:{anchor:string;attempts:number;uncertain?:boolean;error?:string}}>('codexDirect:'+peer.id),lastMessage=this.store.lastMessageFacts(pair.id,peer.id),messages=eligible?this.store.deliveryIssueFacts(pair.id,peer.id):[];
-      const value:Incidents={scope,issues:pairIssues({nativeHistory:this.store.setting('codexHistoryCompatibility:'+peer.id),continuation:direct?.continuation?{...direct.continuation,scope:direct.scope}:undefined,pair,peer,endpoint,partnerPermission:partner.permission,home:this.home,now,messages,transitioning:binding?.transitioning??false,questionPending:this.store.questions(true).some(q=>q.from===peer.id||q.to===peer.id),health,integration,version:this.version,replyContractActive:!!this.store.setting('replyContract:'+peer.id),syncReminder,unanswered:syncReminder?this.store.seenSinceLastSendFacts(pair.id,peer.id,binding?.activatedAt??pair.createdAt):undefined,lastMessage:syncReminder?lastMessage:undefined}),notices:[]};
-      const same=(row:{kind:string;message:string;factKey?:string},issue:PairIssue)=>row.kind===issue.kind&&(TERMINAL_KINDS.has(issue.kind)?row.factKey===issue.factKey:true);
+      const value:Incidents={scope,issues:pairIssues({deliveryHold:this.deliveryHold?.(peer),nativeHistory:this.store.setting('codexHistoryCompatibility:'+peer.id),continuation:direct?.continuation?{...direct.continuation,scope:direct.scope}:undefined,pair,peer,endpoint,partnerPermission:partner.permission,home:this.home,now,messages,transitioning:binding?.transitioning??false,questionPending:this.store.questions(true).some(q=>q.from===peer.id||q.to===peer.id),health,integration,version:this.version,replyContractActive:!!this.store.setting('replyContract:'+peer.id),syncReminder,unanswered:syncReminder?this.store.seenSinceLastSendFacts(pair.id,peer.id,binding?.activatedAt??pair.createdAt):undefined,lastMessage:syncReminder?lastMessage:undefined}),notices:[]};
+      const same=(row:{kind:string;message:string;factKey?:string},issue:PairIssue)=>row.kind===issue.kind&&(FACT_KINDS.has(issue.kind)?row.factKey===issue.factKey:true);
       const recent=previous?.scope===scope?[...previous.issues,...(previous.gone??[]).filter(row=>now-row.goneAt<FLAP_MS)]:[];
       for(const issue of value.issues){const old=recent.find(row=>same(row,issue));issue.firstSeenAt=old?.firstSeenAt??now;issue.asOf=now;}
       if(previous?.scope===scope){
@@ -222,11 +234,11 @@ export class PairAnomalies {
       };
       const targets=(issue:PairIssue):string[]=>tier(issue)<3?[]:[recipient];
       const noticeTier=(issue:PairIssue):3|4=>tier(issue)===4?4:3;
-      for(const notice of previous?.notices??[])if(previous?.scope!==scope||!value.issues.some(issue=>issue.kind===notice.kind&&targets(issue).includes(notice.recipient)&&(!TERMINAL_KINDS.has(issue.kind)||issue.factKey===notice.factKey))){this.notices.cancel(pair.id,notice.recipient,notice.id);this.store.event('health.pair.cancel',{pairId:pair.id,peerId:peer.id,recipient:notice.recipient,noticeId:notice.id,kind:notice.kind,scopeChanged:previous?.scope!==scope,inIssues:value.issues.some(issue=>issue.kind===notice.kind),site:site??null});}else value.notices.push(notice);
+      for(const notice of previous?.notices??[])if(previous?.scope!==scope||!value.issues.some(issue=>issue.kind===notice.kind&&targets(issue).includes(notice.recipient)&&(!FACT_KINDS.has(issue.kind)||issue.factKey===notice.factKey))){this.notices.cancel(pair.id,notice.recipient,notice.id);this.store.event('health.pair.cancel',{pairId:pair.id,peerId:peer.id,recipient:notice.recipient,noticeId:notice.id,kind:notice.kind,scopeChanged:previous?.scope!==scope,inIssues:value.issues.some(issue=>issue.kind===notice.kind),site:site??null});}else value.notices.push(notice);
       const managed=this.store.setting<{pairId:string;state:string}>('managedRecovery:'+peer.id);
-      if(!pair.paused)for(const issue of value.issues.filter(issue=>(peer.launchFailure||!['paused','needsHuman','offline'].includes(peer.state)||peer.state==='offline'&&issue.kind==='turn_failed')&&(issue.kind!=='launch_failed'||managed?.pairId!==pair.id||managed.state==='closed')))for(const target of targets(issue)){
+      if(!pair.paused)for(const issue of value.issues.filter(issue=>(issue.kind==='subagent_completion_held'||peer.launchFailure||!['paused','needsHuman','offline'].includes(peer.state)||peer.state==='offline'&&issue.kind==='turn_failed')&&(issue.kind!=='launch_failed'||managed?.pairId!==pair.id||managed.state==='closed')))for(const target of targets(issue)){
         const existing=value.notices.find(n=>n.kind===issue.kind&&n.recipient===target),id=existing?.id??randomUUID(),recipientPeer=target===peer.id?peer:partner,other=target===peer.id?partner:peer;
-        if(!existing)value.notices.push({id,recipient:target,kind:issue.kind,...(TERMINAL_KINDS.has(issue.kind)&&issue.factKey!==undefined?{factKey:issue.factKey}:{})});
+        if(!existing)value.notices.push({id,recipient:target,kind:issue.kind,...(FACT_KINDS.has(issue.kind)&&issue.factKey!==undefined?{factKey:issue.factKey}:{})});
         const scope=noticeScope(pair,recipientPeer,other,(target===peer.id?binding:partnerBinding)?.epoch,(target===peer.id?partnerBinding:binding)?.epoch),evidence=issue.kind==='hooks_timeout'?resourceEvidence(this.resources?.snapshot().sample):'';
         let message=`agybridge runtime monitor (not partner reply or user msg): ${peer.host}: ${issue.message}. Facts only; inspect and decide; no task replay; AI actions limited to the explicitly scoped steps above.${evidence?' '+evidence:''}`;
         const tierFor=noticeTier(issue);

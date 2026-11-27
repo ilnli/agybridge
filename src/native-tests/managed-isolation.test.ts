@@ -38,7 +38,7 @@ test('原生隔离：核验专用 socket 及原生链接，客户端断开不停
                                             
   if(process.platform==='win32')wrapper=await launchIndependentWindows({home,executable:launch.executable.command,args,cwd:launch.cwd,env:launch.env,logfile,role:'codex-runtime',launchId,configHome});
   else{
-    const child=spawnPosixSupervisor(launch.executable.command,args,{cwd:launch.cwd,env:launch.env,stdio:['ignore','ignore','pipe'],waitForNative:true});
+    const child=spawnPosixSupervisor(launch.executable.command,args,{cwd:launch.cwd,env:launch.env,stdio:['ignore','ignore','pipe'],waitForNative:true,home});
     child.stderr!.on('data',chunk=>stderr=(stderr+chunk).slice(-2000));await once(child,'spawn');
     const record=await rememberOwnedChild(home,child,'codex-runtime',{configHome,posixGroup:true},launchId);assert.ok(record);wrapper=record;
   }

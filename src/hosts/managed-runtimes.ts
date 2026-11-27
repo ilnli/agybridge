@@ -7,18 +7,26 @@ import {BridgeError} from '../shared/errors.js';
 import {atomicWriteText} from '../storage/atomic-file.js';
 import {stateDirectory} from '../storage/state-directory.js';
 import { ownedProcesses, ownedRecordState, ownedRecordPredatesBoot, currentLinuxBootId, type OwnedProcessRecord } from '../process/owned-processes.js';
-import { ownedProcessState, type ProcessState } from '../process/process-stop.js';
+import { ownedProcessState, type OwnedIdentity, type ProcessState } from '../process/process-stop.js';
 import type { SessionProfile } from './codex/codex-session-profile.js';
 
 export interface ManagedRuntime {
   id:string;peerId?:string;owner:string;kind:'owned'|'legacy';state:'starting'|'ready'|'failed';
   endpoint:string;pid?:number;procStart?:string;wrapperPid?:number;wrapperProcStart?:string;
   configHome?:string;launchMethod?:string;createdAt:number;error?:string;failureCode?:string;launchSettled?:boolean;bootstrapRevision?:string;
-  dedicated?:boolean;executable?:string;version?:string;sessionId?:string;profileId?:string;authenticatedLoopback?:boolean;
-  sessionVerification?:{sessionId:string;profile:SessionProfile};
+  dedicated?:boolean;executable?:string;launchCommandKey?:string;version?:string;sessionId?:string;profileId?:string;authenticatedLoopback?:boolean;
+  sessionVerification?:{sessionId:string;profile:SessionProfile;restartSourceId?:string};
+  coldResumeUnconfirmed?:{sessionId:string;pid:number;procStart:string;attempts?:1|2;transportClosed?:boolean;broker?:OwnedIdentity;connectionId?:string};
+  childControlChecks?:{pid:number;procStart:string;pending:Record<string,string>};
   threadUnloadDelaySecs?:number;bootId?:string;
 }
 export interface RuntimeRecord {file:string;value:ManagedRuntime}
+
+export function writeExistingRuntime({file,value}:RuntimeRecord):void{
+  if(value.kind==='owned'){atomicJson(file,value);return;}
+  const {id,owner,kind,state,...legacy}=value;
+  atomicJson(file,legacy);
+}
 export const runtimeDirectory=(home:string)=>path.join(home,'run','runtimes');
 const tokenFile=(home:string,id:string)=>runtimeFile(home,id).replace(/\.json$/,'.token');
 export function createRuntimeToken(home:string,value:ManagedRuntime):string{
@@ -44,7 +52,7 @@ export async function managedRemoteAuthentication(home:string,args:string[]):Pro
   let endpoint:string|undefined;for(let index=0;index<args.length;index++){if(args[index]==='--')break;if(args[index]==='--remote')endpoint=args[index+1];else if(args[index]!.startsWith('--remote='))endpoint=args[index]!.slice(9);}
   if(!endpoint||args.some(arg=>arg==='--remote-auth-token-env'||arg.startsWith('--remote-auth-token-env=')))return{args,env:{}};
   await assertManagedRuntimeEndpoint(home,endpoint);
-  const token=managedRuntimeToken(home,endpoint);return token?{args:['--remote-auth-token-env','NXBRIDGE_CODEX_REMOTE_TOKEN',...args],env:{NXBRIDGE_CODEX_REMOTE_TOKEN:token}}:{args,env:{}};
+  const token=managedRuntimeToken(home,endpoint);return token?{args:['--remote-auth-token-env','AGYBRIDGE_CODEX_REMOTE_TOKEN',...args],env:{AGYBRIDGE_CODEX_REMOTE_TOKEN:token}}:{args,env:{}};
 }
 export function runtimeFile(home:string,id:string):string{
   if(!/^[a-f0-9-]{36}$/i.test(id))throw new BridgeError('runtime_identity_invalid','运行时标识无效。');

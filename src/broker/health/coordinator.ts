@@ -21,7 +21,7 @@ import {DeliveryHealth} from './delivery.js';
 import {noticeScope,unsettledCount,type RuntimeAvailability,type RuntimeNotice} from './contracts.js';
 import {readCodexThread} from '../../hosts/codex/codex-evidence.js';
 import {readCodexPendingTools} from '../../hosts/codex/codex-pending-tools.js';
-import {RuntimeIncidents} from './runtime-incidents.js';
+import {RuntimeIncidents,missingCodexSocketModelText} from './runtime-incidents.js';
 import {SKIPPED} from '../fault-boundary.js';
 import {CommunicationTips} from '../delivery/communication-tips.js';
 import {IdleNotices} from './idle-notices.js';
@@ -32,14 +32,17 @@ import {sessionPresence} from '../deleted-sessions.js';
 import {CodexDaemons,daemonPermission} from '../../hosts/codex/codex-daemon.js';
 import {CodexDirectDelivery} from '../../hosts/codex/codex-direct.js';
 import {ManagedRecovery} from '../recovery/managed-recovery.js';
-import {hostingGate,hostingStatus} from '../recovery/session-hosting.js';
+import {hostingGate,hostingRecord,hostingStatus} from '../recovery/session-hosting.js';
 import {readSessionProfile,sessionFile} from '../../hosts/codex/codex-session-profile.js';
 import type {Adapters} from '../coordinator.js';
+import type {TurnEndCoordinator} from '../turn-end.js';
 
 interface HealthEnvironment {readonly store:Store;readonly config:BridgeConfig;readonly adapters:Adapters;readonly home:string;readonly resources?:ResourceHealth;}
-interface HealthServices {readonly incidents:RuntimeIncidents;readonly deliveryHealth:DeliveryHealth;readonly communicationTips:CommunicationTips;readonly pairAnomalies:PairAnomalies;readonly idleNotices:IdleNotices;readonly profiles:PartnerProfiles;readonly foregroundHealth:ForegroundHealth;readonly managedRecovery:ManagedRecovery;readonly health:TurnHealthTracker;readonly codexDirect:CodexDirectDelivery;readonly daemons:CodexDaemons;readonly questions:Questions;}
+interface HealthServices {readonly incidents:RuntimeIncidents;readonly deliveryHealth:DeliveryHealth;readonly communicationTips:CommunicationTips;readonly pairAnomalies:PairAnomalies;readonly idleNotices:IdleNotices;readonly profiles:PartnerProfiles;readonly foregroundHealth:ForegroundHealth;readonly managedRecovery:ManagedRecovery;readonly health:TurnHealthTracker;readonly codexDirect:CodexDirectDelivery;readonly daemons:CodexDaemons;readonly questions:Questions;readonly turnEnds:TurnEndCoordinator;}
 interface HealthHooks {
+ hostingStatus(peer:Peer):ReturnType<typeof hostingStatus>;
  stopped():boolean;
+ startupPending?(id:string):boolean;
  actor(input:Actor):Peer;
  enabled(id:string):boolean;
  requireEnabled(peer:Peer):void;
@@ -68,25 +71,42 @@ export class BrokerHealthCoordinator {
   abortNotices():void{this.noticeAbort.abort();}
   resetTurnCheck():void{this.healthCheckedAt=0;}
   async waitForIdle():Promise<void>{while(this.healthRequests.size)await Promise.all(this.healthRequests);}
-  incidentViews(ids:string[]){return this.services.incidents.list(ids.map(id=>({peer:this.environment.store.peer(id),endpoint:this.runtimeEndpoint(id)})));}
+  incidentViews(ids:string[]){return this.services.incidents.list(ids.map(id=>({peer:this.environment.store.peer(id),endpoint:this.runtimeEndpoint(id)}))).map(value=>{
+    const recovery=this.services.managedRecovery.get(value.peerId);
+    if(value.code==='codex_socket_target_missing'&&recovery&&['session_busy','runtime_workload_active'].includes(recovery.preconditionCode??''))return value;
+    if(value.code==='codex_socket_target_missing'&&this.environment.store.peer(value.peerId).owner==='nxbridge'&&recovery&&['blocked','exhausted','unknown'].includes(recovery.state))return{...value,userText:'后台 Codex 接收消息的连接文件不见了，自动恢复没有成功（运行 agybridge status 查看）',action:{owner:'user' as const,text:recovery.notice?.user_step??'运行 agybridge status 查看原因。'}};
+    return value;
+  });}
 
-  incidentNotes(ids:string[]){return[...this.incidentViews(ids).filter(value=>value.state!=='recovering').map(value=>({incidentId:value.id,text:`Delivery unconfirmed since ${new Date(value.since).toISOString().slice(11,16)} UTC (${value.attempts} attempts, ${value.code}); messages kept, ${value.state==='blocked'?'same request held; inspect status action':'auto-retrying'}; do not resend.`})),...ids.flatMap(id=>{const pair=this.environment.store.pairFor(id);return pair?this.services.deliveryHealth.notes(pair.id,id):[];})].slice(0,3);}
+  incidentNotes(ids:string[],viewerId?:string){
+    const notes:{incidentId?:string;text:string}[]=this.incidentViews(ids).filter(value=>value.state!=='recovering').map(value=>({incidentId:value.id,text:value.code==='codex_socket_target_missing'?missingCodexSocketModelText(this.environment.store.peer(value.peerId),value.peerId===viewerId):`Delivery unconfirmed since ${new Date(value.since).toISOString().slice(11,16)} UTC (${value.attempts} attempts, ${value.code}); messages kept, ${value.state==='blocked'?'same request held; inspect status action':'auto-retrying'}; do not resend.`})).slice(0,3);
+    for(const id of ids){
+      if(notes.length===3)break;
+      const pair=this.environment.store.pairFor(id);
+      if(pair)notes.push(...this.services.deliveryHealth.notes(pair.id,id,viewerId,3-notes.length));
+    }
+    return notes;
+  }
 
   deliveryGuidance(peer:Peer,pending?:number){
     const {store}=this.environment;
       const endpoint=store.endpoint(peer.id),pair=store.pairFor(peer.id);
       const count=pending??(pair?.paused?store.deliveryCounts(pair.id,pair[otherHost(peer.host)]).accepted:store.pendingCount(peer.id));
-      const hosting=hostingStatus(store,peer);
+      const hosting=this.hooks.hostingStatus(peer);
+      const pauseDetail=peer.state==='paused'&&peer.pauseReason==='restart_incomplete'&&hosting?.phase==='blocked'?hostingRecord(store,peer)?.verificationError?.pauseDetail:undefined;
       const direct=peer.host==='codex'&&count>0?this.services.codexDirect.status(peer.id):undefined,wait=direct?.scope===JSON.stringify([pair?.id,JSON.stringify([peer.sessionId,endpoint?.epoch])])?direct.wait:undefined;
       const agyWaiterActive=peer.host==='agy'?(this.hooks.hasAgyWaiter?.(peer.id)??false):false;
-      return{owner:peer.owner,...(peer.state==='paused'&&peer.pauseReason?{pause_reason:peer.pauseReason}:{}),...daemonDelivery(peer,endpoint,count,store.bindings.current(peer.id)?.transitioning,this.services.daemons.canWake(peer,endpoint),pair?.paused,daemonContextChanged(store,peer,endpoint)),...(wait?{delivery_wait:{state:'waiting_native_interaction' as const,reason:'native_thread_state' as const,host:'codex' as const,member_id:peer.id,session_id:peer.sessionId,name:peer.name,pending:count,...wait}}:{}),...nativeDeliveryWait(peer,endpoint,count,this.peerHealth(peer),agyWaiterActive),...(hosting?{hosting}:{})};
+      return{owner:peer.owner,...(peer.state==='paused'&&peer.pauseReason?{pause_reason:peer.pauseReason}:{}),...(pauseDetail?{pause_detail:pauseDetail}:{}),...daemonDelivery(peer,endpoint,count,store.bindings.current(peer.id)?.transitioning,this.services.daemons.canWake(peer,endpoint),pair?.paused,daemonContextChanged(store,peer,endpoint)),...(wait?{delivery_wait:{state:'waiting_native_interaction' as const,reason:'native_thread_state' as const,host:'codex' as const,member_id:peer.id,session_id:peer.sessionId,name:peer.name,pending:count,...wait}}:{}),...nativeDeliveryWait(peer,endpoint,count,this.peerHealth(peer),agyWaiterActive),...(hosting?{hosting}:{})};
     }
 
   probeRuntime(peer:Peer,fresh=false):Promise<RuntimeAvailability>{
       this.hooks.requireEnabled(peer);
       const endpoint=this.runtimeEndpoint(peer.id),key=JSON.stringify([peer.sessionId,peer.owner,endpoint]),cached=this.runtimeProbes.get(peer.id);
       if(cached&&cached.key===key&&Date.now()-cached.at<2000&&!fresh)return cached.work;
-      const work=this.environment.adapters[peer.host].probe(peer,endpoint).catch(()=>({state:'unknown' as const,reasons:['runtime availability check failed'],checked_at:Date.now()}));this.runtimeProbes.set(peer.id,{key,at:Date.now(),work});return work;
+      const work=this.environment.adapters[peer.host].probe(peer,endpoint).then(value=>{
+        if(value.deliveryIssue&&this.runtimeEndpoint(peer.id)?.epoch===endpoint?.epoch&&this.environment.store.peer(peer.id).sessionId===peer.sessionId)this.services.incidents.failed(peer,endpoint,new BridgeError(value.deliveryIssue,'Codex protected socket target pathname missing'));
+        return value;
+      }).catch(()=>({state:'unknown' as const,reasons:['runtime availability check failed'],checked_at:Date.now()}));this.runtimeProbes.set(peer.id,{key,at:Date.now(),work});return work;
     }
 
   async deliveryAvailability(sender:Peer,partner:Peer):Promise<RuntimeAvailability>{
@@ -118,6 +138,7 @@ export class BrokerHealthCoordinator {
   refreshNoticeConditions(pair:Pair,site:string):void{
     const {store}=this.environment;
       if(!this.hooks.enabled(pair.agy)||!this.hooks.enabled(pair.codex))return;
+      this.services.turnEnds.refresh(pair);
       const stages=[...new Set(store.faults.status().filter(value=>value.degraded).map(value=>value.stage.split(':')[0]!))].sort(),key='brokerDegraded:'+pair.id;
       let degraded=store.setting<{id:string}>(key);
       if(stages.length){if(!degraded){degraded={id:randomUUID()};store.setSetting(key,degraded);}}
@@ -133,9 +154,10 @@ export class BrokerHealthCoordinator {
       }
     }
 
-  async prepareNotices(actor:Actor,ids?:string[],admit=true,requireWake=false):Promise<RuntimeNotice[]>{
+  async prepareNotices(actor:Actor,ids?:string[],admit=true,requireWake=false,readyBoundary=false):Promise<RuntimeNotice[]>{
     const {store}=this.environment;
       const sender=this.hooks.actor(actor),pair=store.pairFor(sender.id);if(!pair||pair.paused)return[];
+      if(this.hooks.stopped()||this.hooks.startupPending?.(sender.id))return[];
       if(hostingGate(store,sender))return[];
       if(!this.hooks.enabled(pair.agy)||!this.hooks.enabled(pair.codex))return[];
       this.refreshNoticeConditions(pair,'prepare_notices_before_probe');
@@ -150,13 +172,15 @@ export class BrokerHealthCoordinator {
       this.services.deliveryHealth.observe(current,store.peer(sender.id),store.peer(partner.id),store.deliveryCounts(pair.id,sender.id),availability,true,scope);
       this.refreshNoticeConditions(current,'prepare_notices_after_probe');
       const selected=ids?ids.flatMap(id=>{const n=this.services.deliveryHealth.get(pair.id,sender.id,id);return n?[n]:[]}):this.services.deliveryHealth.peek(pair.id,sender.id);
-      return admit?this.admitNotices(pair,sender,selected,scope,requireWake):selected;
+      return admit?this.admitNotices(pair,sender,selected,scope,requireWake,readyBoundary):selected;
     }
 
-  admitNotices(pair:Pair,sender:Peer,selected:RuntimeNotice[],scope:string,requireWake=false):RuntimeNotice[]{
+  admitNotices(pair:Pair,sender:Peer,selected:RuntimeNotice[],scope:string,requireWake=false,readyBoundary=false):RuntimeNotice[]{
       return this.environment.store.transaction(()=>selected.flatMap(n=>{
-        const prepared=this.services.deliveryHealth.prepare(pair.id,sender.id,n.id,scope,false,requireWake);
+        const allowReady=readyBoundary&&this.services.turnEnds.ready(pair,true);
+        const prepared=this.services.deliveryHealth.prepare(pair.id,sender.id,n.id,scope,false,requireWake,allowReady);
         if(prepared){
+          this.services.turnEnds.admitted(pair,prepared);
           const key='turnHealthIncident:'+pair.id,value=this.environment.store.setting<{id:string;alertAdmitted?:boolean}>(key);
           if(value&&prepared.componentIds?.includes(value.id)){value.alertAdmitted=true;this.environment.store.setSetting(key,value);}
         }
@@ -196,7 +220,7 @@ export class BrokerHealthCoordinator {
         if(!homes.length)configHome=this.environment.config.codexHome??codexHome();else if(homes.every(home=>sameDirectory(home,homes[0]!)))configHome=homes[0];
       }
       return issues.map(issue=>({peerId,code:issue.kind,...(includeMessage||issue.kind==='launch_failed'?{message:issue.message}:{}),
-        ...(['hooks_restart_required','contract_inactive'].includes(issue.kind)?{owner,...(owner==='user'&&peer.sessionId?{session_id:peer.sessionId,name:peer.name}:{})}:{}),
+        ...(['hooks_restart_required','contract_inactive','subagent_completion_held'].includes(issue.kind)?{owner,...(owner==='user'&&peer.sessionId?{session_id:peer.sessionId,name:peer.name}:{})}:{}),
         ...(issue.kind==='hooks_trust_required'&&configHome&&!sameDirectory(configHome,codexHome())?{config_home:configHome}:{}),
         ...(issue.kind==='launch_failed'?{retry_command:'agybridge open '+peer.host+' --member '+peer.id}:{})}));
     }
@@ -240,10 +264,10 @@ export class BrokerHealthCoordinator {
 
   private async probePendingTools(peer:Peer,endpoint:Endpoint,health:TurnHealth,file:unknown):Promise<TurnHealth|undefined>{
       const scope=this.pendingToolScope(peer,endpoint,health),evidence=await readCodexPendingTools(file,peer.sessionId!,health.turnId);
+      if(this.hooks.stopped())return;
       const current=this.environment.store.peer(peer.id),currentEndpoint=this.environment.store.endpoint(peer.id);
       if(current.sessionId!==peer.sessionId||currentEndpoint?.epoch!==endpoint.epoch)throw new BridgeError('session_changed','工具等待核对期间目标会话已经改变。');
       const latest=endpoint.mode==='app-server'?this.services.health.get(endpoint.address,peer.sessionId!):this.services.foregroundHealth.get(current);
-
       if(latest&&this.pendingToolScope(current,currentEndpoint,latest)===scope){
         this.pendingToolEvidence.delete(peer.id);this.pendingToolEvidence.set(peer.id,{scope,tools:evidence?.calls.map(call=>call.id)??[],complete:evidence?.complete===true});
         while(this.pendingToolEvidence.size>64)this.pendingToolEvidence.delete(this.pendingToolEvidence.keys().next().value!);
@@ -263,13 +287,16 @@ export class BrokerHealthCoordinator {
       let result:{thread:Awaited<ReturnType<typeof readCodexThread>>};
       try{const rpc=await this.environment.adapters.codex.connect(endpoint.address);this.hooks.requireEnabled(peer);result={thread:await readCodexThread(rpc,peer.sessionId!,{timeout:5000,progress:true})};}
       catch(error){this.services.health.unverified(endpoint.address,peer.sessionId!,revision);throw error;}
+      if(this.hooks.stopped())return;
       if(result.thread?.id!==peer.sessionId)throw new BridgeError('session_changed','原生状态返回了不同的线程，未处理目标。');
       const current=store.peer(peer.id),status=result.thread.status;
       if(current.sessionId!==peer.sessionId||store.endpoint(peer.id)?.epoch!==endpoint.epoch)throw new BridgeError('session_changed','原生状态核对期间目标会话已经改变。');
       await this.refreshCodexPermission(current,result.thread.path);
+      if(this.hooks.stopped())return;
+      if(store.peer(peer.id).sessionId!==peer.sessionId||store.endpoint(peer.id)?.epoch!==endpoint.epoch)
+        throw new BridgeError('session_changed','历史补证期间目标会话已经改变。');
       if(this.services.health.revision(endpoint.address,peer.sessionId!)===revision&&store.peer(peer.id).state==='unknown'&&status?.type)store.updatePeer(peer.id,{state:status.activeFlags?.some((flag:string)=>/approval|input/i.test(flag))?'needsHuman':status.type==='active'?'busy':status.type==='idle'?'ready':status.type==='notLoaded'?'offline':'unknown'});
       let health=this.services.health.read(endpoint.address,result.thread,revision);
-
       if(health?.state==='silent')health=await this.probePendingTools(peer,endpoint,health,result.thread.path??endpoint.nativeSession?.transcriptPath);
       return this.modelRequestHealth(peer,endpoint,health);
     }
@@ -277,7 +304,9 @@ export class BrokerHealthCoordinator {
   async refreshCodexPermission(peer:Peer,file:unknown):Promise<void>{
     const {store}=this.environment;
       if(!peer.sessionId)return;const endpoint=store.endpoint(peer.id);if(!endpoint)return;
-      const profile=await readSessionProfile(file,peer.sessionId),current=store.endpoint(peer.id),currentPeer=store.peer(peer.id);
+      const profile=await readSessionProfile(file,peer.sessionId);
+      if(this.hooks.stopped())return;
+      const current=store.endpoint(peer.id),currentPeer=store.peer(peer.id);
       if(currentPeer.sessionId!==peer.sessionId||current?.epoch!==endpoint.epoch)return;
       if(profile.verified&&profile.complete){
         const observed=runtimeProfile(currentPeer,{model:profile.settings.model,effort:profile.settings.reasoningEffort});store.updatePeer(peer.id,observed);
@@ -291,6 +320,7 @@ export class BrokerHealthCoordinator {
 
   private async healthNotice(pairId:string,peer:Peer,id:string,message:string,source?:RuntimeNotice['source']):Promise<'submitted'|'pending'|'unknown'|'denied'>{
     const {store}=this.environment;
+      if(this.hooks.startupPending?.(peer.id))return'pending';
       if(hostingGate(store,peer))return'pending';
       const scoped=store.pairFor(peer.id);if(!this.hooks.enabled(peer.id)||scoped&&(!this.hooks.enabled(scoped.agy)||!this.hooks.enabled(scoped.codex)))return'pending';
       if(this.hooks.stopped())return'pending';
@@ -298,8 +328,16 @@ export class BrokerHealthCoordinator {
       const target=store.peer(pair[otherHost(peer.host)]),endpoint=store.endpoint(target.id);if(!endpoint||!target.sessionId||['paused','needsHuman','offline'].includes(target.state))return'pending';
       if(this.services.profiles.blocks(target))return'pending';
       const actor:Actor={host:target.host,memberId:target.id,sessionId:target.sessionId,callId:randomUUID(),...(store.bindings.current(target.id)?{binding:{key:store.bindings.current(target.id)!.key,epoch:store.bindings.current(target.id)!.epoch}}:{})};
-      let admitted=false;
-      const delivery:DeliveryMessage={id,pairId,from:peer.id,to:target.id,body:message,inReplyTo:null,via:null,callId:id,state:'accepted',createdAt:Date.now(),updatedAt:Date.now(),evidence:null,error:null,attempts:1,notice:true,...(source?{noticeSource:source}:{}),beforeSubmit:async()=>{const fresh=(await this.prepareNotices(actor,[id],true,true))[0];if(!fresh||this.services.profiles.blocks(store.peer(target.id)))return false;admitted=true;delivery.body=fresh.message;return true;}};
+      let admitted=false,finished=false;
+      const unsubmitted=(notice:RuntimeNotice)=>store.transaction(()=>this.services.turnEnds.notSubmitted(target,this.services.deliveryHealth.outcome(pairId,target.id,notice.id,'pending')));
+      const delivery:DeliveryMessage={id,pairId,from:peer.id,to:target.id,body:message,inReplyTo:null,via:null,callId:id,state:'accepted',createdAt:Date.now(),updatedAt:Date.now(),evidence:null,error:null,attempts:1,notice:true,...(source?{noticeSource:source}:{}),beforeSubmit:async deadline=>{
+        const fresh=(await this.prepareNotices(actor,[id],true,true,true))[0];if(!fresh)return false;
+        const completionId=fresh.interventionIds?.[0]??fresh.interventionId;
+        if(finished||deadline!==undefined&&performance.now()>=deadline||this.services.profiles.blocks(store.peer(target.id))||completionId&&!this.services.turnEnds.reservedReady(pair,completionId)){
+          unsubmitted(fresh);return false;
+        }
+        admitted=true;delivery.body=fresh.message;return true;
+      }};
       try{
         if(endpoint.daemon){await this.hooks.signalCodexWake(target,endpoint);return'pending';}
         if(endpoint.mode==='embedded'){
@@ -316,13 +354,18 @@ export class BrokerHealthCoordinator {
         }
         const result=await this.environment.adapters.agy.deliver(target,endpoint,delivery,peer);
         store.event('health.notice',{noticeId:id,peerId:target.id,state:result.state});
-        const outcome=result.state==='expired'?'denied':result.state==='unknown'?'unknown':'submitted';
-        if(admitted)this.services.deliveryHealth.outcome(pairId,target.id,id,outcome);
+        const outcome=result.state==='expired'&&source==='background_completed'?'pending':result.state==='expired'?'denied':result.state==='unknown'?'unknown':'submitted';
+        if(admitted){const notices=this.services.deliveryHealth.outcome(pairId,target.id,id,outcome);if(outcome==='pending')this.services.turnEnds.notSubmitted(target,notices);}
         return outcome;
       }catch(error){
         store.event('health.notice.unknown',{noticeId:id,peerId:target.id,error:describeError(error)});
-        const outcome=error instanceof DeliveryError&&!error.uncertain?'pending':'unknown';if(admitted)this.services.deliveryHealth.outcome(pairId,target.id,id,outcome);return outcome;
-      }
+        const outcome=error instanceof DeliveryError&&!error.uncertain?'pending':'unknown';
+        if(admitted)store.transaction(()=>{
+          const notices=this.services.deliveryHealth.outcome(pairId,target.id,id,outcome);
+          if(outcome==='pending')this.services.turnEnds.notSubmitted(target,notices);
+        });
+        return outcome;
+      }finally{finished=true;}
     }
 
   async checkDeliveryHealth():Promise<void>{
@@ -331,6 +374,7 @@ export class BrokerHealthCoordinator {
       const monitor=Date.now()-this.unqueuedHealthCheckedAt>=30000;if(monitor)this.unqueuedHealthCheckedAt=Date.now();
       await Promise.allSettled(store.pairs().filter(pair=>!pair.paused).flatMap(pair=>[pair.codex,pair.agy].map(id=>({pair,id}))).map(({pair,id})=>this.hooks.pumpStage('delivery_health:'+id,async()=>{
         const sender=store.peer(id),partner=store.peer(pair[sender.host==='codex'?'agy':'codex']),counts=store.deliveryCounts(pair.id,id);
+        if(this.hooks.startupPending?.(id))return;
         if(!this.hooks.enabled(id)||!this.hooks.enabled(partner.id))return;
         if(!monitor&&!unsettledCount(counts)&&!this.services.deliveryHealth.active(pair.id,id)&&!this.services.deliveryHealth.hasPending(pair.id,id))return;
         const availability=await this.deliveryAvailability(sender,partner);
@@ -340,7 +384,7 @@ export class BrokerHealthCoordinator {
         if(!endpoint||['paused','needsHuman','offline'].includes(sender.state))return;
         if(endpoint.mode==='embedded'&&sender.state!=='ready')return;
         if(endpoint.mode==='agy-tui'&&!(this.hooks.hasAgyWaiter?.(sender.id)??false))return;
-        for(const notice of this.services.deliveryHealth.peek(pair.id,id).filter(n=>n.wake===true)){
+        for(const notice of this.services.deliveryHealth.peek(pair.id,id).filter(n=>n.wake===true&&(!n.readyOnly||this.services.turnEnds.ready(pair)))){
           await this.healthNotice(pair.id,partner,notice.id,notice.message,notice.source);
         }
       })));
@@ -361,6 +405,7 @@ export class BrokerHealthCoordinator {
 
   private async checkPairTurnHealth(pair:Pair):Promise<void>{
     const {store}=this.environment;
+      if(this.hooks.startupPending?.(pair.codex))return;
       if(!this.hooks.enabled(pair.codex)||!this.hooks.enabled(pair.agy))return;
       const peer=store.peer(pair.codex),endpoint=store.endpoint(peer.id);if(!peer.sessionId||!endpoint)return;
       if(endpoint.mode!=='app-server'){

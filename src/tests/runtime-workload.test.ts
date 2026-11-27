@@ -24,8 +24,7 @@ test('POSIX 隔离后台可保留已配置的 MCP，分离的工具仍在运行�
     setInterval(()=>{},1000);
   `;
   const args=['-e',source,ready],launchId=randomUUID();
-  const supervisorOptions={stdio:'ignore' as const,waitForNative:true,home};
-  const owner=await rememberOwnedChild(home,spawnPosixSupervisor(process.execPath,args,supervisorOptions),'codex-runtime',{posixGroup:true},launchId);
+  const owner=await rememberOwnedChild(home,spawnPosixSupervisor(process.execPath,args,{stdio:'ignore',waitForNative:true,home}),'codex-runtime',{posixGroup:true},launchId);
   let tool:OwnedIdentity|undefined;
   t.after(async()=>{
 

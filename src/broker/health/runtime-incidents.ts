@@ -12,12 +12,20 @@ export interface IncidentStatus {
   message:string;userText:string;affectedMessageIds?:string[];action?:IncidentAction;
 }
 interface Incident extends IncidentStatus {scope:string;successAt?:number;closed?:boolean}
+
+export function missingCodexSocketModelText(peer:Peer,self=false):string{
+  const subject=self?'Your Codex protected socket pathname is missing; new native connections cannot reach this process.':'Codex partner protected socket pathname is missing (possibly OS temporary cleanup); its process is alive.';
+  const action=peer.owner==='nxbridge'?'agybridge attempts a bounded same-session restart only with verified idle work and its original attested live connection; inspect recovery if held.':`Tell user: at idle exit that Codex window, then in its original cwd and launch environment run codex --no-daemon resume ${peer.sessionId}.`;
+  return`${subject} ${action} Messages are kept; do not resend. Uncertain sends are never replayed.`;
+}
 const delays=[1000,2000,4000,8000,15000,30000,60000];
 const key=(id:string)=>'runtimeIncident:'+id;
 const scope=(peer:Peer,endpoint?:Endpoint)=>JSON.stringify([peer.sessionId,endpoint?.runtimeId??endpoint?.native?.procStart??endpoint?.procStart??endpoint?.epoch]);
 
 export function faultCause(error:unknown):{code:string;layer:IncidentLayer;causeClass:CauseClass;userText:string;action:IncidentAction}{
   const code=String((error as {code?:unknown})?.code??'unknown'),message=describeError(error);
+  if(['native_thread_wedged','native_thread_unconfirmed','owned_subscription_waiting'].includes(code))return{code,layer:'native',causeClass:'unknown',userText:message,action:{owner:code==='native_thread_wedged'?'user':'runtime',text:message}};
+  if(code==='reply_socket_conflict')return{code,layer:'transport',causeClass:'configuration',userText:'agybridge 接收回执的连接文件位置被别的文件占用了，消息暂时发不出去',action:{owner:'user',text:'运行 agybridge status 查看占用的路径；不要重发任务'}};
   if(code==='payload_too_large')return{code,layer:'protocol',causeClass:'unknown',userText:'原生消息超过大小保护，连接已关闭，正在降频核验。',action:{owner:'runtime',text:'使用有界请求重新核验连接，不重复拉取全量历史。'}};
   if(/payload|response_too_large|WS_ERR_UNSUPPORTED_MESSAGE_LENGTH|1009/.test(code)||/max(?:imum)?.*(?:payload|message).*size|unsupported.*message.*length/i.test(message))return{code,layer:'protocol',causeClass:'payload',userText:'原生响应超过大小保护，已停止重复读取。',action:{owner:'model',text:'Report the protocol size fault once; continue independent work.'}};
   if(/auth|token_missing|unauthori[sz]ed|401|403/.test(code))return{code,layer:'protocol',causeClass:'auth',userText:'原生连接认证失败，需要检查登录或认证配置。',action:{owner:'user',text:'检查原生宿主的登录和认证配置。'}};
@@ -28,7 +36,6 @@ export function faultCause(error:unknown):{code:string;layer:IncidentLayer;cause
   return{code,layer:'delivery',causeClass:'unknown',userText:'搭档投递尚未确认，消息已保留，正在核验。',action:{owner:'runtime',text:'核验原编号的投递结果。'}};
 }
 
-                                          
 export class RuntimeIncidents {
   constructor(private storage:HealthStorage,private now=Date.now){}
   current(peer:Peer,endpoint?:Endpoint):IncidentStatus|undefined{
@@ -38,12 +45,17 @@ export class RuntimeIncidents {
   }
   canAttempt(peer:Peer,endpoint?:Endpoint):boolean{
     const value=this.current(peer,endpoint);if(!value)return true;
+    if(value.code==='codex_socket_target_missing')return true;
     return value.state==='recovering'||(value.retryAt??Infinity)<=this.now();
   }
   failed(peer:Peer,endpoint:Endpoint|undefined,error:unknown,messageIds:string[]=[]):IncidentStatus{
     const before=this.storage.setting<Incident>(key(peer.id)),identity=scope(peer,endpoint),cause=faultCause(error),same=before&&!before.closed&&before.scope===identity;
+    if(cause.code==='codex_socket_target_missing'){
+      Object.assign(cause,{layer:'transport',causeClass:'configuration',userText:peer.owner==='nxbridge'?'后台 Codex 接收消息的连接文件不见了（可能被系统清理删掉），正在空闲时自动重启恢复':'这个 Codex 窗口接收消息的连接文件不见了（可能被系统清理删掉），消息发不进去，会话本身正常',action:peer.owner==='nxbridge'?{owner:'runtime',text:'只在核验原连接和全部工作空闲后恢复同一会话；待发消息保留，结果不明的发送不重放。'}:{owner:'user',text:`空闲时退出这个 Codex 窗口，在原目录用原来的方式重新打开原会话（codex --no-daemon resume ${peer.sessionId}），积压的消息会自动补发`}});
+      if(same&&before.code===cause.code&&!before.successAt)return this.current(peer,endpoint)!;
+    }
     const attempts=(same?before.attempts:0)+1,since=same?before.since:this.now();
-    const value:Incident={id:same?before.id:randomUUID(),peerId:peer.id,scope:identity,...cause,state:['transient','unknown'].includes(cause.causeClass)?'observing':'blocked',since,lastFailureAt:this.now(),attempts,message:'Partner operation has not succeeded ('+cause.code+').',affectedMessageIds:messageIds.slice(0,3)};
+    const value:Incident={id:same?before.id:randomUUID(),peerId:peer.id,scope:identity,...cause,state:['transient','unknown'].includes(cause.causeClass)?'observing':'blocked',since,lastFailureAt:this.now(),attempts,message:cause.code==='reply_socket_conflict'?describeError(error):'Partner operation has not succeeded ('+cause.code+').',affectedMessageIds:messageIds.slice(0,3)};
     value.retryAt=this.now()+(value.state==='observing'?delays[Math.min(attempts-1,delays.length-1)]!:900000);
     this.storage.setSetting(key(peer.id),value);this.storage.event('runtime.incident.failed',{peerId:peer.id,incidentId:value.id,layer:value.layer,causeClass:value.causeClass,code:value.code,attempts,retryAt:value.retryAt});return value;
   }

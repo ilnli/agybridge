@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { appendFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import {fixture, lifecycle} from './support/broker-fixture.js';
 import { temporary } from './support/temporary.js';
 import { registration } from './support/registration.js';
@@ -181,13 +183,87 @@ test('AGY 别名保留原请求并以已核验解析结果判断观察，偏离�
 
 test('新 Codex 启动和安全权限降级都保留模型与 effort；不采用请求时清理空线程',async()=>{
   const calls:{method:string;params:any}[]=[];let starts=0;
-  const rpc={request:async(method:string,params:any)=>{calls.push({method,params});if(method==='thread/start'){starts++;return{thread:{id:'new'},model:'chosen',reasoningEffort:'high',...(starts===1?{approvalPolicy:'on-request',approvalsReviewer:'user',sandbox:{type:'workspaceWrite'}}:{approvalPolicy:'never',approvalsReviewer:'user',sandbox:{type:'dangerFullAccess'}})};}return{};}} as RpcClient;
+  const rpc={request:async(method:string,params:any)=>{calls.push({method,params});if(method==='thread/start'){starts++;return{thread:{id:'new'},model:'chosen',reasoningEffort:'high',...(starts===1?{approvalPolicy:'on-request',approvalsReviewer:'user',sandbox:{type:'workspaceWrite'}}:{approvalPolicy:'never',approvalsReviewer:'user',sandbox:{type:'dangerFullAccess'}})};}return method==='thread/loaded/list'?{data:[]}:{};}} as RpcClient;
   await startOwnedCodex(rpc,'/project','prompting',undefined,undefined,{model:'chosen',effort:'high'});
   const requests=calls.filter(call=>call.method==='thread/start');assert.equal(requests.length,2);
   for(const call of requests){assert.equal(call.params.model,'chosen');assert.equal(call.params.config.model_reasoning_effort,'high');}
   assert.equal(requests[1]!.params.approvalPolicy,ownedCodexPolicy('bypass').approvalPolicy);
-  (rpc as any).request=async(method:string)=>method==='thread/start'?{thread:{id:'wrong'},model:'wrong',approvalPolicy:'never',approvalsReviewer:'user',sandbox:{type:'dangerFullAccess'}}:{};
+  (rpc as any).request=async(method:string)=>method==='thread/start'?{thread:{id:'wrong'},model:'wrong',approvalPolicy:'never',approvalsReviewer:'user',sandbox:{type:'dangerFullAccess'}}:method==='thread/loaded/list'?{data:[]}:{};
   await assert.rejects(startOwnedCodex(rpc,'/project','bypass',undefined,undefined,{model:'chosen'}),{code:'profile_verification_failed'});
+});
+
+test('Codex 标准档明确覆盖宿主档位，未采用时清理空线程并报告失败',async()=>{
+  const calls:{method:string;params:any}[]=[];
+  const rpc={request:async(method:string,params:any)=>{calls.push({method,params});if(method==='thread/start')return{thread:{id:'new'},serviceTier:params.serviceTier==='default'?'default':null,approvalPolicy:'never',approvalsReviewer:'user',sandbox:{type:'dangerFullAccess'}};if(method==='thread/loaded/list')return{data:[]};return{};}} as RpcClient;
+  await startOwnedCodex(rpc,'/project','bypass',undefined,undefined,{serviceTier:'standard'});
+  assert.equal(calls[0]!.params.serviceTier,'default');
+  calls.length=0;
+  await assert.rejects(startOwnedCodex(rpc,'/project','bypass',undefined,undefined,{serviceTier:'fast'}),{code:'profile_service_tier_unavailable',message:/新会话已撤掉/});
+  assert.equal(calls[0]!.params.serviceTier,'priority');
+  assert.equal(calls.some(call=>call.method==='thread/delete'&&call.params.threadId==='new'),true);
+  assert.equal(calls.filter(call=>call.method==='thread/start').length,1);
+  const request=rpc.request.bind(rpc);
+  rpc.request=async(method,params,options)=>{if(method==='thread/delete')throw Error('无法删除空线程');return request(method,params,options);};
+  await assert.rejects(startOwnedCodex(rpc,'/project','bypass',undefined,undefined,{serviceTier:'fast'}),(error:Error)=>!error.message.includes('新会话已撤掉')&&/空线程尚未确认卸载/.test(error.message));
+});
+
+test('新 Codex 的 null 档位投影用新生效记录核验，不同档位仍清理空线程',async t=>{
+  for(const actualTier of ['opaque-tier-a','other-tier']){
+    const home=temporary(t),file=path.join(home,'new.jsonl'),calls:{method:string;params:any}[]=[];
+    writeFileSync(file,JSON.stringify({type:'session_meta',payload:{id:'new'}})+'\n','utf8');
+    const rpc={request:async(method:string,params:any)=>{
+      calls.push({method,params});
+      if(method==='thread/start')return{thread:{id:'new',path:file},serviceTier:null,approvalPolicy:'never',approvalsReviewer:'user',sandbox:{type:'dangerFullAccess'}};
+      if(method==='thread/settings/update'){
+        assert.equal(Object.hasOwn(params,'serviceTier'),false,'只能证明，不能把要求的档位重新写入');
+        appendFileSync(file,JSON.stringify({type:'event_msg',payload:{type:'thread_settings_applied',thread_id:'new',thread_settings:{service_tier:actualTier}}})+'\n','utf8');
+      }
+      return{data:[]};
+    }} as RpcClient;
+    if(actualTier==='opaque-tier-a')assert.equal((await startOwnedCodex(rpc,home,'bypass',undefined,undefined,{serviceTier:'opaque-tier-a'})).serviceTier,'opaque-tier-a');
+    else await assert.rejects(startOwnedCodex(rpc,home,'bypass',undefined,undefined,{serviceTier:'opaque-tier-a'}),{code:'profile_service_tier_unavailable'});
+    assert.equal(calls.some(call=>call.method==='thread/delete'),actualTier!=='opaque-tier-a');
+    assert.equal(calls.some(call=>call.method==='turn/start'),false);
+  }
+});
+
+test('Codex 搭档设置回读与初次核验共用新档位证据，缺字段不能继承旧值',async t=>{
+  for(const actualTier of ['priority','flex',undefined]){
+    const home=temporary(t),store=new Store(':memory:'),file=path.join(home,'profile.jsonl');t.after(()=>store.close());
+    const peer=store.register(registration('codex','profile-tier'));store.updatePeer(peer.id,{owner:'nxbridge',serviceTier:'fast'});
+    const endpoint={...store.endpoint(peer.id)!,runtimeId:randomUUID()};
+    saveManagedRuntime(home,{id:endpoint.runtimeId,peerId:peer.id,owner:managedMarker(home),kind:'owned',state:'ready',endpoint:endpoint.address,pid:endpoint.pid!,procStart:endpoint.procStart!,createdAt:Date.now()});
+    const line=(settings:object)=>JSON.stringify({type:'event_msg',payload:{type:'thread_settings_applied',thread_id:peer.sessionId,thread_settings:settings}})+'\n';
+    const nativeSettings={model:'chosen',reasoning_effort:'high',permission_profile:{type:'disabled'},approval_policy:'never',approvals_reviewer:'user'};
+    writeFileSync(file,JSON.stringify({type:'session_meta',payload:{id:peer.sessionId}})+'\n'+line({...nativeSettings,...(actualTier===undefined?{}:{service_tier:actualTier})}),'utf8');
+    const adapter=new CodexAdapter(DEFAULT_CONFIG,home);t.after(()=>adapter.close());
+    const calls:{method:string;params:any}[]=[];
+    const rpc={closed:false,close:()=>{},request:async(method:string,params:any,options?:{beforeSend?:()=>void})=>{
+      options?.beforeSend?.();
+      calls.push({method,params});
+      if(method==='thread/settings/update')appendFileSync(file,line({...nativeSettings,...(actualTier===undefined?{}:{service_tier:actualTier})}),'utf8');
+      return{thread:{id:peer.sessionId,path:file,status:{type:'idle'},model:'chosen',reasoningEffort:'high'},model:'chosen',reasoningEffort:'high',serviceTier:null,approvalPolicy:'never'};
+    }};
+    const current=store.peer(peer.id),profiles=new PartnerProfiles(store,home,DEFAULT_CONFIG);profiles.set(current,{serviceTier:'fast'});
+    (adapter as any).connect=async()=>rpc;
+    (adapter as any).clients.set(endpoint.address,rpc);
+    (adapter as any).ownedRoutes.subscribed({peer:current,endpoint},rpc);
+    if(actualTier===undefined){
+      await assert.rejects(adapter.readProfile(current,endpoint,()=>{}),{code:'profile_unverified'});
+      assert.deepEqual(calls.map(call=>call.method),['thread/read']);
+      continue;
+    }
+    const actual=await adapter.readProfile(current,endpoint,()=>{});
+    assert.equal(actual.serviceTier,actualTier==='priority'?'fast':actualTier??null);
+    assert.equal(calls.some(call=>call.method==='thread/settings/update'),false);
+    assert.deepEqual(calls.map(call=>call.method),['thread/read']);
+    if(actualTier==='priority'){profiles.applied(current,actual);assert.equal(profiles.blocks(current),false);}
+    else assert.throws(()=>profiles.applied(current,actual),{code:'profile_verification_failed'});
+    calls.length=0;
+    const switched=await adapter.setProfile(current,endpoint,{serviceTier:'fast'},()=>{});
+    assert.equal(switched.serviceTier,actual.serviceTier);
+    assert.equal(calls.filter(call=>call.method==='thread/settings/update'&&Object.hasOwn(call.params,'serviceTier')).length,1,'设置请求只提交一次，证明不修正被拒绝的值');
+  }
 });
 
 test('提交边界区分读取失败与提交后回读失败，不让 RPC 缺省 uncertain=false 丢掉不确定性',()=>{
@@ -204,14 +280,18 @@ test('提交边界区分读取失败与提交后回读失败，不让 RPC 缺省
 test('Codex 长会话设置只读取摘要；提交前失败不暂停，提交后超时保留不确定性',async t=>{
   const home=temporary(t),store=new Store(':memory:');t.after(()=>store.close());
   const peer=store.register(registration('codex','long-session'));store.updatePeer(peer.id,{owner:'nxbridge'});
-  const current=store.peer(peer.id),endpoint=store.endpoint(peer.id)!;
-  saveManagedRuntime(home,{id:randomUUID(),peerId:peer.id,owner:managedMarker(home),kind:'owned',state:'ready',endpoint:endpoint.address,createdAt:Date.now()});
+  const current=store.peer(peer.id),endpoint={...store.endpoint(peer.id)!,runtimeId:randomUUID()};
+  saveManagedRuntime(home,{id:endpoint.runtimeId,peerId:peer.id,owner:managedMarker(home),kind:'owned',state:'ready',endpoint:endpoint.address,pid:endpoint.pid!,procStart:endpoint.procStart!,createdAt:Date.now()});
   const adapter=new CodexAdapter(DEFAULT_CONFIG,home);t.after(()=>adapter.close());
   const calls:{method:string;params:any}[]=[];let fail:'pre'|'post'|undefined,rejected=false;
-  (adapter as any).connect=async()=>({request:async(method:string,params:any)=>{
+  const rpc={closed:false,close:()=>{},request:async(method:string,params:any,options?:{beforeSend?:()=>void})=>{
+    options?.beforeSend?.();
     calls.push({method,params});if(method==='thread/read'&&(fail==='pre'||fail==='post'&&calls.some(call=>call.method==='thread/settings/update')))throw new DeliveryError(rejected?'-32602':'timeout','宿主回读失败');
     return{thread:{id:peer.sessionId,status:{type:'idle'},model:'chosen',reasoningEffort:'high'}};
-  }});
+  }};
+  (adapter as any).connect=async()=>rpc;
+  (adapter as any).clients.set(endpoint.address,rpc);
+  (adapter as any).ownedRoutes.subscribed({peer:current,endpoint},rpc);
   fail='pre';await assert.rejects(adapter.setProfile(current,endpoint,{model:'chosen'},()=>{}),{uncertain:false});
   assert.equal(calls.some(call=>call.method==='thread/settings/update'),false);
   calls.length=0;fail='post';await assert.rejects(adapter.setProfile(current,endpoint,{model:'chosen'},()=>{}),{uncertain:true});

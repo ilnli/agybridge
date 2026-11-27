@@ -182,7 +182,7 @@ test('短命控制进程在采集归属期间正常退出，不误报身份核�
 });
 
 test('重启前缺失 Job 的记录可退休，同代存活根或宿主不能被启动时间推断覆盖',{skip:process.platform!=='win32'},async t=>{
-  const {home,identity,parent,child}=await scope(t),record=await recordSpawnedProcess(home,{role:'codex-runtime',identity,parent,windowsJob:'Global\\nxbridge-job-'+randomUUID(),proof:{kind:'spawn'}});
+  const {home,identity,parent,child}=await scope(t),record=await recordSpawnedProcess(home,{role:'codex-runtime',identity,parent,windowsJob:'Global\\agybridge-job-'+randomUUID(),proof:{kind:'spawn'}});
   const save=()=>atomicJson(path.join(processRegistryDirectory(home),record.id+'.json'),record);
   t.after(()=>forgetOwnedProcess(record));
   record.bootTime=Date.now()-uptime()*1000-86400000;save();
@@ -195,7 +195,7 @@ test('重启前缺失 Job 的记录可退休，同代存活根或宿主不能被
 });
 
 test('原生交接等待确认期间的转交、删除及元数据更新不能被旧快照覆盖',async t=>{
-  const temp=temporaryDirectory(),home=temp.directory,identity=await processIdentity(process.pid),address=process.platform==='win32'?'\\\\.\\pipe\\nxbridge-declaration-'+randomUUID():path.join(home,'declare.sock');
+  const temp=temporaryDirectory(),home=temp.directory,identity=await processIdentity(process.pid),address=process.platform==='win32'?'\\\\.\\pipe\\agybridge-declaration-'+randomUUID():path.join(home,'declare.sock');
   let arrived:(()=>void)|undefined,confirm:(()=>void)|undefined,connections=0;
   const server=net.createServer(socket=>{connections++;socket.on('error',()=>{});socket.once('data',()=>{confirm=()=>socket.end('{"ok":true}\n');arrived?.();});});server.listen(address);await once(server,'listening');
   t.after(async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()));for(const record of ownedProcesses(home).records)forgetOwnedProcess(record);await temp.cleanup();});

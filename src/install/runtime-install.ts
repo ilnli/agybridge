@@ -46,6 +46,9 @@ export function fileHashes(root:string,ignore:string[]=[],contents?:Map<string,B
   };
   walk(root,'');return files;
 }
+export function pluginFileHashes(root:string,_host?:'codex'|'agy',contents?:Map<string,Buffer>):Record<string,string>{
+  return fileHashes(root,[],contents);
+}
 export function runtimeManifest(root=PACKAGE_ROOT):RuntimeManifest|undefined{
   try{const value=readJson<RuntimeManifest>(path.join(root,'publish.json'));return value.owner===OWNER&&typeof value.buildId==='string'&&typeof value.version==='string'&&!!value.files?value:undefined;}catch{return;}
 }

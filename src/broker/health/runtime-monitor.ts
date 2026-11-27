@@ -20,7 +20,7 @@ function sameNative(value:HealthSnapshot,native:Native):boolean{
   return recorded?.pid===native.pid&&recorded.procStart===native.procStart;
 }
 
-export async function collectRuntimeNotices(home:string,host:Host,sessionId:string,native:Native,contextKey?:string,options:{admit?:boolean;noticeId?:string;binding?:{key:string;epoch:string};deadline?:number}={}):Promise<RuntimeNotice[]>{
+export async function collectRuntimeNotices(home:string,host:Host,sessionId:string,native:Native,contextKey?:string,options:{admit?:boolean;noticeId?:string;binding?:{key:string;epoch:string};deadline?:number;readyBoundary?:boolean;onDeferred?:()=>void}={}):Promise<RuntimeNotice[]>{
   const timeout=(limit:number)=>remainingTime(options.deadline,limit);
   if(!installationEnabled(home))return[];
   const value=readHealthSnapshot(home,host,sessionId,contextKey,native,timeout(300));
@@ -42,8 +42,9 @@ export async function collectRuntimeNotices(home:string,host:Host,sessionId:stri
     const rpc=await connectBroker(home,timeout(500));
     try{
       const requestTimeout=timeout(3500);requested=true;
-      const result=(await rpc.request<{notices:RuntimeNotice[]}>('health.monitor',{actor:{host,memberId:value.sender.id,sessionId,callId:randomUUID(),...(value.binding?{binding:value.binding}:{})},...(contextKey?{context_key:contextKey}:{}),admit:options.admit!==false,...(options.noticeId?{notice_id:options.noticeId}:{})},{timeout:requestTimeout,mutation:options.admit!==false})).notices;
-      return result;
+      const result=await rpc.request<{notices:RuntimeNotice[];deferred?:boolean}>('health.monitor',{actor:{host,memberId:value.sender.id,sessionId,callId:randomUUID(),...(value.binding?{binding:value.binding}:{})},...(contextKey?{context_key:contextKey}:{}),admit:options.admit!==false,...(options.noticeId?{notice_id:options.noticeId}:{}),...(host==='agy'&&options.readyBoundary?{ready_boundary:true}:{})},{timeout:requestTimeout,mutation:options.admit!==false});
+      if(result.deferred)options.onDeferred?.();
+      return result.notices;
     }
     finally{rpc.close();}
   }catch(error){
@@ -73,7 +74,8 @@ export async function collectRuntimeNotices(home:string,host:Host,sessionId:stri
     return options.admit===false?fresh.map(n=>noticeSignal(n) as RuntimeNotice):fresh.flatMap(n=>{const prepared=health.prepare(current.pair.id,current.sender.id,n.id,current.scope,true);return prepared?[prepared]:[];});
   },native,timeout(3000))??[];
 }
-export async function acknowledgeRuntimeNotice(home:string,host:Host,sessionId:string,native:Native,id:string,state:'submitted'|'denied'|'unknown',error?:string,contextKey?:string,timeoutMs=3000):Promise<void>{
+export async function acknowledgeRuntimeNotice(home:string,host:Host,sessionId:string,native:Native,id:string,state:'submitted'|'denied'|'unknown'|'not_submitted',error?:string,contextKey?:string,timeoutMs=3000):Promise<void>{
+  if(state==='not_submitted'&&!id.startsWith('background-completed:'))return;
   if(isBrokerOutageNotice(id)){
     if(state==='denied'){const value=readHealthSnapshot(home,host,sessionId,contextKey,native);if(value&&sameNative(value,native))releaseBrokerOutageClaim(home,{host,peerId:value.sender.id,sessionId,...native},id);}
     return;
@@ -82,7 +84,8 @@ export async function acknowledgeRuntimeNotice(home:string,host:Host,sessionId:s
   if(state==='submitted')acknowledgeContextSnapshot(home,host,sessionId,native,id,contextKey,remaining());
   updateHealthSnapshot(home,host,sessionId,contextKey,(health,value,storage)=>{
     if(!sameNative(value,native))return;
-    if(value.change?.id===id){if(value.change.admitted)storage.setSetting(pairChangeKey(value.sender.id),{...value.change,state,...(error?{error:error.slice(0,1200)}:{})});}
+    if(state==='not_submitted')health.outcome(value.pair.id,value.sender.id,id,'pending',error?.slice(0,1200));
+    else if(value.change?.id===id){if(value.change.admitted)storage.setSetting(pairChangeKey(value.sender.id),{...value.change,state,...(error?{error:error.slice(0,1200)}:{})});}
     else if(value.loss?.id===id){if(value.loss.admitted)storage.setSetting(pairLossKey(value.sender.id),{...value.loss,state,...(error?{error:error.slice(0,1200)}:{})});}
     else health.outcome(value.pair.id,value.sender.id,id,state,error?.slice(0,1200));
   },native,remaining());

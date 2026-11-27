@@ -1,32 +1,74 @@
 import {randomUUID} from 'node:crypto';
 import {type Pair,type Peer} from '../../types.js';
+import type {Store} from '../../storage/store.js';
 import {HealthNoticePolicy,noticeCanWake,noticeTier} from './notice-policy.js';
 import {type RuntimeAvailability,type DeliveryCounts,unsettledCount,type RuntimeNotice,type HealthStorage,deliveryHealthKey} from './contracts.js';
+import {missingCodexSocketModelText} from './runtime-incidents.js';
 interface DeliveryIncident {id:string;active:boolean;reasons:string[];notices:RuntimeNotice[];checkedAt:number;scope?:string;revision?:number;alertAdmitted?:boolean;restartSignature?:string;since?:number;dependencySince?:number;unverified?:{since:number;lastAt:number;count:number}}
 const countsText=(c:DeliveryCounts)=>((Object.entries({unsent:c.accepted,sending:c.sending,'queued-unread':c.runtimeQueued,held:c.held,unknown:c.unknown}).filter(([,count])=>count).map(([label,count])=>`${label}=${count}`).join(', '))||'none');
-const waitingIdle=(notice:RuntimeNotice)=>notice.source==='idle_unanswered'&&!notice.admitted&&notice.state==='denied'&&notice.error==='condition resolved before delivery';
+const waitingIdle=(notice:RuntimeNotice)=>(notice.source==='idle_unanswered'||notice.source==='background_completed')&&!notice.admitted&&notice.state==='denied'&&notice.error==='condition resolved before delivery';
 
-                                                             
 export class DeliveryHealth {
   private policy:HealthNoticePolicy;
   constructor(private storage:HealthStorage){this.policy=new HealthNoticePolicy(storage);}
+  bindForegroundEdge(read:(recipient:string)=>string):void{this.policy.bindForegroundEdge(read);}
+  async reconcileAtStartup(store:Pick<Store,'faults'|'peer'|'deliveryCounts'|'unsettledDeliveryFacts'>,snapshot:ReturnType<Store['interruptedDeliverySnapshot']>):Promise<void>{
+    for(const pair of snapshot.pairs)for(const id of [pair.codex,pair.agy])await store.faults.run('startup_delivery:'+id,()=>
+      this.restarted(pair,store.peer(id),store.deliveryCounts(pair.id,id),store.unsettledDeliveryFacts(pair.id,id),snapshot.sending.get(id)??0));
+  }
   enqueue(pairId:string,recipientId:string,notice:RuntimeNotice):void{
     this.storage.transaction(()=>{
       if(this.policy.sameFact(recipientId,notice))return;
       const key=deliveryHealthKey(pairId,recipientId),value=this.storage.setting<DeliveryIncident>(key)??{id:randomUUID(),active:false,reasons:[],notices:[],checkedAt:Date.now()};
       const existing=value.notices.find(n=>n.id===notice.id);
-      if(existing){if(notice.source==='managed_recovery'&&!existing.admitted&&(existing.state==='pending'||existing.state==='sending')){Object.assign(existing,notice);this.storage.setSetting(key,value);}return;}
+      if(existing){
+        const cancelled=existing.state==='denied'&&existing.error==='condition resolved before delivery';
+        if(notice.source==='managed_recovery'&&!existing.admitted&&(existing.state==='pending'||existing.state==='sending'||cancelled)){
+          if(cancelled){delete existing.error;delete existing.claimedAt;}
+          Object.assign(existing,notice);this.storage.setSetting(key,value);
+        }
+        return;
+      }
       value.notices=value.notices.filter(n=>n.state==='pending'||n.state==='sending'||waitingIdle(n)&&n.kind!==notice.kind);value.notices.push(notice);this.storage.setSetting(key,value);
     });
   }
   cancel(pairId:string,recipientId:string,id:string):void{
     this.storage.transaction(()=>{const key=deliveryHealthKey(pairId,recipientId),value=this.storage.setting<DeliveryIncident>(key),notice=value?.notices.find(n=>n.id===id&&!n.admitted&&(n.state==='pending'||n.state==='sending'));if(notice){notice.state='denied';notice.error='condition resolved before delivery';this.storage.setSetting(key,value);}});
   }
+  cancelSource(pairId:string,recipientId:string,source:string):void{
+    this.storage.transaction(()=>{
+      const key=deliveryHealthKey(pairId,recipientId),value=this.storage.setting<DeliveryIncident>(key);if(!value)return;
+      let changed=false;
+      for(const notice of value.notices)if(notice.source===source&&!notice.admitted&&(notice.state==='pending'||notice.state==='sending')){notice.state='denied';notice.error='condition resolved before delivery';changed=true;}
+      if(changed)this.storage.setSetting(key,value);
+    });
+  }
+  cancelKind(pairId:string,recipientId:string,kind:string,keep?:string):void{
+    this.storage.transaction(()=>{
+      const key=deliveryHealthKey(pairId,recipientId),value=this.storage.setting<DeliveryIncident>(key);
+      if(!value)return;
+      let changed=false;
+      for(const notice of value.notices)if(notice.kind===kind&&notice.id!==keep&&!notice.admitted&&(notice.state==='pending'||notice.state==='sending')){
+        notice.state='denied';notice.error='condition resolved before delivery';changed=true;
+      }
+      if(changed)this.storage.setSetting(key,value);
+    });
+  }
+  promoteIdleNotices(pairId:string,recipientId:string):void{
+    this.storage.transaction(()=>{
+      const key=deliveryHealthKey(pairId,recipientId),value=this.storage.setting<DeliveryIncident>(key);
+      if(!value)return;
+      let changed=false;
+      for(const notice of value.notices)if(notice.wakeWhenIdle&&!notice.admitted&&notice.state==='pending'){
+        delete notice.wakeWhenIdle;notice.wake=true;notice.tier=4;changed=true;
+      }
+      if(changed)this.storage.setSetting(key,value);
+    });
+  }
   updatePending(pairId:string,recipientId:string,id:string,message:string,scope?:string,factKey?:string,fields?:Partial<RuntimeNotice>):void{
     this.storage.transaction(()=>{
       const key=deliveryHealthKey(pairId,recipientId),value=this.storage.setting<DeliveryIncident>(key),notice=value?.notices.find(n=>n.id===id&&!n.admitted&&(n.state==='pending'||n.state==='sending'||waitingIdle(n)));
       if(notice){
-                                                
         if(notice.state==='denied'){notice.state='pending';delete notice.error;delete notice.claimedAt;}
         notice.message=message;notice.scope=scope;if(factKey!==undefined)notice.factKey=factKey;if(fields)Object.assign(notice,fields);notice.revision=(notice.revision??0)+1;this.storage.setSetting(key,value);
       }
@@ -55,7 +97,6 @@ export class DeliveryHealth {
       }
       if(availability.state==='starting')return;
       const dependencySince=this.storage.deliveryDependencySince?.(pair.id,partner.id),unsettled=unsettledCount(counts)>0,dependent=unsettled||awaitingReply||dependencySince!==undefined;
-                                           
       if(dependent)incident.dependencySince=dependencySince??(this.storage.deliveryDependencySince?now:incident.dependencySince??now);
       else delete incident.dependencySince;
       let bad=availability.state!=='reachable';
@@ -73,18 +114,19 @@ export class DeliveryHealth {
       if(!dependent&&!incident.active&&!monitor)return;
       if(!incident.active){incident.id=availability.incident?.id??randomUUID();incident.since=availability.incident?.since??now;incident.alertAdmitted=false;}
       incident.active=true;incident.scope=scope??incident.scope;incident.checkedAt=now;incident.since??=now;incident.reasons=availability.reasons;
-                                             
       if(!dependent){
         for(const notice of incident.notices)if(notice.kind==='runtime'&&!notice.admitted){notice.state='denied';notice.error='condition resolved before delivery';}
         this.storage.setSetting(key,incident);return;
       }
       const cause=availability.incident,hard=cause!==undefined&&!['transient','unknown'].includes(cause.causeClass),age=Math.max(0,Math.min(now-incident.since,now-(incident.dependencySince??now))),tier=dependent&&(hard||age>=300000)?3:1;
       const reason=cause?.code??(availability.state==='reachable'?'awaiting context receipt':availability.reasons[0]??'runtime availability unverified');
-      const message=`Partner delivery remains unconfirmed for ${Math.floor(age/60000)}min (${reason}); pending: ${unsettled?countsText(counts):'awaiting partner reply'}. Continue independent work; inspect the held dependency if it still blocks you.`;
+      const missing=cause?.code==='codex_socket_target_missing';
+      const message=missing?missingCodexSocketModelText(partner):`Partner delivery remains unconfirmed for ${Math.floor(age/60000)}min (${reason}); pending: ${unsettled?countsText(counts):'awaiting partner reply'}. Continue independent work; inspect the held dependency if it still blocks you.`;
+      const action=missing&&cause?.action?{owner:cause.action.owner,text:partner.owner==='nxbridge'?'Inspect managed recovery; agybridge restarts the same session only at safe idle.':`Tell user to resume ${partner.host} session ${partner.sessionId} in its original cwd at idle.`}:cause?.action;
       const alert=incident.notices.findLast(notice=>notice.incidentId===incident.id&&notice.kind==='runtime');
-      if(alert&&!alert.admitted){Object.assign(alert,{message,tier,scope,since:incident.since,layer:cause?.layer??'delivery',causeClass:cause?.causeClass??'unknown',action:cause?.action});if(alert.state==='denied'&&alert.error==='condition resolved before delivery'){alert.state='pending';delete alert.error;}}
+      if(alert&&!alert.admitted){Object.assign(alert,{message,tier,scope,since:incident.since,layer:cause?.layer??'delivery',causeClass:cause?.causeClass??'unknown',action});if(alert.state==='denied'&&alert.error==='condition resolved before delivery'){alert.state='pending';delete alert.error;}}
       else if(!alert){
-        incident.notices.push({id:randomUUID(),message,state:'pending',incidentId:incident.id,phase:'alert',kind:'runtime',tier,wake:false,since:incident.since,factKey:incident.id,layer:cause?.layer??'delivery',causeClass:cause?.causeClass??'unknown',action:cause?.action,...(scope?{scope}:{})});
+        incident.notices.push({id:randomUUID(),message,state:'pending',incidentId:incident.id,phase:'alert',kind:'runtime',tier,wake:false,since:incident.since,factKey:incident.id,layer:cause?.layer??'delivery',causeClass:cause?.causeClass??'unknown',action,...(scope?{scope}:{})});
         this.storage.event('health.delivery.alert',{pairId:pair.id,senderId:sender.id,incidentId:incident.id,code:cause?.code,counts});
       }
       this.storage.setSetting(key,incident);
@@ -94,7 +136,6 @@ export class DeliveryHealth {
     if(!unsettledCount(counts))return;
     this.storage.transaction(()=>{
       const key=deliveryHealthKey(pair.id,sender.id),value=this.storage.setting<DeliveryIncident>(key)??{id:randomUUID(),active:false,reasons:[],notices:[],checkedAt:Date.now()};
-                                                
       const signature=JSON.stringify(messages.map(({id,state})=>[id,state]).sort((a,b)=>a[0]!.localeCompare(b[0]!)));
       if(value.restartSignature===signature)return;
       value.restartSignature=signature;const id=randomUUID();
@@ -106,34 +147,40 @@ export class DeliveryHealth {
   private pending(value:DeliveryIncident|undefined,senderId:string,onlyRuntime:boolean):RuntimeNotice[]{
     return value?.notices.filter(n=>!n.admitted&&(!onlyRuntime||!n.source)&&(n.state==='pending'||n.state==='sending'&&Date.now()-(n.claimedAt??0)>=60000)&&this.policy.eligible(senderId,n))??[];
   }
-                                          
+  private groups(notices:RuntimeNotice[],recipient:string):RuntimeNotice[]{
+    return[notices.filter(n=>!n.readyOnly),notices.filter(n=>n.readyOnly)].filter(group=>group.length).map(group=>this.combined(group,recipient));
+  }
   peek(pairId:string,senderId:string,onlyRuntime=false):RuntimeNotice[]{
     const pending=this.pending(this.storage.setting<DeliveryIncident>(deliveryHealthKey(pairId,senderId)),senderId,onlyRuntime);
-    return pending.length?[this.combined(pending,senderId)]:[];
+    return this.groups(pending,senderId);
   }
   take(pairId:string,senderId:string,onlyRuntime=false):RuntimeNotice[]{
     return this.storage.transaction(()=>{
       const key=deliveryHealthKey(pairId,senderId),value=this.storage.setting<DeliveryIncident>(key);if(!value)return[];
       const pending=this.pending(value,senderId,onlyRuntime);
       for(const notice of value.notices)if(pending.some(n=>n.id===notice.id)){notice.state='sending';notice.claimedAt=Date.now();}
-      if(pending.length)this.storage.setSetting(key,value);return pending.length?[this.combined(pending,senderId)]:[];
+      if(pending.length)this.storage.setSetting(key,value);return this.groups(pending,senderId);
     });
   }
   get(pairId:string,senderId:string,id:string):RuntimeNotice|undefined{const notice=this.storage.setting<DeliveryIncident>(deliveryHealthKey(pairId,senderId))?.notices.find(n=>n.id===id&&(n.state==='pending'||n.state==='sending')&&!n.admitted);return notice?{...notice,tier:noticeTier(notice),wake:this.policy.canWake(senderId,notice)}:undefined;}
   recordedCanWake(pairId:string,recipient:string,id:string):boolean{return this.storage.setting<DeliveryIncident>(deliveryHealthKey(pairId,recipient))?.notices.some(n=>(n.id===id||n.batchId===id)&&(n.admitted?noticeCanWake(n,recipient):this.policy.canWake(recipient,n)))===true;}
-  private combined(notices:RuntimeNotice[],recipient:string):RuntimeNotice{return{...notices[0]!,tier:Math.max(...notices.map(noticeTier)) as 3|4,wake:notices.some(n=>this.policy.canWake(recipient,n)),message:notices.map(n=>n.message).join('\n'),componentIds:notices.map(n=>n.id)};}
+  eligible(pairId:string,recipient:string,id:string):boolean{const notice=this.get(pairId,recipient,id);return !!notice&&this.policy.eligible(recipient,notice);}
+  retryHold(pairId:string,recipient:string,id:string):'notice_retry_held'|undefined{const notice=this.get(pairId,recipient,id);return notice?this.policy.retryHold(recipient,notice):undefined;}
+  private combined(notices:RuntimeNotice[],recipient:string):RuntimeNotice{
+    const interventionIds=notices.flatMap(notice=>notice.interventionIds??(notice.interventionId?[notice.interventionId]:[]));
+    return{...notices[0]!,tier:Math.max(...notices.map(noticeTier)) as 3|4,wake:notices.some(n=>this.policy.canWake(recipient,n)),...(notices.some(n=>n.readyOnly)?{readyOnly:true}:{}),message:[...new Set(notices.map(n=>n.message))].join('\n'),componentIds:notices.map(n=>n.id),...(interventionIds.length?{interventionIds:[...new Set(interventionIds)]}:{})};
+  }
   due(pairId:string,senderId:string):boolean{return this.pending(this.storage.setting<DeliveryIncident>(deliveryHealthKey(pairId,senderId)),senderId,false).length>0;}
-  prepare(pairId:string,senderId:string,id:string,scope?:string,onlyRuntime=false,requireWake=false):RuntimeNotice|undefined{
+  prepare(pairId:string,senderId:string,id:string,scope?:string,onlyRuntime=false,requireWake=false,readyBoundary=false):RuntimeNotice|undefined{
     return this.storage.transaction(()=>{
       const key=deliveryHealthKey(pairId,senderId),value=this.storage.setting<DeliveryIncident>(key),notice=value?.notices.find(n=>n.id===id&&!n.admitted&&(n.state==='pending'||n.state==='sending'));
-      if(!value||!notice)return;
+      if(!value||!notice||notice.readyOnly&&!readyBoundary)return;
       const valid=(n:RuntimeNotice)=>!(n.scope&&scope!==n.scope||n.source!=='managed_recovery'&&n.incidentId&&(n.incidentId!==value.id||n.phase==='alert'&&!value.active||n.phase==='recovery'&&value.active));
       for(const n of value.notices)if(!n.admitted&&(n.state==='pending'||n.state==='sending')&&!valid(n))n.state='denied';
       if(!valid(notice)||!this.policy.eligible(senderId,notice)||onlyRuntime&&notice.source){this.storage.setSetting(key,value);return;}
-      const pending=value.notices.filter(n=>!n.admitted&&(n.state==='pending'||n.state==='sending')&&(!onlyRuntime||!n.source)&&valid(n)&&this.policy.eligible(senderId,n));
+      const pending=value.notices.filter(n=>!n.admitted&&(n.state==='pending'||n.state==='sending')&&(!onlyRuntime||!n.source)&&(!n.readyOnly||readyBoundary)&&valid(n)&&this.policy.eligible(senderId,n));
       if(requireWake&&!pending.some(n=>this.policy.canWake(senderId,n))){this.storage.setSetting(key,value);return;}
       const combined=this.combined([notice,...pending.filter(n=>n.id!==id)],senderId);
-                                               
       for(const n of pending){n.admitted=true;n.state='unknown';n.batchId=id;if(!n.source&&n.phase==='alert')value.alertAdmitted=true;
         if(n.source==='managed_recovery'&&n.recovery){const incident=this.storage.setting<import('../recovery/managed-recovery.js').ManagedIncident>('managedRecovery:'+n.kind?.slice('managed_recovery:'.length));if(incident&&incident.id===n.incidentId){incident.noticeAdmitted=true;if(n.recovery.wake)incident.wakeAdmitted=true;this.storage.setSetting('managedRecovery:'+incident.peerId,incident);}}
       }
@@ -141,21 +188,33 @@ export class DeliveryHealth {
       this.storage.setSetting(key,value);return combined;
     });
   }
-  outcome(pairId:string,senderId:string,id:string,state:RuntimeNotice['state'],error?:string):void{
-    this.storage.transaction(()=>{
-      const key=deliveryHealthKey(pairId,senderId),value=this.storage.setting<DeliveryIncident>(key),notice=value?.notices.find(n=>n.id===id);if(!notice)return;
-      if(notice.state==='denied'&&!notice.admitted)return;
+  outcome(pairId:string,senderId:string,id:string,state:RuntimeNotice['state'],error?:string):RuntimeNotice[]{
+    return this.storage.transaction(()=>{
+      const key=deliveryHealthKey(pairId,senderId),value=this.storage.setting<DeliveryIncident>(key),notice=value?.notices.find(n=>n.id===id);if(!notice)return[];
+      if(notice.state==='denied'&&!notice.admitted)return[];
       const batch=notice.batchId?value!.notices.filter(n=>n.batchId===notice.batchId):[notice];
       for(const n of batch){
+        if(state==='pending'&&n.admitted)n.retryBeforeSubmit=true;
         if(state==='pending'||state==='denied'){n.admitted=false;if(!n.source&&n.phase==='alert')value!.alertAdmitted=false;delete n.batchId;}
         if(state==='submitted'){n.admitted=true;if(!n.source&&n.phase==='alert')value!.alertAdmitted=true;}
         n.state=state;if(error)n.error=error;
       }
       this.storage.setSetting(key,value);
       this.storage.event('health.notice',{noticeId:id,peerId:senderId,state,...(error?{error}:{})});
+      return batch.map(notice=>({...notice}));
     });
   }
   active(pairId:string,senderId:string):boolean{return this.storage.setting<DeliveryIncident>(deliveryHealthKey(pairId,senderId))?.active===true;}
-  notes(pairId:string,recipient:string):{text:string}[]{return(this.storage.setting<DeliveryIncident>(deliveryHealthKey(pairId,recipient))?.notices??[]).filter(notice=>noticeTier(notice)===2&&notice.state!=='denied').slice(-3).map(notice=>({text:notice.message}));}
+  notes(pairId:string,recipient:string,viewerId?:string,limit=3):{text:string}[]{
+    const select=(value:DeliveryIncident|undefined)=>(value?.notices??[]).filter(notice=>noticeTier(notice)===2&&notice.state!=='denied'&&(!viewerId||!notice.reportedTo?.includes(viewerId))).slice(-limit);
+    const key=deliveryHealthKey(pairId,recipient);
+    if(!viewerId)return select(this.storage.setting<DeliveryIncident>(key)).map(notice=>({text:notice.message}));
+    return this.storage.transaction(()=>{
+      const value=this.storage.setting<DeliveryIncident>(key),notices=select(value);
+      for(const notice of notices)notice.reportedTo=[...notice.reportedTo??[],viewerId];
+      if(notices.length)this.storage.setSetting(key,value);
+      return notices.map(notice=>({text:notice.message}));
+    });
+  }
   hasPending(pairId:string,senderId:string):boolean{return this.storage.setting<DeliveryIncident>(deliveryHealthKey(pairId,senderId))?.notices.some(n=>n.state==='pending'||n.state==='sending')===true;}
 }

@@ -45,7 +45,7 @@ test('认证后台凭证不进入状态与参数，原窗口认证选择保持�
   assert.equal(localCodexEndpoint(home,value.endpoint),true);assert.equal(localCodexEndpoint(undefined,value.endpoint),false);
   assert.equal(localCodexEndpoint(home,'ws://127.0.0.1:12346'),false);assert.equal(localCodexEndpoint(home,'ws://localhost:12345'),false);assert.equal(localCodexEndpoint(home,'wss://remote.invalid'),false);
   const original=['--remote',value.endpoint,'resume','--last'],authentication=await managedRemoteAuthentication(home,original);
-  assert.equal(authentication.env.NXBRIDGE_CODEX_REMOTE_TOKEN,token);assert.equal(JSON.stringify(authentication.args).includes(token),false);assert.deepEqual(original,['--remote',value.endpoint,'resume','--last']);
+  assert.equal(authentication.env.AGYBRIDGE_CODEX_REMOTE_TOKEN,token);assert.equal(JSON.stringify(authentication.args).includes(token),false);assert.deepEqual(original,['--remote',value.endpoint,'resume','--last']);
   assert.deepEqual((await managedRemoteAuthentication(home,['--remote',value.endpoint,'--remote-auth-token-env','USER_TOKEN'])).env,{});
   assert.deepEqual((await managedRemoteAuthentication(home,['--','--remote',value.endpoint])).env,{});
   if(process.platform!=='win32'){assert.equal(statSync(file).mode&0o777,0o600);chmodSync(file,0o644);assert.equal(managedRuntimeToken(home,value.endpoint),token);chmodSync(file,0o600);}
@@ -112,7 +112,7 @@ test('Linux 旧 boot ID 在 PID 和 ticks 碰巧相同时仍阻止接管与发�
 
 test('原生代次退出后允许恢复，仍存活或未知的包装器仅保留清理证据',async t=>{
   const home=temporary(t);await ensureHome(home);const identity=await processIdentity(process.pid);
-  const adapter=new CodexAdapter({...DEFAULT_CONFIG,codexCommand:['nxbridge-missing-relaunch-fixture']},home);t.after(()=>adapter.close());
+  const adapter=new CodexAdapter({...DEFAULT_CONFIG,codexCommand:['agybridge-missing-relaunch-fixture']},home);t.after(()=>adapter.close());
   let connects=0;t.mock.method(adapter,'connect',async()=>{connects++;throw Error('旧原生代次已退出');});
   for(const unknown of [false,true]){
     const a=record(home,unknown?'unknown':'alive',{state:'ready',pid:2147483647,procStart:'dead',wrapperPid:unknown?-1:identity.pid,wrapperProcStart:unknown?'unknown':identity.startedAt});saveManagedRuntime(home,a);
@@ -132,8 +132,11 @@ test('退休的原生代次不制造活动预约歧义；无关损坏归属保�
   assert.equal(ownedProcesses(home).notes.length,1);assert.equal(await managedRuntimeState(home,ended),'dead');
   assert.equal(await managedRuntimeState(home,record(home,'reserved')),'unknown');
   const adapter=new CodexAdapter(DEFAULT_CONFIG,home);t.after(()=>adapter.close());const seen:string[]=[];
+
+  const declared:string[]=[];
+  t.mock.method(adapter as any,'declareRuntimeNative',async(saved:ManagedRuntime)=>{declared.push(saved.id);return identity;});
   t.mock.method(adapter,'connect',async(endpoint:string)=>{seen.push(endpoint);return{} as any;});
-  assert.equal(await adapter.ensureEndpoint(home,'a'),active.endpoint);assert.deepEqual(seen,[active.endpoint]);assert.equal(runtimeFor(home,{peerId:'a'})!.value.id,active.id);
+  assert.equal(await adapter.ensureEndpoint(home,'a'),active.endpoint);assert.deepEqual(declared,[active.id]);assert.deepEqual(seen,[active.endpoint]);assert.equal(runtimeFor(home,{peerId:'a'})!.value.id,active.id);
   }finally{unlinkSync(malformed);}
 });
 
@@ -143,7 +146,20 @@ test('握手前失败仍回收本次创建的完整容器，并允许下次重�
   writeFileSync(script,`const{spawn}=require('node:child_process'),fs=require('node:fs');if(process.argv.includes('--help')){process.stdout.write('fixture app-server');}else{const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true});fs.writeFileSync(${JSON.stringify(output)},JSON.stringify({wrapper:process.pid,child:child.pid}));setInterval(()=>{},1000);}`,'utf8');
   const adapter=new CodexAdapter({...DEFAULT_CONFIG,codexCommand:[process.execPath,script],codexHome:home},home);t.after(async()=>{adapter.close();assert.deepEqual(await releaseRecordedProcesses(home,()=>true),[]);});
   let attempts=0,lastId:string|undefined,identities:Awaited<ReturnType<typeof processIdentity>>[]=[],container:OwnedProcessRecord|undefined;
-  t.mock.method(adapter,'connect',async()=>{const deadline=Date.now()+5000;while(!existsSync(output)){assert.ok(Date.now()<deadline,'启动夹具未创建后代');await delay(20);}const created=JSON.parse(readFileSync(output,'utf8'));identities=await Promise.all([processIdentity(created.wrapper),processIdentity(created.child)]);container=ownedProcesses(home).records.find(record=>record.windowsJob||record.posixGroup);attempts++;throw new BridgeError('process_launch_unverified','夹具拒绝原生交接');});
+
+  const boundary=adapter as unknown as Record<'declareRuntimeNative'|'connect',()=>Promise<unknown>>;
+  const rejectHandoff=async()=>{
+    const deadline=Date.now()+5000;
+    while(!existsSync(output)){assert.ok(Date.now()<deadline,'启动夹具未创建后代');await delay(20);}
+    const created=JSON.parse(readFileSync(output,'utf8'));
+    identities=await Promise.all([processIdentity(created.wrapper),processIdentity(created.child)]);
+    const launchId=runtimeFor(home,{peerId:'failed-start'})!.value.id;
+    container=ownedProcesses(home).records.find(record=>record.proof.launchId===launchId&&(record.windowsJob||record.posixGroup));
+    attempts++;throw new BridgeError('process_launch_unverified','夹具拒绝原生交接');
+  };
+  const mac=process.platform==='darwin';
+  t.mock.method(boundary,mac?'declareRuntimeNative':'connect',rejectHandoff);
+  const unexpectedConnect=mac?t.mock.method(adapter,'connect',async()=>{throw Error('未声明原生代次时不能握手');}):undefined;
   for(let attempt=0;attempt<2;attempt++){
     await assert.rejects(adapter.ensureEndpoint(home,'failed-start'),{code:'process_launch_unverified'});
     const saved=runtimeFor(home,{peerId:'failed-start'})!.value;
@@ -159,6 +175,7 @@ test('握手前失败仍回收本次创建的完整容器，并允许下次重�
     await pruneDeadProcessRecords(home);assert.equal(runtimeFor(home,{id:saved.id}),undefined);
   }
   assert.equal(attempts,2);
+  assert.equal(unexpectedConnect?.mock.callCount()??0,0);
 });
 
 test('没有启动证明的失败预约保持未知；只有已确认没有进程的失败可清理',async t=>{
@@ -171,7 +188,7 @@ test('没有启动证明的失败预约保持未知；只有已确认没有进�
 test('协调器在声明前退出，下一实例回收仅剩辅助进程的原容器再解除启动预约',{skip:process.platform==='win32',timeout:30000},async t=>{
   const home=temporary(t);await ensureHome(home);const ready=path.join(home,'undeclared.json'),stop=path.join(home,'owner-exit'),saved=record(home,'undeclared');
   const source="const{spawn}=require('node:child_process');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});child.once('spawn',()=>{require('node:fs').writeFileSync(process.argv[1],JSON.stringify({pid:child.pid}));process.exit(0);});";
-  const module=(name:string)=>JSON.stringify(new URL('../'+name+'.js',import.meta.url).href),ownerSource=`import{spawnPosixSupervisor}from ${module('process/posix/posix-supervisor')};import{rememberOwnedChild}from ${module('process/owned-processes')};import{saveManagedRuntime}from ${module('hosts/managed-runtimes')};import{existsSync}from'node:fs';const saved=${JSON.stringify(saved)},child=spawnPosixSupervisor(process.execPath,['-e',${JSON.stringify(source)},${JSON.stringify(ready)}],{stdio:'ignore',waitForNative:true});const proof=await rememberOwnedChild(${JSON.stringify(home)},child,'codex-runtime',{peerId:saved.peerId,posixGroup:true},saved.id);saved.wrapperPid=proof.identity.pid;saved.wrapperProcStart=proof.identity.startedAt;saveManagedRuntime(${JSON.stringify(home)},saved);setInterval(()=>{if(existsSync(${JSON.stringify(stop)}))process.exit(0);},20);`;
+  const module=(name:string)=>JSON.stringify(new URL('../'+name+'.js',import.meta.url).href),ownerSource=`import{spawnPosixSupervisor}from ${module('process/posix/posix-supervisor')};import{rememberOwnedChild}from ${module('process/owned-processes')};import{saveManagedRuntime}from ${module('hosts/managed-runtimes')};import{existsSync}from'node:fs';const saved=${JSON.stringify(saved)},home=${JSON.stringify(home)},child=spawnPosixSupervisor(process.execPath,['-e',${JSON.stringify(source)},${JSON.stringify(ready)}],{stdio:'ignore',waitForNative:true,home});const proof=await rememberOwnedChild(home,child,'codex-runtime',{peerId:saved.peerId,posixGroup:true},saved.id);saved.wrapperPid=proof.identity.pid;saved.wrapperProcStart=proof.identity.startedAt;saveManagedRuntime(home,saved);setInterval(()=>{if(existsSync(${JSON.stringify(stop)}))process.exit(0);},20);`;
   const owner=spawn(process.execPath,['--input-type=module','-e',ownerSource],{stdio:'ignore'}),closed=once(owner,'close');
   t.after(async()=>{if(owner.exitCode===null&&owner.signalCode===null)owner.kill();await closed;assert.deepEqual(await releaseRecordedProcesses(home,()=>true),[]);});
   const deadline=Date.now()+5000;while(!existsSync(ready)){assert.ok(Date.now()<deadline);await delay(20);}
@@ -179,7 +196,7 @@ test('协调器在声明前退出，下一实例回收仅剩辅助进程的原�
   while(!runtimeFor(home,{id:saved.id})){assert.ok(Date.now()<deadline);await delay(20);}
   const container=ownedProcesses(home).records.find(value=>value.proof.launchId===saved.id)!;
   assert.equal(await ownedRecordState(container),'alive');assert.equal(ownedProcesses(home).records.find(value=>value.id===container.id)!.native,undefined);
-  const adapter=new CodexAdapter({...DEFAULT_CONFIG,codexCommand:['nxbridge-missing-relaunch-fixture']},home);t.after(()=>adapter.close());
+  const adapter=new CodexAdapter({...DEFAULT_CONFIG,codexCommand:['agybridge-missing-relaunch-fixture']},home);t.after(()=>adapter.close());
   await assert.rejects(adapter.ensureEndpoint(home,saved.peerId),{code:'runtime_launch_unconfirmed'});assert.equal(await ownedProcessState(helper),'alive','创建者仍存活时不能回收正在交接的启动');
   writeFileSync(stop,'退出','utf8');await closed;
   await assert.rejects(adapter.ensureEndpoint(home,saved.peerId),{code:'launch_command_missing'});
@@ -191,7 +208,7 @@ test('释放已完成容器时仍回收原代持有器，再移除运行时与�
   const holder=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true}),closed=once(holder,'close');await once(holder,'spawn');
   t.after(async()=>{if(holder.exitCode===null&&holder.signalCode===null)holder.kill();await closed;});
   const native=await processIdentity(holder.pid!),saved=record(home,'completed',{pid:2147483647,procStart:'dead',state:'ready',launchSettled:true});
-  const container=await recordSpawnedProcess(home,{role:'codex-runtime',identity:{pid:2147483647,startedAt:'dead',parentPid:0,name:'已退出的入口'},proof:{kind:'spawn',launchId:saved.id},windowsJob:'Global\\nxbridge-fixture-'+saved.id,windowsHolder:native});
+  const container=await recordSpawnedProcess(home,{role:'codex-runtime',identity:{pid:2147483647,startedAt:'dead',parentPid:0,name:'已退出的入口'},proof:{kind:'spawn',launchId:saved.id},windowsJob:'Global\\agybridge-fixture-'+saved.id,windowsHolder:native});
   completeOwnedContainer(container);saveManagedRuntime(home,saved);
   const adapter=new CodexAdapter(DEFAULT_CONFIG,home);t.after(()=>adapter.close());
   assert.equal(await adapter.releaseRuntime([],saved.endpoint),undefined);await closed;
@@ -231,7 +248,7 @@ test('包装器先退出时仍保留活跃容器，显式释放会回收其后�
   const args=['-e',`const{spawn}=require('node:child_process'),fs=require('node:fs');const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore',windowsHide:true,detached:process.platform==='win32'});fs.writeFileSync(process.argv[1],JSON.stringify({pid:child.pid,wrapper:process.pid}));setInterval(()=>{if(fs.existsSync(process.argv[2]))process.exit(0);},25);`,output,exit],launchId=randomUUID();
   let wrapper:OwnedProcessRecord|undefined,supervisor:ReturnType<typeof spawnPosixSupervisor>|undefined;
   if(process.platform==='win32')wrapper=await launchIndependentWindows({home,executable:process.execPath,args,cwd:home,env:process.env,logfile:path.join(home,'wrapper.log'),role:'codex-runtime',peerId:'a',launchId});
-  else{supervisor=spawnPosixSupervisor(process.execPath,args,{stdio:'ignore',waitForNative:true});await once(supervisor,'spawn');wrapper=await rememberOwnedChild(home,supervisor,'codex-runtime',{peerId:'a',posixGroup:true},launchId);}
+  else{supervisor=spawnPosixSupervisor(process.execPath,args,{stdio:'ignore',waitForNative:true,home});await once(supervisor,'spawn');wrapper=await rememberOwnedChild(home,supervisor,'codex-runtime',{peerId:'a',posixGroup:true},launchId);}
   assert.ok(wrapper);
   t.after(async()=>{for(const proof of ownedProcesses(home).records.reverse())if(proof.proof.launchId===launchId)await releaseOwnedProcess(proof);});
   const end=Date.now()+5000;while(!existsSync(output)){if(Date.now()>end)throw Error('包装器未启动后代');await delay(20);}

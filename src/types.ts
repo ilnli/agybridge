@@ -89,6 +89,7 @@ export interface Endpoint {
   codexPermission?: CodexPermissionEvidence;
   daemon?: {address:string;rootSessionId?:string;forkedFromId?:string;sandbox?:string;approval?:PermissionClass;autoReview?:boolean};
   nativePermission?: {permission:PermissionClass;mode?:string;observedAt:number};
+  nativeBackground?: {tasks?:number;crons?:number;observedAt:number};
   nativeHealth?: import('./broker/health/turn-health.js').TurnHealth;
   pendingContext?: boolean;
 }

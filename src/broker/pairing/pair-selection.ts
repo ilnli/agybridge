@@ -35,9 +35,10 @@ interface Selection {
 }
 export interface SelectionChoice {selection_id:string;key?:string;action?:'choose'|'create'|'cancel'|'unpair'|'adopt'|'wait';model?:string;effort?:string|number}
 
-                                          
 export class PairSelections {
   constructor(private db:DatabaseSync,private store:Store){}
+  private hostingView=(peer:Peer)=>hostingStatus(this.store,peer);
+  setHostingView(view:(peer:Peer)=>ReturnType<typeof hostingStatus>):void{this.hostingView=view;}
   private save(s:Selection):void{
     statement(this.db,'INSERT INTO pair_selections(id,peer_id,call_key,code,status,expires_at,data) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,data=excluded.data').run(s.id,s.peerId,s.callKey,s.code,s.status,s.expiresAt,JSON.stringify(s));
   }
@@ -78,7 +79,6 @@ export class PairSelections {
       for(const row of statement(this.db,"SELECT data FROM pair_selections WHERE peer_id=? AND status IN ('pending','expired') ORDER BY rowid").all(peerId)){
         const selection=JSON.parse(row.data as string) as Selection;
         if(!selection.draft||!selection.reason?.startsWith('lineage_'))continue;
-                                                       
         const peer=this.store.resolve(selection.draft.actor);
         if(!peer||peer.id!==selection.peerId||peer.sessionId!==selection.sessionId||this.store.bindings.current(peer.id)?.epoch!==selection.epoch)continue;
         if(!selection.lineagePairId||this.store.pairFor(peer.id)?.id!==selection.lineagePairId)continue;
@@ -105,7 +105,6 @@ export class PairSelections {
     return this.store.transaction(()=>{
       const selection=this.get(id),draft=this.automaticDraft(actor,id,config);
       if(!draft)throw new BridgeError('selection_expired','原发送草稿已结束，未自动提交。');
-                                                   
       const receipt=send(draft);selection.status='committed';selection.receipt={...receipt,status:'paired',persisted:true};this.save(selection);return receipt;
     });
   }
@@ -124,7 +123,6 @@ export class PairSelections {
     const loss=includeHistory?pairLossView(this.store,peer):undefined,former=loss?this.store.peer(loss.partner_id):undefined;
     const availableFormer=former&&(former.owner==='user'||former.sessionId===loss!.partner_session_id&&restorableOwnedPartner(this.store,former));
     const peers=this.store.candidates(otherHost(peer.host),peer.cwd).filter(candidate=>(provisional?.sessionId!==peer.sessionId||candidate.id!==provisional.peerId)&&!(loss&&candidate.id===loss.partner_id&&(!availableFormer||loss.reason==='session_deleted'&&loss.restore_state==='gone')));
-                                           
     const conflicts=this.store.faults.map('managed_conflict_scan',this.store.peers(),old=>old.id,old=>{
       const conflict=this.store.setting<{memberId:string;pairId:string}>('managedSessionConflict:'+old.id),pair=this.store.pairFor(old.id);
       return conflict&&pair?.id===conflict.pairId?{old,conflict,pair}:undefined;
@@ -182,7 +180,7 @@ export class PairSelections {
       let code:string|undefined;for(let i=0;i<10000;i++){const candidate=String((start+i)%10000).padStart(4,'0');if(!used.has(candidate)){code=candidate;break;}}
       if(!code)throw new BridgeError('selection_unavailable','有效配对码已满，请稍后重试。');
       const current=!draft&&(!reason||reason==='hosting')?this.store.pairFor(peer.id):undefined,loss=pairLossView(this.store,peer),now=Date.now(),s:Selection={id:randomUUID(),peerId:peer.id,callKey,sessionId:actor.sessionId,epoch,code,createdAt:now,expiresAt:now+600000,status:'pending',candidates:this.candidates(peer),...(current?{currentPairId:current.id}:{}),...(draft?{draft}:{}),...(reason?{reason}:{}),...(proofDeadline?{proofDeadline}:{}),...(lineagePairId?{lineagePairId}:{}),...(loss?{lossId:loss.id}:{})};
-      if(reason==='hosting'&&current){const target=this.store.peer(current.codex),hosting=hostingStatus(this.store,target);s.hostingTarget={memberId:target.id,sessionId:target.sessionId,home:hosting?.config_home,cwd:target.cwd};}
+      if(reason==='hosting'&&current){const target=this.store.peer(current.codex),hosting=this.hostingView(target);s.hostingTarget={memberId:target.id,sessionId:target.sessionId,home:hosting?.config_home,cwd:target.cwd};}
       this.save(s);return this.view(actor,s.id,config);
     });
   }
@@ -190,7 +188,7 @@ export class PairSelections {
     return this.store.transaction(()=>{
       const view=this.create(peer,actor,config,undefined,'hosting') as {selection_id?:string};if(!view.selection_id)return view;const s=this.get(view.selection_id),pair=this.store.pairFor(peer.id);
       if(!pair||peer.host!=='agy')throw new BridgeError('selection_expired','后台托管选择只适用于当前 Codex 搭档。');
-      const target=this.store.peer(pair.codex),hosting=hostingStatus(this.store,target);
+      const target=this.store.peer(pair.codex),hosting=this.hostingView(target);
       if(!s.hostingTarget)s.hostingTarget={memberId:target.id,sessionId:target.sessionId,home:hosting?.config_home,cwd:target.cwd};if(messageId&&!s.messageId)s.messageId=messageId;this.save(s);
       return this.view(actor,s.id,config);
     });
@@ -207,7 +205,7 @@ export class PairSelections {
     if(s.reason==='hosting'){
       const pair=this.store.pairFor(s.peerId),target=pair?this.store.peer(pair.codex):undefined;
       if(!target||target.id!==s.hostingTarget?.memberId||target.sessionId!==s.hostingTarget.sessionId)throw new BridgeError('selection_expired','原会话已改变，请重新打开托管选择。');
-      return{status:'selection_required',reason:'hosting',selection_id:s.id,current_pair_id:pair!.id,...(s.messageId?{message_id:s.messageId}:{}),hosting:hostingStatus(this.store,target),allowed_actions:config.implicit==='never'?['adopt','wait','unpair','cancel']:['adopt','wait','create','unpair','cancel'],expires_at:s.expiresAt,candidates:[],message:'message saved; user chooses background hosting of the original session, waiting for its window, a new partner, or unpair. Never choose for user; no old message replay.'};
+      return{status:'selection_required',reason:'hosting',selection_id:s.id,current_pair_id:pair!.id,...(s.messageId?{message_id:s.messageId}:{}),hosting:this.hostingView(target),allowed_actions:config.implicit==='never'?['adopt','wait','unpair','cancel']:['adopt','wait','create','unpair','cancel'],expires_at:s.expiresAt,candidates:[],message:'message saved; user chooses background hosting of the original session, waiting for its window, a new partner, or unpair. Never choose for user; no old message replay.'};
     }
     if(s.currentPairId){
       const pair=this.store.pairById(s.currentPairId)!,partner=this.store.peer(pair[otherHost(actor.host)]);
@@ -230,14 +228,14 @@ export class PairSelections {
       const action=choice.action??'choose';
       if(action==='adopt'||action==='wait'){
         if(s.reason!=='hosting'||!s.currentPairId||!s.hostingTarget)throw new BridgeError('invalid_action','此选择不支持后台托管操作。');
-        const pair=this.store.pairFor(peer.id),target=pair?this.store.peer(pair.codex):undefined,hosting=target?hostingStatus(this.store,target):undefined;
+        const pair=this.store.pairFor(peer.id),target=pair?this.store.peer(pair.codex):undefined,hosting=target?this.hostingView(target):undefined;
         if(!target||target.id!==s.hostingTarget.memberId||target.sessionId!==s.hostingTarget.sessionId||target.cwd!==s.hostingTarget.cwd||hosting?.config_home!==s.hostingTarget.home)throw new BridgeError('selection_expired','原会话、配置目录或工程目录已改变。');
         const phase=action==='wait'?'awaiting_window':target.owner==='nxbridge'?hostingRecord(this.store,target)?.phase:'adopting';
         writeHosting(this.store,target,{background:action==='adopt',released:action==='wait',phase,reason:undefined});
-        s.status='committed';s.receipt={status:'paired',pair_id:pair!.id,message_id:s.messageId,hosting_action:action,hosting:hostingStatus(this.store,target)};this.save(s);return s.receipt;
+        s.status='committed';s.receipt={status:'paired',pair_id:pair!.id,message_id:s.messageId,hosting_action:action,hosting:this.hostingView(target)};this.save(s);return s.receipt;
       }
       if(s.reason==='hosting'&&action==='choose')throw new BridgeError('invalid_action','请选择继续后台托管、等待窗口、新搭档或解除配对。');
-      if(action==='cancel'){s.status='cancelled';s.receipt=s.reason==='hosting'&&s.messageId?{status:'held',message_id:s.messageId,persisted:true,delivery_state:this.store.message(s.messageId).state,read_confirmed:false,hosting:s.hostingTarget?hostingStatus(this.store,this.store.peer(s.hostingTarget.memberId)):undefined,message:'saved; waiting for original session; do not resend'}:{status:'selection_declined',...(s.currentPairId?{pair_unchanged:true}:{}),message:s.currentPairId?'current pairing unchanged; user cancelled selection':'nothing sent: user declined partner selection; dont resend unless user asks'};this.save(s);return s.receipt;}
+      if(action==='cancel'){s.status='cancelled';s.receipt=s.reason==='hosting'&&s.messageId?{status:'held',message_id:s.messageId,persisted:true,delivery_state:this.store.message(s.messageId).state,read_confirmed:false,hosting:s.hostingTarget?this.hostingView(this.store.peer(s.hostingTarget.memberId)):undefined,message:'saved; waiting for original session; do not resend'}:{status:'selection_declined',...(s.currentPairId?{pair_unchanged:true}:{}),message:s.currentPairId?'current pairing unchanged; user cancelled selection':'nothing sent: user declined partner selection; dont resend unless user asks'};this.save(s);return s.receipt;}
       if(action==='unpair'){
         if(!s.currentPairId)throw new BridgeError('selection_expired','当前没有可解除的配对。');
         const pair=this.store.pairFor(peer.id)!,changes=settleChangedPair(this.store,pair,peer.id);this.store.unpair(pair.id);
@@ -249,7 +247,6 @@ export class PairSelections {
       if(action==='create'){
         if(config.implicit==='never')throw new BridgeError('partner_missing','隐式创建已关闭。');
         const provisional=this.provisional(s);
-                                                      
         target=provisional&&choice.model===undefined&&choice.effort===undefined?provisional:this.store.placeholder(otherHost(peer.host),peer.cwd);
       }else{
         const candidate=s.candidates.find(c=>c.key===choice.key);

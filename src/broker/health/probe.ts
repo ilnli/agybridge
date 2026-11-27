@@ -5,6 +5,7 @@ import {type Endpoint,type Peer} from '../../types.js';
 import {runtimeFor,assertManagedRuntimeEndpoint,type ManagedRuntime} from '../../hosts/managed-runtimes.js';
 import {remainingTime} from '../../shared/time-budget.js';
 import {type RuntimeAvailability} from './contracts.js';
+import {codexSocketPathMissing} from '../../ipc/unix-socket.js';
 export async function probeSocket(address:string,timeout=600):Promise<boolean>{
   return new Promise(resolve=>{
     const socket=net.createConnection(address),finish=(ok:boolean)=>{clearTimeout(timer);socket.destroy();resolve(ok);};
@@ -43,11 +44,15 @@ export async function probePeerRuntime(peer:Peer,endpoint:Endpoint|undefined,hom
   }
   const results=await probeProcesses(identities,remainingTime(deadline,1500));
   for(let i=0;i<results.length;i++)if(results[i]==='dead')reasons.push(identities[i]!.label+' exited or PID generation changed');else if(results[i]==='unknown')unknown.push(identities[i]!.label+' PID generation unverifiable');
+  let deliveryIssue:RuntimeAvailability['deliveryIssue'];
+  if(process.platform!=='win32'&&peer.host==='codex'&&native&&results[0]==='alive'&&endpoint.address.startsWith('unix://')&&codexSocketPathMissing(endpoint.address.slice(7))){
+    deliveryIssue='codex_socket_target_missing';reasons.push('Codex native process alive; protected socket pathname missing');
+  }
   if(endpoint.mode==='app-server'&&results.every(result=>result==='alive')){
     if(home&&peer.host==='codex')await assertManagedRuntimeEndpoint(home,endpoint.address,ownedRuntime?.pid&&ownedRuntime.procStart?{pid:ownedRuntime.pid,procStart:ownedRuntime.procStart}:undefined);
     const reachable=await(appServerProbe?appServerProbe():probeAppServer(endpoint.address,undefined,remainingTime(deadline,750)));
     if(reachable===false)reasons.push('App Server endpoint unreachable');else if(reachable===undefined)unknown.push('App Server endpoint reachability unverified');
   }
   if(!endpoint.active)reasons.push('delivery endpoint not connected/registered');
-  return{state:reasons.length?'blocked':unknown.length?'unknown':'reachable',...(native?{nativeState:results[0]}:{}),reasons:[...reasons,...unknown],checked_at:now};
+  return{state:reasons.length?'blocked':unknown.length?'unknown':'reachable',...(native?{nativeState:results[0]}:{}),...(deliveryIssue?{deliveryIssue}:{}),reasons:[...reasons,...unknown],checked_at:now};
 }

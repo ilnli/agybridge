@@ -26,8 +26,9 @@ import { cacheBelongsTo, cacheHostHome, installedCacheDirectories, inside, markM
 import { liveProcess, processIdentity } from '../process/process.js';
 import { knownNativeProcesses } from '../process/native-processes.js';
 import { processRegistryRoot, processRegistryDirectory } from '../process/owned-processes.js';
-import { reserveBrokerStartup, type StartupReservation } from '../broker/broker-startup.js';
-import { activeRuntime, fileHashes, ownsRuntime, pointerDetails, pruneRuntimes, publishSource, runtimeEntriesChanged, runtimeManifest, stageRuntime, verifyPublish, type InstallReceipt } from './runtime-install.js';
+import { reserveBrokerStartup } from '../broker/broker-startup.js';
+import { updateBroker } from './setup-broker.js';
+import { activeRuntime, fileHashes, pluginFileHashes, ownsRuntime, pointerDetails, pruneRuntimes, publishSource, runtimeEntriesChanged, runtimeManifest, stageRuntime, verifyPublish, type InstallReceipt } from './runtime-install.js';
 import { managedMarker } from './installation.js';
 import { platformCompatibility, versionCompatibility, requireCodexVersion } from './compatibility.js';
 import { hostControlFailure } from '../hosts/host-control.js';
@@ -399,33 +400,17 @@ async function setupInner(options:NonNullable<Parameters<typeof setup>[0]>,input
     if(edits.length){const client=await services.control(loadConfig(home));try{await client.request('config/batchWrite',{edits,filePath:configFile},{mutation:true});}finally{await client.close();}}
   }
   const newFiles=[...shim.launcher,...shim.files],obsolete=(state.managedFiles??[]).filter(file=>!newFiles.some(value=>sameDirectory(value.file,file.file)));
-  const receipt:InstallReceipt={owner:managedMarker(home),buildId:candidate.buildId,roots:[root,...(state.cacheDirectories??[]).map(cache=>cache.directory)].map(directory=>({directory,files:fileHashes(directory)}))};
+  const receipt:InstallReceipt={owner:managedMarker(home),buildId:candidate.buildId,roots:[{directory:root,files:fileHashes(root)},
+    ...(state.cacheDirectories??[]).map(cache=>({directory:cache.directory,files:pluginFileHashes(cache.directory,cache.host)}))]};
   await commitActivation(home,state,newFiles,receipt,services.checkpoint);
   const cleaned=removeManagedFiles(obsolete,home);notes.push(...cleaned.notes);state.managedFiles=[...newFiles,...cleaned.remaining];delete state.pendingSetup;atomicJson(statePath,state);
   services.checkpoint?.('obsolete-state');
   if(shim.notice)notes.push(shim.notice);
   notes.push(...updateInstalledWrappers(home).notes);
-  let brokerRestarted=false;
-  let releaseStartup:StartupReservation|undefined;
-  try{
-    if(process.platform==='win32'){if(!needsTokenRepair)await services.backgroundPreflight(home);releaseStartup=await reserveBrokerStartup(home,await processIdentity(process.pid));}
-    const before=await services.broker<{pid:number;runtime?:{generation:string}}>('ping',{}, {home,start:false}).catch(error=>{
-      if(repairedToken&&['ENOENT','ECONNREFUSED'].includes((error as NodeJS.ErrnoException).code??''))return;
-      throw error;
-    });
-    if(before){
-      await services.broker('shutdown',{releaseOwned:false,...(releaseStartup?{startupToken:releaseStartup.token}:{}),expectedBroker:{pid:before.pid,generation:before.runtime?.generation}},{home,start:false,mutation:true,timeout:60000});
-      const end=Date.now()+15000;while(liveProcess(before.pid)){if(Date.now()>end)throw new BridgeError('broker_stop_timeout','broker 尚未退出，未启动第二个实例。');await delay(50);}
-    }
-    await releaseStartup?.assertCurrent();
-    await services.broker('ping',{}, {home,...(releaseStartup?{reserved:true}:{})});brokerRestarted=true;
-  }catch(error){if(!['ENOENT','ECONNREFUSED','EPIPE'].includes((error as NodeJS.ErrnoException).code??''))notes.push('broker 更新状态：'+describeError(error));}
-  finally{await releaseStartup?.();}
+  const brokerUpdate=await updateBroker(home,candidate.manifest,services.broker,process.platform==='win32'&&!needsTokenRepair?()=>services.backgroundPreflight(home):undefined,message=>process.stderr.write(message+'\n'));
+  if(brokerUpdate.error&&!['ENOENT','ECONNREFUSED','EPIPE'].includes((brokerUpdate.error as NodeJS.ErrnoException).code??''))notes.push('broker 更新状态：'+describeError(brokerUpdate.error));
   const runtimes=await pruneRuntimes(home);notes.push(...runtimes.notes);
-  if(process.platform==='win32'){
-    let independent=false;try{independent=(await services.broker<{runtime?:{windowsIndependent?:boolean}}>('ping',{}, {home,start:false})).runtime?.windowsIndependent===true;}catch{}
-    if(!independent)notes.push('已安装。多组配对所需的独立后台还没启动：请在普通 PowerShell 运行 agybridge bootstrap。');
-  }
+  if(process.platform==='win32'&&!brokerUpdate.windowsIndependent)notes.push('已安装。多组配对所需的独立后台还没启动：请在普通 PowerShell 运行 agybridge bootstrap。');
   let codexTargets:CodexUpdateTargets|undefined;
   if(reloadRequired.codex)try{
     const status=await services.broker<{peers:{id:string;host:Host;name:string;owner:string;kind:string;enabled?:boolean;sessionId?:string}[];endpoints:{peerId:string;active:boolean;pendingContext?:boolean}[]}>('status',{}, {home,start:false});
@@ -433,7 +418,7 @@ async function setupInner(options:NonNullable<Parameters<typeof setup>[0]>,input
     codexTargets={owned:affected.filter(peer=>peer.owner==='nxbridge').map(({id,name})=>({id,name})),user:affected.filter(peer=>peer.owner==='user').map(({name,sessionId})=>({name,...(sessionId?{sessionId}:{})}))};
   }catch{}
   const guidance=updateGuidance(reloadRequired,hookTrustRequired,codexTargets);
-  return{installed:true,marketplace:root,command:shim.command,bin:binPlan,runtime:activeRuntime(home),retainedRuntimes:runtimes,launches,runtimeLaunches,versions,preflight,compatibility:preflight.compatibility,updates,reloadRequired,hookTrustRequired:hookTrustRequired??null,brokerRestarted,toolMode:direct?'direct-namespace':'policy-controlled-mcp',notes,...guidance};
+  return{installed:true,marketplace:root,command:shim.command,bin:binPlan,runtime:activeRuntime(home),retainedRuntimes:runtimes,launches,runtimeLaunches,versions,preflight,compatibility:preflight.compatibility,updates,reloadRequired,hookTrustRequired:hookTrustRequired??null,brokerRestarted:brokerUpdate.restarted,servingGeneration:brokerUpdate.servingGeneration,handoff:brokerUpdate.handoff,...(brokerUpdate.retryCommand?{retryCommand:brokerUpdate.retryCommand}:{}),toolMode:direct?'direct-namespace':'policy-controlled-mcp',notes,...guidance};
 }
 
 export async function uninstall(home=bridgeHome(),options:{dryRun?:boolean;purge?:boolean}={},input:Partial<SetupServices>={}):Promise<unknown>{

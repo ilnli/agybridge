@@ -1,22 +1,40 @@
 import type { Store } from '../../storage/store.js';
-import { probeProcesses } from '../../process/process.js';
+import { codexIsAppServer, processIdentity, probeProcesses } from '../../process/process.js';
 import { normalizedHome, registrationWindow, windowKey } from '../../integration/hooks/session-bindings.js';
-import {BridgeError} from '../../shared/errors.js';
-import {type BridgeConfig,type Peer,type RegisterInput} from '../../types.js';
+import { BridgeError, describeError } from '../../shared/errors.js';
+import { type BridgeConfig, type Peer, type RegisterInput } from '../../types.js';
 import type { SendIntent } from '../pairing/pair-selection.js';
 import { pairLoss } from '../pairing/pair-loss.js';
 import { managedRecoveryKey } from './managed-recovery.js';
 import { recordManagedAdoption } from './takeover.js';
 import { hostingRecord, writeHosting } from './session-hosting.js';
-import {sameDirectory} from '../../shared/files.js';
+import { sameDirectory } from '../../shared/files.js';
+import { memberEnabled } from '../member-control.js';
 
 interface PendingWindow {peerId:string;input:RegisterInput;state:'unverified'|'choice';deadline:number;nextAt:number}
 const stateKey='windowRecoveryPending';
 const proofWindowMs=60000,proofRetryMs=5000;
 
-                                           
 export class WindowRecovery {
   constructor(private store:Store,private probe=probeProcesses,private managedConflict?:(peer:Peer)=>Promise<void>,private sessionState?:(peer:Peer)=>Promise<'alive'|'dead'|'unknown'>,private managedRejoin?:(input:RegisterInput)=>Peer|undefined|Promise<Peer|undefined>){}
+  async reconcileBindingsAtStartup():Promise<void>{
+    const {store}=this;
+    await store.faults.run('startup_bindings',async()=>{
+      for(const peer of store.peers()){
+        const current=store.getPeer(peer.id);if(!current||!memberEnabled(store,current))continue;
+        if(peer.owner!=='user'||!peer.sessionId||!['root','fork'].includes(peer.kind)||store.bindings.current(peer.id))continue;
+        const endpoints=store.endpoints(peer.id).filter(e=>e.active&&e.mode!=='app-server'&&e.mode!=='agy-acp'&&e.processKind!=='app-server'&&e.configHome&&e.pid&&e.procStart);
+        if(endpoints.length!==1)continue;
+        const endpoint=endpoints[0]!;
+        try{
+          const identity=await processIdentity(endpoint.pid!);
+          const namePattern=peer.host==='agy'?'^(?:agy|antigravity(?:-cli)?)(?:\\.exe)?$':'^codex(?:\\.exe)?$';
+          if(identity.startedAt!==endpoint.procStart||!new RegExp(namePattern,'i').test(identity.name)||peer.host==='codex'&&await codexIsAppServer(identity))continue;
+          store.transaction(()=>{const binding=store.bindings.activate({host:peer.host,configHome:endpoint.configHome!,pid:identity.pid,procStart:identity.startedAt},peer.id,peer.sessionId!,'legacy verified window');store.saveEndpoint({...endpoint,bindingEpoch:binding.epoch});});
+        }catch(error){store.event('context.backfill.unverified',{peerId:peer.id,error:describeError(error)});}
+      }
+    });
+  }
   private pending():Record<string,PendingWindow>{return this.store.setting(stateKey)??{};}
   private forget(id:string):void{const all=this.pending();if(all[id]){delete all[id];this.store.setSetting(stateKey,all);}}
   private managedConflicts(peerId:string):Peer[]{return this.store.faults.map('managed_conflict_scan',this.store.peers(),peer=>peer.id,peer=>this.store.setting<{memberId:string}>('managedSessionConflict:'+peer.id)?.memberId===peerId?peer:undefined).filter((peer):peer is Peer=>!!peer);}
@@ -27,17 +45,14 @@ export class WindowRecovery {
   related(peer:Peer){return peer.sessionId?this.store.bindings.related(peer.host,peer.sessionId,peer.id):[];}
   async register(input:RegisterInput,options:{managedCodexChecked?:boolean}={}):Promise<Peer>{
     let managedUnverified=false;
-                                                 
     if(this.managedRejoin&&!(input.host==='codex'&&options.managedCodexChecked)){try{const rejoined=await this.managedRejoin(input);if(rejoined)return rejoined;}catch(error){if(!(error instanceof BridgeError)||error.code!=='managed_proof_unverified')throw error;managedUnverified=true;}}
     const endpoint=input.endpoint,window=registrationWindow(input)??(endpoint.mode==='app-server'&&endpoint.pid&&endpoint.procStart&&endpoint.configHome?{host:input.host,configHome:normalizedHome(endpoint.configHome),pid:endpoint.pid,procStart:endpoint.procStart}:undefined);if(!window)return this.store.register(input);
     const key=windowKey(window),known=this.store.bindings.get(key),provisional=this.store.setting<{peerId:string}>('pendingCodex:'+key);
     const exact=this.store.peers().find(peer=>peer.host===input.host&&peer.sessionId===input.sessionId&&this.store.endpoints(peer.id).some(ep=>ep.pid===window.pid&&ep.procStart===window.procStart&&ep.configHome&&normalizedHome(ep.configHome)===window.configHome&&ep.address===endpoint.address));
     const existing=known?.active?known.peerId:provisional?.peerId??exact?.id;
     if(existing&&this.store.pairFor(existing))return this.store.register(input);
-                                                
     if(existing&&this.store.hasPairHistory(existing)){this.forget(existing);return this.store.register(input);}
     if(input.host==='codex'&&input.kind!=='subagent'){
-                                                              
       let prior=this.store.peers().filter(peer=>peer.id!==existing&&peer.host==='codex'&&peer.owner==='user'&&peer.sessionId===input.sessionId&&['root','fork'].includes(peer.kind)&&
         (this.store.endpoints(peer.id).some(ep=>ep.configHome&&normalizedHome(ep.configHome)===window.configHome)||normalizedHome(hostingRecord(this.store,peer)?.configHome??'')===window.configHome));
       const paired=prior.filter(peer=>this.store.pairFor(peer.id));if(paired.length)prior=paired;
@@ -82,7 +97,6 @@ export class WindowRecovery {
       const prior=all[peer.id];all[peer.id]={peerId:peer.id,input,state:native.includes('unknown')||launching?'unverified':'choice',deadline:prior?.deadline??Date.now()+proofWindowMs,nextAt:Date.now()+proofRetryMs};this.store.setSetting(stateKey,all);return peer;
     }
     if(input.endpoint.daemon){
-                                                                  
       const ended=[...new Set(this.store.bindings.all().filter(value=>!value.active&&value.threadId===input.sessionId&&value.host===input.host&&normalizedHome(value.configHome)===window.configHome).map(value=>value.peerId))]
         .filter(id=>!this.store.bindings.current(id)&&this.store.peer(id).sessionId===input.sessionId);
       const active=this.store.bindings.related(input.host,input.sessionId,existing).filter(binding=>normalizedHome(binding.configHome)===window.configHome);
@@ -102,7 +116,6 @@ export class WindowRecovery {
         const current=this.store.bindings.current(old.peerId);
         if(current?.key!==old.key||current.epoch!==old.epoch||this.store.pairFor(old.peerId)?.id!==pairs[0]||pairLoss(this.store,this.store.peer(old.peerId))?.id!==losses[0]||known?.active&&(now?.epoch!==known.epoch||now.sessionId!==known.sessionId))throw new BridgeError('context_changed','恢复核验期间会话或配对已改变，未迁移成员。');
         this.store.updatePeer(old.peerId,{state:'offline'});
-                                            
         this.store.deactivate(old.peerId);
         const peer=this.store.adopt(old.peerId,input,existing);
         if(existing)this.forget(existing);
@@ -129,23 +142,23 @@ export class WindowRecovery {
   async retry(send:(input:SendIntent)=>unknown):Promise<void>{
     for(const peer of this.store.peers()){
       await this.store.faults.run('managed_conflict:'+peer.id,async()=>{
-      const key='managedSessionConflict:'+peer.id,conflict=this.store.setting<{memberId:string;pairId:string}>(key);if(!conflict)return;
-      if(this.store.pairFor(peer.id)?.id!==conflict.pairId){this.store.setSetting(key,null);return;}
-      const member=this.store.getPeer(conflict.memberId);
-      if(!member){if(!this.store.hasPeer(conflict.memberId)){this.store.setSetting(key,null);this.store.event('context.managed.conflict_forgotten',{peerId:peer.id,memberId:conflict.memberId,reason:'peer_missing'});}return;}
-      const endpoints=this.store.endpoints(member.id),states=this.sessionState?[await this.sessionState(member)]:await this.probe(endpoints.map(ep=>({pid:ep.pid??0,procStart:ep.procStart??''})));
-      if(states.length&&states.every(state=>state==='dead')&&JSON.stringify(this.store.endpoints(conflict.memberId))===JSON.stringify(endpoints)&&this.store.setting<{memberId:string}>(key)?.memberId===conflict.memberId){this.store.setSetting(key,null);this.store.updatePeer(peer.id,{state:'offline'});this.store.event('context.managed.conflict_ended',{peerId:peer.id,memberId:conflict.memberId});}
+        const key='managedSessionConflict:'+peer.id,conflict=this.store.setting<{memberId:string;pairId:string}>(key);if(!conflict)return;
+        if(this.store.pairFor(peer.id)?.id!==conflict.pairId){this.store.setSetting(key,null);return;}
+        const member=this.store.getPeer(conflict.memberId);
+        if(!member){if(!this.store.hasPeer(conflict.memberId)){this.store.setSetting(key,null);this.store.event('context.managed.conflict_forgotten',{peerId:peer.id,memberId:conflict.memberId,reason:'peer_missing'});}return;}
+        const endpoints=this.store.endpoints(member.id),states=this.sessionState?[await this.sessionState(member)]:await this.probe(endpoints.map(ep=>({pid:ep.pid??0,procStart:ep.procStart??''})));
+        if(states.length&&states.every(state=>state==='dead')&&JSON.stringify(this.store.endpoints(conflict.memberId))===JSON.stringify(endpoints)&&this.store.setting<{memberId:string}>(key)?.memberId===conflict.memberId){this.store.setSetting(key,null);this.store.updatePeer(peer.id,{state:'offline'});this.store.event('context.managed.conflict_ended',{peerId:peer.id,memberId:conflict.memberId});}
       });
     }
     for(const [id,value] of Object.entries(this.pending())){
       await this.store.faults.run('window_recovery:'+id,async()=>{
-      const current=this.store.getPeer(value.peerId);
-      if(!current){if(!this.store.hasPeer(value.peerId))this.forget(value.peerId);return;}
-      if(current.enabled===false)return;
-      if(this.store.pairFor(value.peerId)){this.forget(value.peerId);return;}
-      if(value.state!=='unverified'||value.nextAt>Date.now()||Date.now()>=value.deadline)return;
-      const window=registrationWindow(value.input),binding=window&&this.store.bindings.get(windowKey(window));
-      if(window&&(!binding?.active||binding.peerId!==value.peerId||binding.sessionId!==value.input.sessionId)){this.forget(value.peerId);return;}
+        const current=this.store.getPeer(value.peerId);
+        if(!current){if(!this.store.hasPeer(value.peerId))this.forget(value.peerId);return;}
+        if(current.enabled===false)return;
+        if(this.store.pairFor(value.peerId)){this.forget(value.peerId);return;}
+        if(value.state!=='unverified'||value.nextAt>Date.now()||Date.now()>=value.deadline)return;
+        const window=registrationWindow(value.input),binding=window&&this.store.bindings.get(windowKey(window));
+        if(window&&(!binding?.active||binding.peerId!==value.peerId||binding.sessionId!==value.input.sessionId)){this.forget(value.peerId);return;}
         const peer=await this.register({...value.input,...(binding?{expectedBinding:{key:binding.key,epoch:binding.epoch}}:{})});
         if(peer.id!==value.peerId)this.store.selections.resumeHeld(peer.id,send);
       });
