@@ -11,6 +11,7 @@ import {type Actor,type ContextChangeReason,type ContextRotation,type RetentionC
 import { pruneHistory } from './retention.js';
 import {sameDirectory} from '../shared/files.js';
 import { liveProcess } from '../process/process.js';
+import { mergeAgyNativeSession } from '../hosts/agy/identity.js';
 import type { PartnerQuestion } from '../integration/mcp/questions.js';
 import { runtimeProfile } from '../broker/profiles/runtime-profile.js';
 import {emptyDeliveryCounts,type DeliveryCounts} from '../broker/health/contracts.js';
@@ -198,7 +199,9 @@ export class Store {
     const sameNative=!!input.endpoint.pid&&!!input.endpoint.procStart&&oldEndpoint?.pid===input.endpoint.pid&&oldEndpoint.procStart===input.endpoint.procStart;
     const nativePermission=input.endpoint.nativePermission??(sameNative?oldEndpoint?.nativePermission:undefined);
     const sameContext=sameNative&&previous?.sessionId===input.sessionId&&oldEndpoint?.bindingEpoch===current?.epoch;
-    const nativeSession=sameContext?{...oldEndpoint?.nativeSession,...input.endpoint.nativeSession}:input.endpoint.nativeSession;
+    const nativeSession=input.host==='agy'
+      ?mergeAgyNativeSession(sameContext?oldEndpoint?.nativeSession:undefined,input)
+      :sameContext?{...oldEndpoint?.nativeSession,...input.endpoint.nativeSession}:input.endpoint.nativeSession;
     const endpoint: Endpoint={...input.endpoint,...(current?{bindingEpoch:current.epoch}:{}),...(oldEndpoint?.native?{native:oldEndpoint.native}:{}),...(oldEndpoint?.bridge?{bridge:oldEndpoint.bridge}:{}),...(input.endpoint.native?{native:input.endpoint.native}:{}),...(input.endpoint.bridge?{bridge:input.endpoint.bridge}:{}),...(questionSupport!==undefined?{questionSupport}:{}),...(nativePermission?{nativePermission}:{}),peerId:peer.id,seenAt:Date.now(),active:true};
     if(nativeSession&&Object.keys(nativeSession).length)endpoint.nativeSession=nativeSession;
     if(endpoint.daemon&&sameNative&&oldEndpoint?.bindingEpoch===current?.epoch)endpoint.daemon={...oldEndpoint.daemon,...endpoint.daemon};

@@ -3,10 +3,38 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { BridgeError } from '../../shared/errors.js';
 import { agyAppDataDir, agyHome } from '../../shared/local-paths.js';
-import type { Actor, RegisterInput } from '../../types.js';
+import type { Actor, Endpoint, RegisterInput } from '../../types.js';
+
+export function agyArtifactsDir(configHome:string,conversationId:string):string{
+  return path.join(agyAppDataDir(configHome),'brain',conversationId);
+}
+
+function transcriptIn(artifactsDir:string):string{
+  return path.join(artifactsDir,'.system_generated','logs','transcript_full.jsonl');
+}
 
 export function agyTranscriptPath(configHome:string,conversationId:string):string{
-  return path.join(agyAppDataDir(configHome),'brain',conversationId,'.system_generated','logs','transcript_full.jsonl');
+  return transcriptIn(agyArtifactsDir(configHome,conversationId));
+}
+
+export function mergeAgyNativeSession(previous:Endpoint['nativeSession'],input:RegisterInput):Endpoint['nativeSession']{
+  const incoming=input.endpoint.nativeSession;
+  if(!incoming)return previous;
+  const session={...previous,...incoming};
+  if(input.artifactsDirFallback&&previous?.artifactsDir)session.artifactsDir=previous.artifactsDir;
+  if(input.transcriptPathFallback!==undefined)session.transcriptPathFallback=input.transcriptPathFallback;
+  if(input.transcriptPathFallback){
+    const previousDir=previous?.artifactsDir??agyArtifactsDir(input.endpoint.configHome??agyHome(),input.sessionId);
+    // Records from older versions have no flag. Keep a nonstandard transcript as host-supplied.
+    const reported=previous?.transcriptPathFallback===undefined
+      ?previous?.transcriptPath!==transcriptIn(previousDir)
+      :!previous.transcriptPathFallback;
+    if(previous?.transcriptPath&&reported){
+      session.transcriptPath=previous.transcriptPath;
+      session.transcriptPathFallback=false;
+    }else if(session.artifactsDir)session.transcriptPath=transcriptIn(session.artifactsDir);
+  }
+  return session;
 }
 
 export function agySessionExists(configHome:string,conversationId:string):boolean{
@@ -31,14 +59,12 @@ export function agyMcpIdentity(
   const rootId=typeof meta['antigravity.google/root_conversation_id']==='string'&&meta['antigravity.google/root_conversation_id']
     ?meta['antigravity.google/root_conversation_id']
     :conversationId;
-  const artifactsDir=typeof meta['antigravity.google/artifacts_dir']==='string'&&meta['antigravity.google/artifacts_dir']
-    ?meta['antigravity.google/artifacts_dir']
-    :undefined;
+  const reportedDir=meta['antigravity.google/artifacts_dir'];
+  const artifactsDirFallback=typeof reportedDir!=='string'||!reportedDir;
+  const artifactsDir=artifactsDirFallback?agyArtifactsDir(configHome,conversationId):reportedDir;
   const isSubagent=rootId!==conversationId;
   const mode=runtime.acp?'agy-acp':'agy-tui';
-  const transcriptPath=artifactsDir
-    ?path.join(artifactsDir,'.system_generated','logs','transcript_full.jsonl')
-    :agyTranscriptPath(configHome,conversationId);
+  const transcriptPath=transcriptIn(artifactsDir);
   return{
     actor:{
       host:'agy',
@@ -55,6 +81,7 @@ export function agyMcpIdentity(
       ...(isSubagent?{parentId:rootId}:{}),
       permission:'unknown',
       replyContract:1,
+      artifactsDirFallback,transcriptPathFallback:true,
       endpoint:{
         mode,
         address:'',
@@ -64,7 +91,7 @@ export function agyMcpIdentity(
         configHome,
         questionSupport:true,
         processKind:runtime.acp?'app-server':'foreground',
-        nativeSession:{transcriptPath,...(artifactsDir?{artifactsDir}:{}),interactive:!runtime.acp},
+        nativeSession:{transcriptPath,artifactsDir,interactive:!runtime.acp},
       },
     },
   };
@@ -84,12 +111,12 @@ export function agyHookRegistration(
   const workspaces=Array.isArray(input.workspacePaths)?input.workspacePaths.filter((item):item is string=>typeof item==='string'&&item.length>0):[];
   const cwd=(runtime.cwd&&path.isAbsolute(runtime.cwd)?runtime.cwd:undefined)
     ??(typeof input.cwd==='string'&&input.cwd&&workspaces.length===0?input.cwd:workspaces[0]??(typeof input.cwd==='string'&&input.cwd?input.cwd:process.cwd()));
-  const transcriptPath=typeof input.transcriptPath==='string'&&input.transcriptPath
-    ?input.transcriptPath
-    :agyTranscriptPath(configHome,conversationId);
-  const artifactsDir=typeof input.artifactDirectoryPath==='string'&&input.artifactDirectoryPath
-    ?input.artifactDirectoryPath
-    :undefined;
+  const reportedDir=input.artifactDirectoryPath;
+  const artifactsDirFallback=typeof reportedDir!=='string'||!reportedDir;
+  const artifactsDir=artifactsDirFallback?agyArtifactsDir(configHome,conversationId):reportedDir;
+  const reportedTranscript=input.transcriptPath;
+  const transcriptPathFallback=typeof reportedTranscript!=='string'||!reportedTranscript;
+  const transcriptPath=transcriptPathFallback?transcriptIn(artifactsDir):reportedTranscript;
   const model=typeof input.modelName==='string'&&input.modelName?input.modelName:undefined;
   const mode=runtime.acp?'agy-acp':'agy-tui';
   return{
@@ -101,6 +128,7 @@ export function agyHookRegistration(
     permission:'unknown',
     ...(model?{model}:{}),
     replyContract:1,
+    artifactsDirFallback,transcriptPathFallback,
     endpoint:{
       mode,
       address:'',
@@ -110,7 +138,7 @@ export function agyHookRegistration(
       configHome,
       questionSupport:true,
       processKind:runtime.acp?'app-server':'foreground',
-      nativeSession:{transcriptPath,...(artifactsDir?{artifactsDir}:{}),interactive:!runtime.acp},
+      nativeSession:{transcriptPath,artifactsDir,interactive:!runtime.acp},
     },
   };
 }

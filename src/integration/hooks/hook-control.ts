@@ -113,7 +113,7 @@ export async function hook(host:Host,input:any,provided:(ack:()=>Promise<void>)=
     if((event==='PreInvocation'||event==='PostToolUse')&&typeof input.transcriptPath==='string'&&input.transcriptPath){
       try{
         const snapshot=await inspectAgyTranscript(input.transcriptPath,remainingTime(deadline,2000));
-        if(snapshot.compaction||snapshot.usage)payload.agy_transcript=snapshot;
+        if(snapshot.compaction||snapshot.usage||snapshot.subagents?.length)payload.agy_transcript=snapshot;
       }catch(error){process.stderr.write('agybridge AGY 转录读取：'+describeError(error)+'\n');}
     }
     payload.agybridge_timing={identityMs,registrationMs,elapsedBeforeBrokerMs:execution.elapsedMs===undefined?performance.now():execution.elapsedMs+identityMs+performance.now()-began};

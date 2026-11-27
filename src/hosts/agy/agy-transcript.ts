@@ -1,4 +1,4 @@
-import { createReadStream, existsSync } from 'node:fs';
+import { closeSync, createReadStream, existsSync, fstatSync, openSync, readSync } from 'node:fs';
 import { open, type FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
@@ -15,22 +15,47 @@ export interface AgyTranscriptUsage {
   model?: string;
 }
 
+export interface AgySubagentDelivery {
+  id: string;
+  text: string;
+}
+
 export interface AgyTranscriptSnapshot {
   compaction?: AgyCompactionWindow;
   usage?: AgyTranscriptUsage;
+  subagents?: AgySubagentDelivery[];
 }
 
 type ToolExchange = 'send' | 'receive' | 'other';
 
 const MAX_COMPACTION_SCAN_BYTES = 4 * 1024 * 1024;
+const MAX_SUBAGENT_SCAN_BYTES = 16 * 1024 * 1024;
 const USAGE_ONLY_TAIL_BYTES = 256 * 1024;
+const SUBAGENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SUBAGENT_BLOCK_RE = /<SYSTEM_MESSAGE>\s*\[Message\]\s+timestamp=\S+\s+sender=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s+priority=\S+\s+content=([\s\S]*?)\s*<\/SYSTEM_MESSAGE>(?=\s*(?:$|The following is a <SYSTEM_MESSAGE>|<SYSTEM_MESSAGE>))/gi;
+const SUBAGENT_RAW_RE = /^\[Message\]\s+timestamp=\S+\s+sender=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s+priority=\S+\s+content=([\s\S]+)$/i;
 
-function resolveTranscriptFile(transcriptPath: string): string {
+export function resolveAgyTranscriptFile(transcriptPath: string): string {
   if (path.basename(transcriptPath) === 'transcript.jsonl') {
     const full = path.join(path.dirname(transcriptPath), 'transcript_full.jsonl');
     if (existsSync(full)) return full;
   }
   return transcriptPath;
+}
+
+function extractSubagentDeliveries(content: string): AgySubagentDelivery[] {
+  const results: AgySubagentDelivery[] = [];
+  if (content.includes('<SYSTEM_MESSAGE>')) {
+    for (const match of content.matchAll(SUBAGENT_BLOCK_RE)) {
+      const id = match[1]!;
+      const body = match[2]!.trim();
+      if (body) results.push({ id, text: body });
+    }
+    return results;
+  }
+  const raw = SUBAGENT_RAW_RE.exec(content.trim());
+  if (raw && raw[2]!.trim()) results.push({ id: raw[1]!, text: raw[2]!.trim() });
+  return results;
 }
 
 function classifyAgyTool(toolCall: unknown): ToolExchange {
@@ -125,7 +150,7 @@ async function scanTailWindow(file: FileHandle, size: number, check: () => void)
 }
 
 export async function inspectAgyTranscript(transcriptPath: string, budgetMs = 2500): Promise<AgyTranscriptSnapshot> {
-  const target = resolveTranscriptFile(transcriptPath);
+  const target = resolveAgyTranscriptFile(transcriptPath);
   if (!existsSync(target)) return {};
   const deadline = performance.now() + budgetMs;
   const signal = AbortSignal.timeout(Math.max(1, budgetMs));
@@ -150,6 +175,7 @@ export async function inspectAgyTranscript(transcriptPath: string, budgetMs = 25
   let pendingTools: ToolExchange[] = [];
   let compaction: AgyCompactionWindow | undefined;
   let usage: AgyTranscriptUsage | undefined;
+  const subagents = new Map<string, string>();
 
   const stream = createReadStream(target, { encoding: 'utf8', start, end: size - 1, signal });
   const lines = createInterface({ input: stream, crlfDelay: Infinity });
@@ -187,8 +213,15 @@ export async function inspectAgyTranscript(transcriptPath: string, budgetMs = 25
         continue;
       }
 
-      if (row.type === 'SYSTEM_MESSAGE' && typeof row.content === 'string' && row.content.includes('finished with result:')) {
-        extractExchangeIdsFromText(row.content, 'receive', ids);
+      if (row.type === 'SYSTEM_MESSAGE' && typeof row.content === 'string') {
+        if (row.content.includes('finished with result:')) {
+          extractExchangeIdsFromText(row.content, 'receive', ids);
+        }
+        if (row.content.includes('[Message]') && row.content.includes('sender=')) {
+          for (const delivery of extractSubagentDeliveries(row.content)) {
+            subagents.set(delivery.id.toLowerCase(), delivery.text);
+          }
+        }
         continue;
       }
 
@@ -213,5 +246,61 @@ export async function inspectAgyTranscript(transcriptPath: string, budgetMs = 25
   return {
     ...(compaction ? { compaction } : {}),
     ...(usage ? { usage } : {}),
+    ...(subagents.size ? { subagents: [...subagents.entries()].map(([id, text]) => ({ id, text })) } : {}),
   };
+}
+
+export function readAgySubagentFromTranscript(transcriptPath: string, agentId: string): string | undefined {
+  if (!SUBAGENT_ID_RE.test(agentId)) return undefined;
+  const target = resolveAgyTranscriptFile(transcriptPath);
+  if (!existsSync(target)) return undefined;
+  const wanted = agentId.toLowerCase();
+  const needle = `sender=${wanted}`;
+  const fd = openSync(target, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    if (!size) return undefined;
+    const minOffset = Math.max(0, size - MAX_SUBAGENT_SCAN_BYTES);
+    let position = size;
+    let fragments: Buffer[] = [];
+
+    const checkLine = (parts: Buffer[]): string | undefined => {
+      const lineBuf = parts.length === 1 ? parts[0]! : Buffer.concat(parts);
+      const line = lineBuf.toString('utf8');
+      if (!line.toLowerCase().includes(needle)) return undefined;
+      let row: any;
+      try {
+        row = JSON.parse(line);
+      } catch {
+        return undefined;
+      }
+      if (row?.type !== 'SYSTEM_MESSAGE' || typeof row.content !== 'string') return undefined;
+      const deliveries = extractSubagentDeliveries(row.content).filter(d => d.id.toLowerCase() === wanted);
+      return deliveries.at(-1)?.text;
+    };
+
+    while (position > minOffset) {
+      const start = Math.max(minOffset, position - 64 * 1024);
+      const chunk = Buffer.allocUnsafe(position - start);
+      const bytesRead = readSync(fd, chunk, 0, chunk.length, start);
+      let end = bytesRead;
+      for (let newline = chunk.lastIndexOf(10, end - 1); newline >= 0; newline = chunk.lastIndexOf(10, end - 1)) {
+        const parts = [chunk.subarray(newline + 1, end), ...fragments.toReversed()];
+        fragments = [];
+        const found = checkLine(parts);
+        if (found !== undefined) return found;
+        end = newline;
+        if (!end) break;
+      }
+      fragments.push(chunk.subarray(0, end));
+      position = start;
+    }
+
+    if (fragments.length && minOffset === 0) {
+      return checkLine(fragments.toReversed());
+    }
+    return undefined;
+  } finally {
+    closeSync(fd);
+  }
 }

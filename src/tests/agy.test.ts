@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { AcpClient } from '../hosts/agy/acp-client.js';
 import { fixture } from './support/broker-fixture.js';
 import { temporaryDirectory } from './support/temporary.js';
-import { agyMcpIdentity, agyHookRegistration, agyTranscriptPath } from '../hosts/agy/identity.js';
+import { agyArtifactsDir, agyMcpIdentity, agyHookRegistration, agyTranscriptPath } from '../hosts/agy/identity.js';
 import { AgyAdapter } from '../hosts/agy/adapter.js';
 import { DEFAULT_CONFIG } from '../config/defaults.js';
 import { AGY_WAKE_NOTICE, type Peer, type BridgeConfig } from '../types.js';
@@ -178,6 +178,7 @@ test('agyMcpIdentity 与 agyHookRegistration 准确解析根会话、子代理�
   assert.equal(sub.registration.parentId, 'conv-root');
   assert.equal(sub.registration.endpoint.mode, 'agy-acp');
   assert.equal(sub.registration.endpoint.processKind, 'app-server');
+  assert.equal(sub.registration.endpoint.nativeSession?.artifactsDir, path.join('/home/u/.gemini','antigravity-cli','brain','conv-sub'));
   assert.equal(sub.registration.endpoint.nativeSession?.transcriptPath, agyTranscriptPath('/home/u/.gemini', 'conv-sub'));
 
   const hookReg = agyHookRegistration(
@@ -205,7 +206,61 @@ test('agyMcpIdentity 与 agyHookRegistration 准确解析根会话、子代理�
     '/home/u/.gemini',
   );
   assert.equal(resumedHookReg.cwd, '/proj/new');
+  assert.equal(resumedHookReg.endpoint.nativeSession?.artifactsDir, agyArtifactsDir('/home/u/.gemini','conv-hook'));
   assert.throws(() => agyHookRegistration({}, { pid: 1, procStart: 's' }), { code: 'unverified_identity' });
+});
+
+test('模型状态为 AGY 自己与搭档返回相同的产物和 scratch 目录，兼容旧登记', async t => {
+  const f=fixture(t),endpoint=f.store.endpoint(f.a.id)!;
+  const status=(host:'agy'|'codex')=>f.broker.dispatch('status',{
+    actor:{host,sessionId:host==='agy'?'c':'x',callId:'status'},model_view:true,
+  }) as Promise<any>;
+  const fallback=agyArtifactsDir(endpoint.configHome!,'c');
+  const unpaired=await status('agy');
+  assert.equal(unpaired.self.artifacts_dir,fallback);
+  assert.equal(unpaired.self.scratch_dir,path.join(fallback,'scratch'));
+
+  const explicit=path.join(endpoint.configHome!,'custom-artifacts');
+  f.store.saveEndpoint({...endpoint,nativeSession:{artifactsDir:explicit}});
+  f.store.pair(f.a.id,f.x.id);
+  const agy=await status('agy'),codex=await status('codex');
+  for(const view of [agy.self,codex.partner]){
+    assert.equal(view.artifacts_dir,explicit);
+    assert.equal(view.scratch_dir,path.join(explicit,'scratch'));
+  }
+  for(const view of [codex.self,agy.partner]){
+    assert.equal(view.artifacts_dir,undefined);
+    assert.equal(view.scratch_dir,undefined);
+  }
+});
+
+test('同一原生会话交替登记时保留 AGY 显式路径，新会话重新推导',async t=>{
+  const {store,broker}=fixture(t);
+  for(const acp of [false,true]){
+    const runtime={pid:process.pid,procStart:'artifact-fixture',acp},configHome=store.endpoint(store.find('agy','c')!.id)!.configHome!;
+    const conversationId='artifacts-'+(acp?'acp':'tui'),custom=path.join(configHome,'custom'),standard=agyArtifactsDir(configHome,conversationId);
+    const mcp=(dir?:string)=>agyMcpIdentity({conversationId,'antigravity.google/artifacts_dir':dir},configHome,runtime,configHome).registration;
+    const hook=(dir?:string,transcriptPath?:string)=>agyHookRegistration({conversationId,artifactDirectoryPath:dir,transcriptPath},runtime,configHome);
+    const register=async(input:ReturnType<typeof hook>)=>{
+      const peer=await broker.dispatch('mcp.register',input) as Peer;
+      return store.endpoint(peer.id)!.nativeSession!;
+    };
+    assert.equal((await register(mcp(custom))).artifactsDir,custom);
+    const inferred=await register(hook());
+    assert.equal(inferred.artifactsDir,custom);
+    assert.equal(inferred.transcriptPath,path.join(custom,'.system_generated','logs','transcript_full.jsonl'));
+    const transcript=path.join(configHome,'explicit.jsonl');
+    await register(hook(undefined,transcript));
+    assert.equal((await register(mcp())).transcriptPath,transcript);
+    if(acp){
+      const stale=mcp(standard);stale.endpoint.procStart='previous-process';
+      assert.equal((await register(stale)).artifactsDir,custom);
+    }
+    assert.equal((await register(mcp(standard))).artifactsDir,standard);
+    const next=await register(agyHookRegistration({conversationId:conversationId+'-next'},runtime,configHome));
+    assert.equal(next.artifactsDir,agyArtifactsDir(configHome,conversationId+'-next'));
+    assert.equal(next.transcriptPath,agyTranscriptPath(configHome,conversationId+'-next'));
+  }
 });
 
 test('AGY MCP cwdFallback 不覆盖已登记的工作区 cwd', async t => {
@@ -700,4 +755,52 @@ test('AGY 转录路径按会话目录、文件名及原生进程代次匹配',()
   assert.equal(hookContextMatches(key,'conv-1',{...native,procStart:'old'}),false);
   const codex={...native,host:'codex' as const};
   assert.equal(hookContextMatches(key,'conv-1',codex),false);
+});
+
+function subagentReport(id:string,body:string):string{
+  return JSON.stringify({type:'SYSTEM_MESSAGE',source:'SYSTEM',content:'[Message] timestamp=2026-11-26T08:21:00Z sender='+id+' priority=MESSAGE_PRIORITY_HIGH content='+body})+'\n';
+}
+
+test('AGY 刚收到子代理报告就可发引用，Codex 收到展开的报告',t=>{
+  const f=foregroundPair(t),endpoint=f.store.endpoint(f.a.id)!;
+  const file=path.join(endpoint.configHome!,'transcript_full.jsonl');
+  const id='bf0395eb-a7ca-4bd1-a023-950d0460330c',body='检查完成，改动在计划文件第 15 行。';
+  writeFileSync(file,subagentReport(id,body));
+  f.store.saveEndpoint({...endpoint,nativeSession:{transcriptPath:file}});
+  const sent=f.send('nxref:agent:'+id,false);
+  const received=f.broker.receive({host:'codex',sessionId:'x',callId:'pickup-report'}) as {messages:{message_id:string;message:string}[]};
+  assert.equal(received.messages[0]?.message_id,sent.message_id);
+  assert.equal(received.messages[0]?.message,'[nxref agent:'+id+']\n'+body+'\n[/nxref]');
+  writeFileSync(file,'');
+  assert.equal(f.broker.references.expand(f.a,'nxref:agent:'+id),received.messages[0]!.message);
+  assert.throws(()=>f.broker.references.expand(f.x,'nxref:agent:'+id),{code:'ref_missing'});
+});
+
+test('AGY 单独出现子代理回报的转录在 PostToolUse 后即可提示复用',async t=>{
+  const f=foregroundPair(t),home=f.store.endpoint(f.a.id)!.configHome!;
+  const file=path.join(home,'transcript.jsonl'),id='bf0395eb-a7ca-4bd1-a023-950d0460330d';
+  const body='已验证各个入口的行为。'.repeat(45);
+  writeFileSync(file,subagentReport(id,body));
+  await runHook('agy',{conversationId:'c',hookEventName:'PostToolUse',transcriptPath:file},()=>{},{
+    home,agy:{configHome:home,identity:{pid:process.pid,procStart:'test',acp:false}},
+    call:async <T>(method:string,params?:unknown)=>(method==='context.lookup'?{}:await f.broker.dispatch(method,params)) as T,
+  });
+  const result=await f.broker.dispatch('send',{actor:f.actor,message:body}) as {tip?:string};
+  assert.ok(result.tip?.includes('nxref:agent:'+id));
+});
+
+test('AGY 原生发信和工作流展开引用，保留脚本和字面量并拒绝无法解析的引用',async t=>{
+  const f=foregroundPair(t),source=f.store.accept(f.pair,f.x,'使用已确认的计划','plan');
+  const ref='nxref:msg:'+source.id,expanded='[nxref msg:'+source.id+']\n使用已确认的计划\n[/nxref]';
+  const call=(name:string,args:Record<string,unknown>,conversationId='c')=>f.hook('PreToolUse',{conversationId,toolCall:{name,args}});
+  assert.deepEqual(await call('send_message',{Target:'child',Message:ref}),{decision:'allow',overwrite:{Target:'child',Message:expanded}});
+  const args={Script:'nxref:msg:missing',Args:{input:[{report:ref},3,null],'nxref:msg:missing':false}};
+  assert.deepEqual(await call('run_workflow',args),{decision:'allow',overwrite:{...args,Args:{input:[{report:expanded},3,null],'nxref:msg:missing':false}}});
+  assert.deepEqual(await call('run_workflow',{Script:ref,Args:['"'+ref+'"',true]}),{decision:'allow'});
+  for(const [name,args] of [['send_message',{Message:'nxref:msg:missing'}],['run_workflow',{Args:[{report:'nxref:msg:missing'}]}]] as const){
+    for(const session of ['c','unregistered']){
+      const result=await call(name,args,session);
+      assert.equal(result.decision,'deny');assert.match(result.reason!,/nxref/);
+    }
+  }
 });

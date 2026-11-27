@@ -17,6 +17,9 @@ import { observeBrokerReachable, brokerOutageDiagnostic } from './broker-outage.
 import { CodexAdapter, codexContextReceipts, type CodexContextReceipt, type CodexThread } from '../hosts/codex/adapter.js';
 import { readCodexHistory, type HistoryCheckpoint } from '../hosts/codex/codex-history.js';
 import { AgyAdapter } from '../hosts/agy/adapter.js';
+import { agyToolReferenceDecision } from '../integration/hooks/agy-tool-references.js';
+import { agyArtifactsDir, mergeAgyNativeSession } from '../hosts/agy/identity.js';
+import { agyHome } from '../shared/local-paths.js';
 import { liveProcess, processIdentity, probeProcesses, codexIsAppServer, processProbeStatus, processAncestryStatus, codexProcessIdentity, agyProcessIdentity } from '../process/process.js';
 import { BridgeError, DeliveryError, describeError } from '../shared/errors.js';
 import { DEFAULT_RETENTION } from '../config/defaults.js';
@@ -1196,9 +1199,14 @@ export class Broker {
     Object.assign(capability,{retirements:actor?retirements.filter(value=>ids.includes(value.peerId)):retirements,incidents:this.runtimeHealth.incidentViews(ids),notes:this.runtimeHealth.incidentNotes(ids),rpc:this.adapters.codex.rpcMetrics?.(),degraded:this.store.faults.status().filter(value=>value.degraded).map(value=>actor?{stage:value.stage.split(':')[0],count:value.count,retryAt:value.retryAt}:value),outageLedger:brokerOutageDiagnostic(this.home)});
     Object.assign(capability,{hookTimings:ids.flatMap(id=>{const timing=this.pairAnomalies.hookTimings(this.store.peer(id));return timing?[timing]:[];})});
     const frozen=frozenProfileStatus(this.home,this.config);Object.assign(capability,{configurationReload:this.configurationReload.status,frozen_profiles:frozen.profiles,...(frozen.warnings.length?{profile_warnings:frozen.warnings}:{})});
+    const artifactPaths=(p:Peer,endpoint:Endpoint|undefined)=>{
+      if(p.host!=='agy')return {};
+      const directory=endpoint?.nativeSession?.artifactsDir||(p.sessionId&&agyArtifactsDir(endpoint?.configHome??this.config.agyHome??agyHome(),p.sessionId));
+      return directory?{artifacts_dir:directory,scratch_dir:path.join(directory,'scratch')}:{};
+    };
     const describePeer=(p:Peer)=>{
       const binding=this.store.bindings.current(p.id),endpoint=this.store.endpoint(p.id),health=this.runtimeHealth.peerHealth(p),budget=endpoint?this.providerRetries.get(endpoint.address):undefined;
-      return{...p,permission_facts:permissionFacts(p,endpoint),...this.runtimeHealth.deliveryGuidance(p),...(this.memberLifecycle.recoveryStatus(p)?{recovery:this.memberLifecycle.recoveryStatus(p)}:{}),...(health?.nativeIssue?{native_issue:health.nativeIssue}:{}),...(p.host==='codex'?{nativeHistory:this.store.setting('codexHistoryCompatibility:'+p.id),directDelivery:this.codexDirect.status(p.id)}:{}),...(p.host==='agy'?{waiterActive:this.hasAgyWaiter(p.id)}:{}) ,...(binding?{context:{sessionId:binding.sessionId,epoch:binding.epoch,transitioning:binding.transitioning,lineage:this.store.bindings.lineage(p.id)}}:{}),...(health?{health}:{}),...(budget?{retryBudget:budget}:{})};
+      return{...p,...artifactPaths(p,endpoint),permission_facts:permissionFacts(p,endpoint),...this.runtimeHealth.deliveryGuidance(p),...(this.memberLifecycle.recoveryStatus(p)?{recovery:this.memberLifecycle.recoveryStatus(p)}:{}),...(health?.nativeIssue?{native_issue:health.nativeIssue}:{}),...(p.host==='codex'?{nativeHistory:this.store.setting('codexHistoryCompatibility:'+p.id),directDelivery:this.codexDirect.status(p.id)}:{}),...(p.host==='agy'?{waiterActive:this.hasAgyWaiter(p.id)}:{}) ,...(binding?{context:{sessionId:binding.sessionId,epoch:binding.epoch,transitioning:binding.transitioning,lineage:this.store.bindings.lineage(p.id)}}:{}),...(health?{health}:{}),...(budget?{retryBudget:budget}:{})};
     };
     const withHealth=(peer:Peer)=>{
       let result:unknown={...peer,diagnosticUnavailable:true};
@@ -1206,7 +1214,7 @@ export class Broker {
     };
     if(!actor){const pairs=this.store.pairs();return{pairs,...(pairs.length<=1?{pair:pairs[0]??null}:{}),peers:this.store.peers().map(withHealth),lostPairs:this.store.faults.map('status_loss',this.store.peers(),peer=>peer.id,peer=>{const loss=pairLossView(this.store,peer,this.config);return loss?[{...loss,member_id:peer.id,member_name:peer.name}]:[];}).flat(),bindings:this.store.bindings.all(),endpoints:this.store.endpoints(),messages:this.store.messages(100),questions:this.store.questions(),degraded:this.store.faults.status(),communicationTips:this.store.faults.map('status_tips',this.store.peers(),peer=>peer.id,p=>{const stats=this.communicationTips.summary(p.id);return stats?[{peerId:p.id,host:p.host,...stats}]:[];}).flat(),capabilities:{compatibilityWake:this.config.compatibilityWake,hookObserved:this.store.setting('lastHook')??null,...capability}};}
     const peer=this.actor(actor),pair=this.store.pairFor(peer.id);
-    if(!pair||pair[peer.host]!==peer.id){const loss=pairLossView(this.store,peer,this.config);return{paired:false,self:peer,...capability,...(loss?{pair_lost:loss}:{notice:'需要协作时可直接发信；已有窗口必须由人明确选择，没有候选时才按配置新建后台搭档。'}),...(this.windowRecovery.status(peer.id)?{window_recovery:this.windowRecovery.status(peer.id)}:{}),communicationTips:this.communicationTips.summary(peer.id)};}
+    if(!pair||pair[peer.host]!==peer.id){const loss=pairLossView(this.store,peer,this.config);return{paired:false,self:{...peer,...artifactPaths(peer,this.store.endpoint(peer.id))},...capability,...(loss?{pair_lost:loss}:{notice:'需要协作时可直接发信；已有窗口必须由人明确选择，没有候选时才按配置新建后台搭档。'}),...(this.windowRecovery.status(peer.id)?{window_recovery:this.windowRecovery.status(peer.id)}:{}),communicationTips:this.communicationTips.summary(peer.id)};}
     const partner=this.store.peer(pair[otherHost(peer.host)]);
     const permission=permissionGuidance(this.store.peer(pair.codex),this.store.peer(pair.agy),this.store.endpoint(pair.agy));
     return{paired:true,pair_id:pair.id,paused:pair.paused,self:withHealth(peer),partner:withHealth(partner),...(permission?{permission_guidance:permission}:{}),delivery_admission:this.runtimeHealth.deliveryAdmission(peer,pair),waiting_context:(this.store.bindings.current(partner.id)?.transitioning===true||this.store.endpoint(partner.id)?.pendingContext===true)&&this.store.pendingCount(partner.id)>0,...capability,communicationTips:this.communicationTips.summary(peer.id),receive_mode:this.store.endpoint(peer.id)?.mode??'unavailable',pending:this.store.pendingCount(peer.id),questions:this.store.questions().filter(q=>q.pairId===pair.id&&['pending','awaiting_user','needs_user'].includes(q.status)).map(q=>this.questions.view(peer,q.id))};
@@ -1829,6 +1837,12 @@ export class Broker {
           const endpoint=this.store.endpoint(existing.id)!;
           if(input.endpoint.pid&&input.endpoint.procStart)this.configurationWindows.set(existing.id,{epoch:endpoint.epoch,pid:input.endpoint.pid,procStart:input.endpoint.procStart});
           if(input.host==='codex'&&input.endpoint.mode==='embedded'&&input.endpoint.pid&&input.endpoint.procStart)this.store.saveEndpoint(observeCodexPermission({...endpoint,native:{pid:input.endpoint.pid,procStart:input.endpoint.procStart},...(input.endpoint.bridge?{bridge:input.endpoint.bridge}:{})},existing.sessionId,input.endpoint.codexPermission??{},'mcp'));
+          if(input.host==='agy'&&endpoint.mode==='agy-acp'&&input.endpoint.mode==='agy-acp'&&
+            input.endpoint.pid&&input.endpoint.procStart&&endpoint.pid===input.endpoint.pid&&endpoint.procStart===input.endpoint.procStart&&
+            endpoint.configHome&&input.endpoint.configHome&&sameDirectory(endpoint.configHome,input.endpoint.configHome)){
+            const previous=endpoint.nativeSession,session=mergeAgyNativeSession(previous,input);
+            if(session&&(session.artifactsDir!==previous?.artifactsDir||session.transcriptPath!==previous?.transcriptPath||session.transcriptPathFallback!==previous?.transcriptPathFallback))this.store.saveEndpoint({...endpoint,nativeSession:session});
+          }
           if(input.replyContract===1)this.store.adoptReplyContract(existing.id,'mcp');
           if(input.endpoint.codexPermission&&input.endpoint.pid&&input.endpoint.procStart){const permission=daemonPermission(this.store.endpoint(existing.id)!.codexPermission??{});if(permission!=='unknown')this.store.updatePeer(existing.id,{permission});}
           else if(input.permission&&input.permission!=='unknown')this.store.updatePeer(existing.id,{permission:input.permission});
@@ -2129,17 +2143,19 @@ export class Broker {
         if(peer&&!toolName.endsWith('wait_partner')&&!toolName.endsWith('receive_messages'))this.foregroundHealth.observe(peer,'tool_start',undefined,toolId,true);
         return{decision:'allow'};
       }
-      if(toolName==='invoke_subagent'&&typeof toolArgs?.Prompt==='string'&&toolArgs.Prompt.includes('nxref:')){
-        if(!peer)return{decision:'deny',reason:referenceDeny('root session not registered')};
-        try{return{decision:'allow',overwrite:{...toolArgs,Prompt:this.references.expand(peer,toolArgs.Prompt)}};}
-        catch(error){return{decision:'deny',reason:referenceDeny(modelError(error).message)};}
-      }
-      return{decision:'allow'};
+      return agyToolReferenceDecision(toolName,toolArgs,peer&&['root','fork'].includes(peer.kind)&&!actor.via
+        ?text=>this.references.expand(peer,text):'root session not registered');
     }
     const transcript=peer&&p.agy_transcript&&(event==='PreInvocation'||event==='PostToolUse')?z.object({
       compaction:z.object({id:z.string().min(1).max(256),at:z.number().finite().nonnegative(),compactedMessageIds:z.array(z.string().min(1).max(128))}).optional(),
       usage:z.object({tokens:z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),at:z.number().finite().nonnegative()}).optional(),
+      subagents:z.array(z.object({id:z.string(),text:z.string()})).optional(),
     }).safeParse(p.agy_transcript).data:undefined;
+    if(peer&&transcript?.subagents){
+      for(const report of transcript.subagents){
+        try{this.references.capture(peer,report.id,report.text);}catch{/* A skipped report must not interrupt the native hook. */}
+      }
+    }
     if(peer&&transcript?.compaction)this.communicationTips.cooperation.compacted(peer,transcript.compaction.id,transcript.compaction.at);
     if(peer&&transcript?.usage)this.communicationTips.cooperation.usage(peer,transcript.usage);
     if(event==='PostToolUse'){

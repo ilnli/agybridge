@@ -1,6 +1,9 @@
 import {BridgeError} from '../../shared/errors.js';
 import {type Message,type Peer} from '../../types.js';
 import type { Store } from '../../storage/store.js';
+import { agyTranscriptPath } from '../../hosts/agy/identity.js';
+import { readAgySubagentFromTranscript } from '../../hosts/agy/agy-transcript.js';
+import { agyHome } from '../../shared/local-paths.js';
 
 const limit=256*1024;
 const agentId=/^\/?[\w-]+(?:\/[\w-]+)*$/;
@@ -37,7 +40,16 @@ export class References {
       if(seen.has(key))throw new BridgeError('ref_cycle','nxref 引用存在循环。');
       const next=new Set(seen);next.add(key);
       let value:string|undefined;
-      if(ref[1]==='agent')value=this.store.setting<string>(`ref:agent:${peer.id}:${ref[2]}`);
+      if(ref[1]==='agent'){
+        const id=ref[2]!;
+        value=this.store.setting<string>(`ref:agent:${peer.id}:${id}`);
+        if(value===undefined&&peer.host==='agy'){
+          const endpoint=this.store.endpoint(peer.id);
+          const file=endpoint?.nativeSession?.transcriptPath??(peer.sessionId?agyTranscriptPath(endpoint?.configHome??agyHome(),peer.sessionId):undefined);
+          if(file)value=readAgySubagentFromTranscript(file,id);
+          if(value!==undefined)this.capture(peer,id,value);
+        }
+      }
       else{
         const pair=this.store.pairFor(peer.id);let source:Message|undefined;
         try{source=this.store.message(ref[2]!);}catch(error){if(!(error instanceof BridgeError)||error.code!=='message_missing')throw error;}

@@ -2,6 +2,7 @@ import type { Message, Peer } from '../../types.js';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 export interface FileReference { path:string; start?:number; end?:number }
 export type DeliveryMessage = Message & { hint?:string;notice?:boolean;noticeSource?:string;beforeSubmit?:(deadline?:number)=>Promise<boolean>;senderSnapshot?:()=>Peer };
@@ -11,7 +12,7 @@ export function parseFileReferences(body:string,cwd=process.cwd()):FileReference
   const found=new Map<string,FileReference>();
   const add=(raw:string)=>{
     let filename=raw.trim().replace(/[.,;!?，；。！？]+$/u,'');
-    if(!filename||/^[a-z][a-z\d+.-]*:\/\//i.test(filename)||/^(?:www\.|mailto:)/i.test(filename)||/^[^/\\\s]+@[^/\\\s]+\.[^/\\\s]+$/.test(filename))return;
+    if(!filename||/^(?:www\.|mailto:)/i.test(filename)||/^[^/\\\s]+@[^/\\\s]+\.[^/\\\s]+$/.test(filename))return;
     let start:number|undefined,end:number|undefined;
     const range=/(?::([1-9]\d*)(?:-([1-9]\d*))?|#L([1-9]\d*)(?:-L?([1-9]\d*))?)$/i.exec(filename);
     if(range){
@@ -19,6 +20,14 @@ export function parseFileReferences(body:string,cwd=process.cwd()):FileReference
       if(!Number.isSafeInteger(start)||(end!==undefined&&(!Number.isSafeInteger(end)||end<start)))return;
       filename=filename.slice(0,range.index);
     }
+    if(/^file:\/\//i.test(filename)){
+      try{
+        const url=new URL(filename);
+        if(url.hostname||url.search||url.hash)return;
+        filename=fileURLToPath(url);
+        if(/^[/\\]{2}/.test(filename))return;
+      }catch{return;}
+    }else if(/^[a-z][a-z\d+.-]*:\/\//i.test(filename))return;
     if(/^(?:v?\d+\.)+\d+$/i.test(filename)||/[#?*|=<>\r\n]/.test(filename)||/:(?![\\/])/.test(filename))return;
                                         
     if(filename.includes(':')&&!/^[a-z]:[\\/][^:]+$/i.test(filename))return;
@@ -43,7 +52,7 @@ export function parseFileReferences(body:string,cwd=process.cwd()):FileReference
   }).join('\n');
   let rest=prose.replace(/\[[^\]\r\n]*\]\(\s*(?:<([^>\r\n]+)>|([^\s()]+))(?:\s+["'][^\r\n]*?["'])?\s*\)/g,(_all,angle:string|undefined,target:string|undefined)=>{add(angle??target!);return ' ';});
   rest=rest.replace(/(`+)([^`\r\n]+)\1/g,(_all,_ticks:string,code:string)=>{add(code);return ' ';});
-  rest=rest.replace(/\b(?:[a-z][a-z\d+.-]*:\/\/|www\.)[^\s<>]+/gi,' ');
+  rest=rest.replace(/\b(?:(?!file:\/\/)[a-z][a-z\d+.-]*:\/\/|www\.)[^\s<>]+/gi,' ');
   for(const token of rest.match(/[^\s`<>"'()[\]{},;，；。！？]+/gu)??[])add(token);
   return [...found.values()];
 }

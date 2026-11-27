@@ -66,7 +66,7 @@ export interface Peer {
 
 export interface CodexPermissionEvidence {sandbox?:string;approval?:PermissionClass;autoReview?:boolean}
 export interface Endpoint {
-  nativeSession?:{transcriptPath?:string;interactive?:boolean;artifactsDir?:string};
+  nativeSession?:{transcriptPath?:string;transcriptPathFallback?:boolean;interactive?:boolean;artifactsDir?:string};
   codexPermissionObservation?:FieldObservation<CodexPermissionEvidence>;
   peerId: string;
   epoch: string;
@@ -125,6 +125,8 @@ export interface RegisterInput {
   sessionId: string;
   cwd: string;
   cwdFallback?: boolean;
+  artifactsDirFallback?: boolean;
+  transcriptPathFallback?: boolean;
   name?: string;
   kind?: Peer['kind'];
   parentId?: string;

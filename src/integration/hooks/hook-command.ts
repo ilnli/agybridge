@@ -2,6 +2,7 @@ import { BridgeError, describeError } from '../../shared/errors.js';
 import { isEmbeddedWake, type Host } from '../../types.js';
 import { modelError, referenceDeny } from '../mcp/model-error.js';
 import { agyControlReply, codexSessionAnchor, hookTimeoutMessage } from './hook-output.js';
+import { agyToolReferenceDecision } from './agy-tool-references.js';
 
 function hookErrorResult(rawHost:string|undefined,input:any,error:unknown):unknown{
   const event=input?.hook_event_name??input?.hookEventName;
@@ -11,10 +12,7 @@ function hookErrorResult(rawHost:string|undefined,input:any,error:unknown):unkno
     const control=event==='PreInvocation'&&typeof prompt==='string'&&/^\s*agybridge\s+(?:on|off|status|pair|config)(?:\s|$)/.test(prompt);
     if(control)return agyControlReply('agybridge 命令结果尚未确认：'+describeError(error));
     if(event==='PreToolUse'){
-      if(input?.toolCall?.name==='invoke_subagent'&&typeof input?.toolCall?.args?.Prompt==='string'&&input.toolCall.args.Prompt.includes('nxref:')){
-        return{decision:'deny',reason:referenceDeny(modelError(error).message)};
-      }
-      return{decision:'allow'};
+      return agyToolReferenceDecision(input?.toolCall?.name,input?.toolCall?.args,modelError(error).message);
     }
     return{};
   }

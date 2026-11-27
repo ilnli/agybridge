@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { parseFileReferences, fileHintFields, type DeliveryMessage } from '../broker/delivery/file-references.js';
 import { CodexAdapter } from '../hosts/codex/adapter.js';
 import {DEFAULT_CONFIG} from '../config/defaults.js';
@@ -23,6 +24,19 @@ test('引用保留行范围，兼容 Markdown、裸路径、目录与 Windows，
   assert.ok(refs.some(r=>r.path==='logs/2026/'));
   assert.ok(refs.some(r=>r.path===spaced&&r.start===3));
   if(process.platform==='win32')assert.equal(parseFileReferences(`${absolute}:7 ${absolute.toUpperCase().replaceAll('\\','/')}#L7`,cwd).length,1);
+});
+
+test('AGY 工件的本地 file URL 解码为路径，Markdown 和裸链接与相同行范围去重',t=>{
+  const cwd=temporary(t),artifacts=path.join(cwd,'.gemini','antigravity','brain','conversation');
+  mkdirSync(artifacts,{recursive:true});
+  const file=path.join(artifacts,'执行 计划.md'),url=pathToFileURL(file).href;
+  writeFileSync(file,'工件正文','utf8');
+  const body=`[工件](${url}#L2-L4) [相同](<${file}:2-4>)，另看 ${url}:7-8。`;
+  assert.deepEqual(parseFileReferences(body,cwd),[{path:file,start:2,end:4},{path:file,start:7,end:8}]);
+  assert.match(fileHintFields(body,cwd).hint!,/2 file refs/);
+  const invalid=[url+'.missing',url+'?download=1',url+'#section',url+'#L4-L2',url+'%ZZ',
+    url.replace('file:///','file://server/'),url.replace('file:///','file:////server/'),url.replace('file:','https:'),url.replace('file:','sftp:')];
+  assert.deepEqual(parseFileReferences(invalid.join(' '),cwd),[]);
 });
 
 test('忽略 fenced code、URL、版本号、邮件及无效范围，单处或重复引用不提醒',()=>{

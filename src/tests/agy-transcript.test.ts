@@ -2,15 +2,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { writeFileSync } from 'node:fs';
-import { inspectAgyTranscript } from '../hosts/agy/agy-transcript.js';
+import { inspectAgyTranscript, readAgySubagentFromTranscript } from '../hosts/agy/agy-transcript.js';
 import { temporaryDirectory } from './support/temporary.js';
 
-test('inspectAgyTranscript 提取最近一次 CHECKPOINT 压缩窗口内的双向消息 ID 与最新上下文用量', async t => {
+test('inspectAgyTranscript 提取最近一次 CHECKPOINT 压缩窗口内的双向消息 ID、子代理结论与最新上下文用量', async t => {
   const temp = temporaryDirectory();
   t.after(temp.cleanup);
 
   const compactFile = path.join(temp.directory, 'transcript.jsonl');
   const fullFile = path.join(temp.directory, 'transcript_full.jsonl');
+  const subagentId = '2fb71d60-6c8d-40aa-b569-1b9f8ce3aade';
 
   const rows = [
     {
@@ -122,6 +123,13 @@ test('inspectAgyTranscript 提取最近一次 CHECKPOINT 压缩窗口内的双�
     },
     {
       step_index: 14,
+      source: 'SYSTEM',
+      type: 'SYSTEM_MESSAGE',
+      created_at: '2026-11-26T08:20:30Z',
+      content: `The following is a <SYSTEM_MESSAGE> not actually sent by the user.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-26T08:20:30Z sender=${subagentId} priority=MESSAGE_PRIORITY_HIGH content=# Subagent Report\nFound 3 issues (including </SYSTEM_MESSAGE> literal inside body).\n</SYSTEM_MESSAGE>\nThe following is a <SYSTEM_MESSAGE> not actually sent by the user.\n\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-26T08:20:31Z sender=${subagentId}/task-12 priority=MESSAGE_PRIORITY_HIGH content=Task id "${subagentId}/task-12" finished\n</SYSTEM_MESSAGE>`,
+    },
+    {
+      step_index: 15,
       source: 'MODEL',
       type: 'PLANNER_RESPONSE',
       created_at: '2026-11-26T08:21:00Z',
@@ -131,7 +139,7 @@ test('inspectAgyTranscript 提取最近一次 CHECKPOINT 压缩窗口内的双�
       tool_calls: [{ name: 'mcp_agybridge_codex_send_message', args: { message: 'post compaction' } }],
     },
     {
-      step_index: 15,
+      step_index: 16,
       source: 'MODEL',
       type: 'GENERIC',
       created_at: '2026-11-26T08:21:01Z',
@@ -139,7 +147,6 @@ test('inspectAgyTranscript 提取最近一次 CHECKPOINT 压缩窗口内的双�
     },
   ];
 
-  // Write truncated transcript.jsonl and full transcript_full.jsonl to verify automatic sibling resolution
   writeFileSync(compactFile, JSON.stringify({ step_index: 0, type: 'USER_INPUT', content: 'short' }) + '\n', 'utf8');
   writeFileSync(fullFile, rows.map(r => JSON.stringify(r)).join('\n') + '\n', 'utf8');
 
@@ -150,6 +157,19 @@ test('inspectAgyTranscript 提取最近一次 CHECKPOINT 压缩窗口内的双�
   assert.ok(snapshot.usage);
   assert.equal(snapshot.usage.tokens, 50000);
   assert.equal(snapshot.usage.model, 'gemini-4-carbon-high');
+  assert.deepEqual(snapshot.subagents, [
+    {
+      id: subagentId,
+      text: '# Subagent Report\nFound 3 issues (including </SYSTEM_MESSAGE> literal inside body).',
+    },
+  ]);
+
+  assert.equal(
+    readAgySubagentFromTranscript(compactFile, subagentId),
+    '# Subagent Report\nFound 3 issues (including </SYSTEM_MESSAGE> literal inside body).',
+  );
+  assert.equal(readAgySubagentFromTranscript(compactFile, '00000000-0000-4000-8000-000000000000'), undefined);
+  assert.equal(readAgySubagentFromTranscript(compactFile, 'not-a-uuid'), undefined);
 
   const missing = await inspectAgyTranscript(path.join(temp.directory, 'nonexistent.jsonl'));
   assert.deepEqual(missing, {});
