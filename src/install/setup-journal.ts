@@ -68,6 +68,7 @@ function apply(home:string,intent:Intent,checkpoint:Checkpoint=()=>{},cached?:Ca
       checkpoint(intent.label+':write:'+index);
     }
   }else{
+    if(intent.host==='agy'){delete intent.before['.orphaned_at'];delete intent.after['.orphaned_at'];}
     if(!cached){
       safeTree(home,intent.source);safeTree(intent.hostHome,intent.target);
       const contents=new Map<string,Buffer>();

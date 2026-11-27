@@ -70,10 +70,12 @@ agybridge open codex                                         # 在前台临时�
 agybridge open agy [--interrupt]                             # 暂停后台 AGY ACP 并在前台 agy --conversation 接管
 agybridge adopt codex [--session <ID>]                       # 将前台关闭后的 Codex 会话转交后台托管
 agybridge release codex                                      # 将后台 Codex 会话交还用户窗口
-agybridge partner-profile codex|agy [--model <M>] [--effort <E>] [--reset]  # 查看或修改后台搭档模型与推理强度
+agybridge retire --member <ID>                               # 重新核验并回收已解除配对的残留自有后台
+agybridge partner-profile codex|agy [--model <M>] [--effort <E>] [--service-tier <standard|fast>] [--reset]  # 查看或修改后台搭档模型、推理强度与服务档位
 agybridge pause / resume / unpair                            # 暂停、恢复或解除当前配对
 agybridge restart codex                                      # 空闲时平滑冷重启后台 Codex 运行时
 agybridge recover codex --dry-run / --turn <turn ID>         # 查看或显式恢复卡住/失败的后台 Codex 轮次
+agybridge recover codex --recycle [--dry-run | --incident <ID> --revision <REV> --reason <原因>]  # 按原会话与设置回收恢复卡死的后台 Codex
 agybridge watch [--once] [--json]                            # 实时查看双方消息流与问答状态
 agybridge config list / get / set / unset                    # 查看或修改 ~/.agybridge 配置项
 agybridge doctor [--current]                                 # 诊断全局安装或当前窗口配对状态

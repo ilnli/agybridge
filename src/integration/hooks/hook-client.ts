@@ -5,7 +5,7 @@ import { bridgeHome, codexHome, agyHome, ipcAddress } from '../../shared/local-p
 import { ipcToken } from '../../ipc/token.js';
 import { disabledMember } from '../../broker/member-state.js';
 import { BridgeError } from '../../shared/errors.js';
-import { type Host } from '../../types.js';
+import { isEmbeddedWake, type Host } from '../../types.js';
 
 function hookEventName(input:any):string|undefined{
   return typeof input?.hook_event_name==='string'?input.hook_event_name:typeof input?.hookEventName==='string'?input.hookEventName:undefined;
@@ -38,7 +38,7 @@ export async function hookClient(host:Host,input:any,provided:(ack:()=>Promise<v
   const home=bridgeHome(),event=hookEventName(input),sessionId=hookSessionId(input),prompt=hookPrompt(input);
   const control=(host==='codex'&&event==='UserPromptSubmit'&&!input.agent_id&&!input.agent_transcript_path||host==='agy'&&event==='PreInvocation')&&typeof prompt==='string'&&/^\s*agybridge\s+(?:on|off|status)(?:\s+(?:self|codex|agy))?\s*$/.test(prompt);
   try{
-    if(!control&&disabledMember(home,{host,sessionId})){input.agybridge_disabled=true;return host==='agy'&&event==='PreToolUse'?{decision:'allow'}:{};}
+    if(!control&&disabledMember(home,{host,sessionId})){input.agybridge_disabled=true;return host==='agy'&&event==='PreToolUse'?{decision:'allow'}:host==='codex'&&event==='UserPromptSubmit'&&isEmbeddedWake(prompt)?{continue:false}:{};}
     const state=path.join(home,'setup-state.json');
     if(existsSync(state)&&JSON.parse(readFileSync(state,'utf8').replace(/^\uFEFF/,'')).disabled)return fallback();
   }catch{return fallback();}

@@ -59,7 +59,7 @@ agy plugin validate plugins/agy --strict
    - 在 `~/.agybridge/marketplace/` 生成注入了本机 Node 与桥接路径的 `plugins/agy` 和 `plugins/codex`，并将 `docs/collaboration.md` 同步为技能参考文档。
    - **AGY 侧**：首次通过 `agy plugin install` 安装到 `~/.gemini/config/plugins/agybridge/`；后续更新优先文件级同步或重装，保留启用状态。
    - **Codex 侧**：通过 `agybridge-local` 本地市场安装 `agybridge@agybridge-local`，并通过 Codex 官方配置接口写入限定在 `agy` 命名空间的直接工具配置（不改动模型、沙箱、审批或 hooks 信任记录）。
-4. **平滑重启协调器**：若有损坏的本地 IPC 令牌，在确认归属后安全停止旧协调器并重新生成令牌；正常更新时平滑重启 broker，已有会话与专用 App Server 保持不断线。
+4. **零停机交接或平滑重启协调器**：新旧版本均支持交接协议（`publish/broker-custody-v1`）时，新协调器通过受保护的本机交接通道继承后台 Codex 物理订阅与挂起中的搭档问答等待（`question.wait`），正在执行的轮次不中断、问题超时时钟保持不变；旧版本不支持交接时则等待活动问答结束后平滑切换。
 
 ### 更新后重新加载
 
@@ -71,7 +71,7 @@ agy plugin validate plugins/agy --strict
 ## 验证与测试
 
 ```sh
-npm run check               # 版本元数据同步检查、Windows 原生身份修订检查与 TypeScript 类型检查
+npm run check               # 版本元数据同步、Windows 原生身份修订、TypeScript 类型与模块导入边界检查
 npm test                    # 构建并运行全部单元测试（dist/tests/**/*.test.js）
 npm run test:native         # 在隔离临时目录中使用真实 CLI + 本地模拟模型服务运行原生协议测试
 npm run test:native:target  # 临时下载指定版本官方 Codex 二进制做隔离兼容性验证

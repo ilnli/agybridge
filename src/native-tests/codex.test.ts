@@ -34,7 +34,8 @@ test('隔离官方 CLI：安装保留配置、直连、命名空间工具、双�
   let brokerPid:number|undefined,serverPid:number|undefined,managedPid:number|undefined;
   let client:Awaited<ReturnType<typeof connectAppServer>>|undefined,model:http.Server|undefined;
   mkdirSync(codexHome,{recursive:true});mkdirSync(agyHome,{recursive:true});
-  const config={...DEFAULT_CONFIG,codexHome,agyHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})};
+  const pinned=process.env.AGYBRIDGE_TEST_CODEX_BINARY??process.env.NXBRIDGE_TEST_CODEX_BINARY;
+  const config={...DEFAULT_CONFIG,codexHome,agyHome,...(pinned?{codexBinary:pinned}:{})};
   mkdirSync(bridgeHome,{recursive:true});writeFileSync(path.join(bridgeHome,'config.json'),JSON.stringify(config),'utf8');
   const keys=['AGYBRIDGE_HOME','CODEX_HOME','AGY_HOME','OPENAI_API_KEY'];const previous=Object.fromEntries(keys.map(k=>[k,process.env[k]]));
   Object.assign(process.env,{AGYBRIDGE_HOME:bridgeHome,CODEX_HOME:codexHome,AGY_HOME:agyHome,OPENAI_API_KEY:'agybridge-not-a-real-key'});
@@ -155,9 +156,17 @@ test('隔离官方 CLI：安装保留配置、直连、命名空间工具、双�
                                            
   const ledger=new Store(':memory:'),implicitAdapter=new CodexAdapter({...config,codexEndpoint:endpoint},bridgeHome),count=modelRequests.length;
   try{
-    const implicit=await implicitAdapter.create(ledger.placeholder('codex',directory));
+    const placeholder=ledger.placeholder('codex',directory),implicit=await implicitAdapter.create(placeholder);
     assert.equal(implicit.kind,'root');assert.equal(implicit.parentId,undefined);assert.equal(modelRequests.length,count);
-    await implicitAdapter.release({...ledger.peers()[0]!,sessionId:implicit.sessionId},{...implicit.endpoint,peerId:'test',seenAt:Date.now(),active:true});
+    const external=ledger.adopt(placeholder.id,implicit);
+
+    assert.equal(external.owner,'nxbridge');
+    const observer=new CodexAdapter({...config,codexEndpoint:endpoint},bridgeHome);
+    try{
+      await assert.rejects(observer.release(external,ledger.endpoint(external.id)!),{code:'owned_subscription_waiting'});
+      assert.ok((await client.request('thread/loaded/list',{limit:100})).data.includes(implicit.sessionId));
+    }finally{observer.close();}
+    await implicitAdapter.release(ledger.peer(external.id),ledger.endpoint(external.id)!);
     const restoredThread=await client.request('thread/resume',{threadId:implicit.sessionId});assert.equal(restoredThread.thread.id,implicit.sessionId);assert.equal(modelRequests.length,count);
     const completed=new Set<string>();
     client.on('notification',m=>{if(m.method==='turn/completed')completed.add(m.params.turn.id);});
@@ -186,7 +195,7 @@ test('隔离官方 CLI：安装保留配置、直连、命名空间工具、双�
       const managedEndpoint=await managed.ensureEndpoint(),record=runtimeFor(bridgeHome,{endpoint:managedEndpoint})!,runtime=record.value;assert.ok(runtime.pid);managedPid=await remember(runtime.pid);
                                       
       const rpc=await managed.connect(managedEndpoint),created=await rpc.request('thread/start',{cwd:directory,config:{thread_unload_delay_secs:0}});
-      assert.match(await managed.releaseRuntime()??'',/仍有已加载线程/);assert.equal(liveProcess(managedPid!),true);
+      assert.match(await managed.releaseRuntime()??'',/还有会话没卸载/);assert.equal(liveProcess(managedPid!),true);
       await rpc.request('thread/unsubscribe',{threadId:created.thread.id});
       const unloadedBy=Date.now()+5000;
       while((await rpc.request('thread/loaded/list',{limit:1})).data.length){if(Date.now()>unloadedBy)throw Error('原生线程未按配置卸载');await delay(50);}

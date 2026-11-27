@@ -37,7 +37,7 @@ for(const change of ['generation','context'] as const)test('原生权限证据�
 });
 
 test('首次实际发信才创建隐式根线程，并收养到持久配对',async t=>{
-  const {store,broker,c,x,codex}=fixture(t,{implicit:'on-demand'});store.updatePeer(x.id,{state:'offline'});
+  const {store,broker,c,x,codex}=fixture(t,{implicit:'on-demand',partnerProfiles:{codex:{source:'host'}}});store.updatePeer(x.id,{state:'offline'});
   broker.status({host:'agy',sessionId:'c',callId:'status'});assert.equal(codex.created.length,0);
   const response=await broker.dispatch('send',{actor:{host:'agy',sessionId:'c',callId:'send'},message:'隐式搭档任务'}) as any;
   assert.equal(response.notice,'no partner for this window -> started NEW codex partner (no prior context; brief fully). expected an existing partner? tell user: agybridge pair');
@@ -58,7 +58,7 @@ test('卸载停止只回收自有后台会话，保留用户会话及消息历�
 });
 
 for(const mode of ['create','wake'] as const)test('后台 AGY '+mode+' 与原生登记竞态按已核验端点接续原成员',async t=>{
-  const {store,broker,x,agy}=fixture(t),owned=store.placeholder('agy',x.cwd),input=registration('agy','managed-native',{endpoint:{mode:'agy-acp',address:'native-managed',epoch:'native-managed',pid:process.pid,procStart:'fixture-generation',configHome:path.resolve('/agy-test')}});
+  const {store,broker,x,agy}=fixture(t,{partnerProfiles:{agy:{source:'host'}}}),owned=store.placeholder('agy',x.cwd),input=registration('agy','managed-native',{endpoint:{mode:'agy-acp',address:'native-managed',epoch:'native-managed',pid:process.pid,procStart:'fixture-generation',configHome:path.resolve('/agy-test')}});
   if(mode==='wake')store.updatePeer(owned.id,{sessionId:input.sessionId,state:'offline'});
   const pair=store.pair(owned.id,x.id);
   agy.create=(async (peer:typeof owned)=>{store.updatePeer(peer.id,{sessionId:input.sessionId});return input;}) as any;

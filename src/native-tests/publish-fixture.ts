@@ -36,7 +36,10 @@ export function publishEnvironment(home:string,bin:string,input:NodeJS.ProcessEn
       execFileSync('git',['-C',target,'config','--local','core.longpaths','true'],{windowsHide:true,timeout:5000,stdio:'pipe'});
   }
   for(const host of ['codex','agy'] as const){
-    const key=host==='codex'?'codexBinary':'agyBinary',resolved=resolveCli(host,config[key]);
+    if(config[host==='codex'?'codexCommand':'agyCommand'])continue;
+    const key=host==='codex'?'codexBinary':'agyBinary';
+    const binary=config[key]??(host==='codex'?input.AGYBRIDGE_TEST_CODEX_BINARY??input.NXBRIDGE_TEST_CODEX_BINARY:undefined);
+    const resolved=resolveCli(host,binary);
     config[key]=resolved.prefix[0]??resolved.command;
   }
   writeConfiguration(home,CONFIG_FIELDS.filter(field=>!field.immutable&&configValue(config,field.internal)!==undefined).map(field=>({key:field.key,value:configValue(config,field.internal)})),'setup');
@@ -44,9 +47,9 @@ export function publishEnvironment(home:string,bin:string,input:NodeJS.ProcessEn
   return{...input,PATH:[bin,...publishPath(home,input.PATH)].join(path.delimiter)};
 }
                                             
-export async function setupPublish():Promise<any>{
+export async function setupPublish(publish=path.join(PACKAGE_ROOT,'publish')):Promise<any>{
   const bin=path.join(path.dirname(bridgeHome()),'fixture-bin');mkdirSync(bin,{recursive:true});
-  const {stdout}=await execute(process.execPath,['--no-warnings',path.join(PACKAGE_ROOT,'publish','agybridge.mjs'),'setup','--bin-dir',bin],{env:publishEnvironment(bridgeHome(),bin),windowsHide:true,timeout:90000,maxBuffer:8*1024*1024});
+  const {stdout}=await execute(process.execPath,['--no-warnings',path.join(publish,'agybridge.mjs'),'setup','--bin-dir',bin],{env:publishEnvironment(bridgeHome(),bin),windowsHide:true,timeout:90000,maxBuffer:8*1024*1024});
   return JSON.parse(stdout);
 }
 export async function uninstallPublish():Promise<any>{

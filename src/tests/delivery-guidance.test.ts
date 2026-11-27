@@ -58,3 +58,42 @@ test('读不到最新一步时状态只说进度暂时无法观测，不说没�
   const unverified=status({...silent,progressEvidence:false});
   assert.match(unverified,/进度暂时无法观测/);assert.doesNotMatch(unverified,/没有进展|未见进展/);
 });
+
+test('status 文本：子代理已做完但没法确认主线程接着处理时给出中性说明，核对中不误报',()=>{
+  const partner=(childCompletions:any)=>({id:'x',host:'codex',name:'Codex',state:'ready',childCompletions});
+  const text=formatStatus({paired:true,self:{id:'c',host:'agy',name:'AGY',state:'ready'},partner:partner({unconfirmed:1,needsWake:1,awaitingContext:1,batchId:'b',hold:{batchId:'b',reason:'唤醒次数已用完，自动尝试已停止'}}),pending:0,questions:0});
+  assert.match(text,/子代理已做完，尚未确认主线程接着处理：唤醒次数已用完，自动尝试已停止/);assert.doesNotMatch(text,/未读|没人/);
+  assert.doesNotMatch(formatStatus({paired:true,self:{id:'c',host:'agy',name:'AGY',state:'ready'},partner:partner({unconfirmed:1,needsWake:0,awaitingContext:1,hold:null}),pending:0,questions:0}),/子代理/);
+  const observing=formatStatus({paired:true,self:{id:'c',host:'agy',name:'AGY',state:'ready'},partner:partner({unconfirmed:2,needsWake:1,awaitingContext:1,batchId:'b',hold:{batchId:'b',reason:'当前原生会话不可达或尚未核验',observing:true}}),pending:0,questions:0});
+  assert.match(observing,/子代理已做完，正在核对主线程有没有接着处理（当前原生会话不可达或尚未核验），不用操作/);assert.doesNotMatch(observing,/说一句继续|尚未确认主线程/);
+});
+
+test('status 文本：后台做完一轮的状态按对去重，正常汇报和工作中不显示，用完次数写明怎么恢复',()=>{
+  const view=(extra:any)=>({background_id:'x',foreground_id:'c',state:'completed',completed_at:Date.UTC(2026,0,5,1,30),reason:'no_tools',budget:{used:1,limit:4,remaining:3,awaitingProof:0},...extra});
+  const text=(guard?:any,selfGuard?:any)=>formatStatus({paired:true,self:{id:'c',host:'agy',name:'AGY',state:'ready',...(selfGuard?{completion_guard:selfGuard}:{})},partner:{id:'x',host:'codex',name:'Codex',state:'ready',...(guard?{completion_guard:guard}:{})},pending:0,questions:0});
+  const limited=view({state:'limited',hold:'wake_budget_exhausted',budget:{used:4,limit:4,remaining:0,awaitingProof:0}});
+  assert.match(text(limited),/后台 Codex .*做完一轮停下了（这一轮没调用干活的工具）；自动提醒已用完（4 次），在前台窗口发条消息就会恢复/);
+  assert.equal(text(limited,limited).match(/自动提醒已用完/g)?.length,1,'同一对只写一次');
+  assert.match(text(view({state:'pending',hold:'foreground_busy'})),/等前台这一轮结束后再提醒/);
+  assert.match(text(view({state:'pending',hold:'native_state_unverified'})),/还没能确认后台 Codex的实际状态/);
+  assert.match(text(view({})),/做完一轮停下了（这一轮没调用干活的工具）/);
+  assert.match(text(view({state:'limited',user_text:'后端给的文字'})),/后端给的文字/);
+  for(const quiet of [view({reason:'reported'}),view({state:'running'}),{state:'not_applicable'},view({state:'pending',hold:'background_busy'})])assert.doesNotMatch(text(quiet),/后台 Codex|后台搭档/);
+  assert.doesNotMatch(text(),/后台 Codex|后台搭档/);
+});
+
+test('status 文本：后台 Codex 重启没完成时写明原因，服务档位对不上时带上原来和现在的档位',()=>{
+  const text=(extra:any)=>formatStatus({paired:true,self:{id:'c',host:'agy',name:'AGY',state:'ready'},partner:{id:'x',host:'codex',name:'Codex',state:'paused',pause_reason:'restart_incomplete',...extra},pending:0,questions:0});
+  assert.match(text({pause_detail:{code:'service_tier_mismatch',saved:'standard',live:'fast'}}),/服务档位和原来对不上（原来 standard，现在 fast），为免改用别的档位已暂停投递，消息已保留/);
+  assert.match(text({pause_detail:{code:'service_tier_unverified'}}),/没能确认服务档位和原来一致/);
+  assert.match(text({}),/后台 Codex 的重启没有完整完成，已暂停投递，消息已保留/);
+  assert.doesNotMatch(formatStatus({paired:true,self:{id:'c',host:'agy',name:'AGY',state:'ready'},partner:{id:'x',host:'codex',name:'Codex',state:'ready'},pending:0,questions:0}),/重启/);
+});
+
+test('子代理完成在核对中（observing）时不产生配对异常提醒；真正卡住时照常提醒',async()=>{
+  const {pairIssues}=await import('../broker/pairing/pair-anomalies.js');
+  const base:any={pair:{id:'p',agy:'c',codex:'x',paused:false,archived:false,createdAt:1},peer:{id:'x',host:'codex',name:'Codex',state:'busy',enabled:true},now:2000000,version:'v',messages:[],transitioning:false,questionPending:false,integration:{scope:'s',since:1999999}};
+  const hold={batchId:'b',reason:'当前原生会话不可达或尚未核验'};
+  assert.ok(pairIssues({...base,integration:{...base.integration,subagentHold:hold}}).some((issue:any)=>issue.kind==='subagent_completion_held'));
+  assert.equal(pairIssues({...base,integration:{...base.integration,subagentHold:{...hold,observing:true}}}).some((issue:any)=>issue.kind==='subagent_completion_held'),false);
+});

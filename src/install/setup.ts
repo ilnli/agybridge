@@ -314,8 +314,8 @@ async function setupInner(options:NonNullable<Parameters<typeof setup>[0]>,input
     if(host==='agy'){
       const preparedDir=path.join(root,'plugins','agy');
       const beforeDirectories=installedCacheDirectories(services.agyDirectory,'agy');
-      const preparedFiles=fileHashes(preparedDir);
-      reloadRequired.agy=entryChanged(['mcp-entry.mjs','hook-entry.mjs'])||!beforeDirectories.length||beforeDirectories.some(directory=>!isDeepStrictEqual(fileHashes(directory),preparedFiles));
+      const preparedFiles=pluginFileHashes(preparedDir,'agy');
+      reloadRequired.agy=entryChanged(['mcp-entry.mjs','hook-entry.mjs'])||!beforeDirectories.length||beforeDirectories.some(directory=>!isDeepStrictEqual(pluginFileHashes(directory,'agy'),preparedFiles));
       const targetVersion=readJson<{version:string}>(path.join(preparedDir,'plugin.json')).version;
       let mode='official-install';
       if(!inventory.installed){
@@ -340,8 +340,8 @@ async function setupInner(options:NonNullable<Parameters<typeof setup>[0]>,input
     }
     const beforeHomes=[services.codexDirectory,...inventory.plugins.filter(value=>typeof value.installPath==='string').map(value=>path.resolve(value.installPath,'../../../../..'))];
     const beforeDirectories=[...new Set(beforeHomes.flatMap(directory=>installedCacheDirectories(directory,'codex')))].filter(directory=>inventory.plugins.some(value=>value.installed!==false&&(typeof value.installPath==='string'?sameDirectory(value.installPath,directory):path.basename(directory)===value.version)));
-    const preparedFiles=fileHashes(path.join(root,'plugins','codex'));
-    reloadRequired.codex=entryChanged(['mcp-entry.mjs'])||!beforeDirectories.length||beforeDirectories.some(directory=>!isDeepStrictEqual(fileHashes(directory),preparedFiles));
+    const preparedFiles=pluginFileHashes(path.join(root,'plugins','codex'),'codex');
+    reloadRequired.codex=entryChanged(['mcp-entry.mjs'])||!beforeDirectories.length||beforeDirectories.some(directory=>!isDeepStrictEqual(pluginFileHashes(directory,'codex'),preparedFiles));
     const targetVersion=readJson<{version:string}>(path.join(root,'plugins','codex','.codex-plugin','plugin.json')).version;
     const retainedCaches=[...recoveredCaches],installCodex=async()=>{
       const homes=[services.codexDirectory,...inventory.plugins.filter(value=>typeof value.installPath==='string').map(value=>path.resolve(value.installPath,'../../../../..'))];

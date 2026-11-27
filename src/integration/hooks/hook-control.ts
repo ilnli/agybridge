@@ -45,8 +45,8 @@ export async function hook(host:Host,input:any,provided:(ack:()=>Promise<void>)=
   const control=(host==='codex'&&event==='UserPromptSubmit'&&!input.agent_id&&!input.agent_transcript_path||host==='agy'&&event==='PreInvocation')&&typeof prompt==='string'
     ?/^\s*agybridge\s+(on|off|status)(?:\s+(self|codex|agy))?\s*$/.exec(prompt)
     :null;
-  const agyPreToolFallback=()=>host==='agy'&&event==='PreToolUse'?{decision:'allow'}:{};
-  if(!control&&disabledMember(home,{host,sessionId})){input.agybridge_disabled=true;return agyPreToolFallback();}
+  const disabledResult=()=>host==='agy'&&event==='PreToolUse'?{decision:'allow'}:host==='codex'&&event==='UserPromptSubmit'&&isEmbeddedWake(prompt)?{continue:false}:{};
+  if(!control&&disabledMember(home,{host,sessionId})){input.agybridge_disabled=true;return disabledResult();}
 
   if(host==='agy'){
     const configHome=execution.agy?.configHome??execution.configHome??agyHome();
@@ -56,7 +56,7 @@ export async function hook(host:Host,input:any,provided:(ack:()=>Promise<void>)=
     const disabled=disabledMember(home,{host:'agy',sessionId,pid:runtime.pid,procStart:runtime.procStart,configHome});
     if(disabled){
       input.agybridge_disabled=true;
-      if(!control)return agyPreToolFallback();
+      if(!control)return disabledResult();
       const actor:Actor={host:'agy',memberId:disabled.peerId,sessionId:disabled.sessionId!,callId:randomUUID()};
       if(control[1]==='status'){
         const text=formatStatus(await brokerCall('status',{actor},{timeout:8000}))||'agybridge 已关闭。';
@@ -134,7 +134,7 @@ export async function hook(host:Host,input:any,provided:(ack:()=>Promise<void>)=
       process.stderr.write('agybridge AGY hook：'+describeError(error)+'\n');
     }
     if(event==='PostToolUse')return{};
-    if(disabledMember(home,{host:'agy',sessionId,pid:runtime.pid,procStart:runtime.procStart,configHome})){input.agybridge_disabled=true;return agyPreToolFallback();}
+    if(disabledMember(home,{host:'agy',sessionId,pid:runtime.pid,procStart:runtime.procStart,configHome})){input.agybridge_disabled=true;return disabledResult();}
     if(result?.terminationBehavior==='terminate')return result;
     if(monitor&&!notices.length){
       try{notices=await collectRuntimeNotices(home,'agy',sessionId,runtime,contextKey,{deadline});}
@@ -151,7 +151,7 @@ export async function hook(host:Host,input:any,provided:(ack:()=>Promise<void>)=
   const identityStartedAt=performance.now(),runtime=execution.runtime??await codexProcessIdentity(remainingTime(deadline,10000)),identityMs=execution.identityMs??performance.now()-identityStartedAt,registrationStartedAt=performance.now();
   const disabled=disabledMember(home,{host,sessionId,...runtime,configHome});
   if(disabled){
-    input.agybridge_disabled=true;if(!control)return{};
+    input.agybridge_disabled=true;if(!control)return disabledResult();
     const actor={host,memberId:disabled.peerId,sessionId:disabled.sessionId!,callId:randomUUID()};
     if(control[1]==='status')return{decision:'block',reason:formatStatus(await brokerCall('status',{actor},{timeout:8000}))};
     const target=control[2]&&control[2]!=='self'&&control[2]!==host?'partner':'self';
@@ -202,7 +202,7 @@ export async function hook(host:Host,input:any,provided:(ack:()=>Promise<void>)=
     if(!notices.length)throw error;
     process.stderr.write('agybridge hook：'+describeError(error)+'\n');
   }
-  if(disabledMember(home,{host,sessionId,...runtime,configHome})){input.agybridge_disabled=true;return{};}
+  if(disabledMember(home,{host,sessionId,...runtime,configHome})){input.agybridge_disabled=true;return disabledResult();}
   if(result?.continue===false)return result;
   if(monitor&&!notices.length)try{notices=await collectRuntimeNotices(home,'codex',sessionId,runtime,input.context_key,{deadline});}catch(error){process.stderr.write('agybridge 运行时监测：'+describeError(error)+'\n');}
   if(notices.length){

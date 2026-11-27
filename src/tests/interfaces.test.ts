@@ -38,6 +38,12 @@ test('MCP 初始化按宿主提供唯一提醒，AGY 暴露 wait_partner 且不�
       assert.ok(names.includes('answer_question'));
       const skill=readFileSync(new URL(`../../plugins/${host}/skills/partner/SKILL.md`,import.meta.url),'utf8');
       assert.doesNotMatch(skill,/\p{Script=Han}|zh\.md|<!--/u);
+      if(host==='codex'){
+        assert.match(instructions,/^scope \(defaults; user intent overrides: msgs, AGENTS\.md\/task requirements, user wishes relayed by agy\): root rules below\. subagent: agy\.\* is refused by agybridge/);
+        assert.match(instructions,/\nschedule \([^)]*\): small task -> skip upfront split talk/);
+        assert.doesNotMatch(instructions,/schedule \(defaults/);
+        assert.match(instructions,/pair: heavy tests\/builds \(both sides \+ subagents\) may overlap unless together they'd saturate a machine resource/);
+      }
     }finally{await client.close();await broker.close();}
   }));
 });

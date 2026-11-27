@@ -30,7 +30,8 @@ test('原生零卸载宽限期仅释放无订阅的空闲线程，同一后台�
   const temp=temporaryDirectory(),home=path.join(temp.directory,'bridge'),codexHome=path.join(temp.directory,'codex');
   mkdirSync(codexHome);await ensureHome(home);
   writeFileSync(path.join(codexHome,'config.toml'),stringify({thread_unload_delay_secs:0,features:{apps:false,remote_plugin:false}}),'utf8');
-  const config={...DEFAULT_CONFIG,codexHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})},adapter=new CodexAdapter(config,home);
+  const pinned=process.env.AGYBRIDGE_TEST_CODEX_BINARY??process.env.NXBRIDGE_TEST_CODEX_BINARY;
+  const config={...DEFAULT_CONFIG,codexHome,...(pinned?{codexBinary:pinned}:{})},adapter=new CodexAdapter(config,home);
   let window:Awaited<ReturnType<typeof connectAppServer>>|undefined;
   t.after(async()=>{window?.close();adapter.close();assert.deepEqual(await releaseNativeTestLaunches(home),[]);await temp.cleanup();});
   const endpoint=await adapter.ensureEndpoint(temp.directory),service=await adapter.connect(endpoint);
@@ -67,7 +68,8 @@ test('用户观察租约自动释放后仍可唤醒；关闭窗口后原 ID 可�
   await new Promise<void>(resolve=>model.listen(0,'127.0.0.1',resolve));
   const configText=stringify({model:'gpt-5.1-codex',model_provider:'subscription_test',approval_policy:'never',sandbox_mode:'danger-full-access',web_search:'disabled',analytics:{enabled:false},features:{apps:false,remote_plugin:false,daemon_auto_start:false,code_mode:false},model_providers:{subscription_test:{name:'本地线程释放验收',base_url:'http://127.0.0.1:'+(model.address() as any).port+'/v1',wire_api:'responses',requires_openai_auth:false}}});
   writeFileSync(path.join(codexHome,'config.toml'),configText,'utf8');
-  const config={...DEFAULT_CONFIG,codexHome,...(process.env.NXBRIDGE_TEST_CODEX_BINARY?{codexBinary:process.env.NXBRIDGE_TEST_CODEX_BINARY}:{})},adapter=new CodexAdapter(config,home),store=new Store(':memory:'),broker=new Broker(store,config,{codex:adapter,agy:new FakeAdapter()} as unknown as Adapters,home);
+  const pinned=process.env.AGYBRIDGE_TEST_CODEX_BINARY??process.env.NXBRIDGE_TEST_CODEX_BINARY;
+  const config={...DEFAULT_CONFIG,codexHome,...(pinned?{codexBinary:pinned}:{})},adapter=new CodexAdapter(config,home),store=new Store(':memory:'),broker=new Broker(store,config,{codex:adapter,agy:new FakeAdapter()} as unknown as Adapters,home);
   const windows:Awaited<ReturnType<typeof connectAppServer>>[]=[];
   t.after(async()=>{for(const rpc of windows)rpc.close();await broker.stop();assert.deepEqual(await releaseNativeTestLaunches(home),[]);model.closeAllConnections();await new Promise<void>(resolve=>model.close(()=>resolve()));store.close();await temp.cleanup();});
   const endpoint=await adapter.ensureEndpoint(root),runtime=runtimeFor(home,{endpoint})!.value;
@@ -116,7 +118,8 @@ test('用户观察租约自动释放后仍可唤醒；关闭窗口后原 ID 可�
   await wait(async()=>!(await retained.request('thread/loaded/list',{limit:100})).data.includes(first.thread.id),'窗口关闭后线程仍被服务观察订阅占用');
   assert.ok((await retained.request('thread/loaded/list',{limit:100})).data.includes(second.thread.id));assert.equal(liveProcess(runtime.pid!),true);
                                             
-  const freshEndpoint=await adapter.ensureEndpoint(root,'subscription-reopen'),fresh=await adapter.connect(freshEndpoint),resumed=await fresh.request('thread/resume',{threadId:first.thread.id});
+  const freshEndpoint=await adapter.ensureEndpoint(root,'subscription-reopen'),fresh=await connectAppServer(freshEndpoint,config,undefined,home);windows.push(fresh);
+  const resumed=await fresh.request('thread/resume',{threadId:first.thread.id});
   assert.equal(resumed.thread.id,first.thread.id);assert.match(JSON.stringify(resumed.thread.turns),/线程释放验收持久历史/);
   assert.equal(readFileSync(path.join(codexHome,'config.toml'),'utf8'),configText,'启动覆盖不得改写用户配置');
   t.diagnostic(JSON.stringify({unloaded:first.thread.id,retained:second.thread.id,sharedRuntimeAlive:liveProcess(runtime.pid!),reopenedOnAnotherRuntime:true,requests}));

@@ -53,16 +53,18 @@ Codex 最低要求 `0.164.0`；更旧或无法核验的版本在 `setup` / `upda
 
 ## 3. 后台搭档模型与权限边界
 
-### 模型与推理强度（`partner-profile`）
+### 模型、推理强度与服务档位（`partner-profile`）
 
 新建后台搭档时的优先级从高到低为：
 
-1. 创建时显式指定（如 `select_partner` 传入 `model` / `effort`）；
-2. 配置文件中的 `partners.<codex|agy>.model` 与 `partners.<codex|agy>.effort`；
-3. `partners.<codex|agy>.profile_source = "frozen"` 时冻结的首个观测值；
-4. 宿主 CLI 自身的默认设置（默认行为 `profile_source = "host"`）。
+1. 创建时显式指定（如 `select_partner` 的 `create` 传入 `model` / `effort` / `service_tier`）；
+2. 配置文件中的 `partners.<codex|agy>.model`、`partners.<codex|agy>.effort` 与 `partners.codex.service_tier`；
+3. `partners.<codex|agy>.profile_source` 决定的默认来源：
+   - `recommended`（默认）：`agybridge` 推荐默认值（后台 Codex 默认 `gpt-6.2-sol` + `xhigh` + `standard` 标准服务档位；后台 AGY 默认 `gemini-4-neon` + `high`），不受宿主全局配置变动影响；
+   - `host`：遵循宿主 CLI 当前默认配置；
+   - `frozen`：冻结下一个新建后台搭档首次实际生效的宿主配置，后续新建同宿主搭档继续沿用。
 
-运行中可通过命令行 `agybridge partner-profile codex|agy --model <M> --effort <E>` 或 MCP 工具 `partner_profile` 在搭档空闲时无损切换；只允许修改 `agybridge` 自有后台搭档，用户自己打开的窗口一律拒绝代改。
+服务档位（`service_tier`，仅限 Codex）支持 `standard`（对应原生 `default`）与 `fast`（对应原生 `priority`）；新建后台 Codex 在接手首份任务前核验实际生效档位，未采用时自动卸载空会话并保留待发消息（`profile_service_tier_unavailable`）。运行中可通过命令行 `agybridge partner-profile codex|agy --model <M> --effort <E> [--service-tier <standard|fast>]` 或 MCP 工具 `partner_profile` 在搭档空闲时无损切换；只允许修改 `agybridge` 自有后台搭档，用户自己打开的窗口一律拒绝代改。
 
 ### 启动权限准则
 
